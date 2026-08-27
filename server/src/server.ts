@@ -1,25 +1,46 @@
 import { app } from "./app.js";
+import { config } from "./config.js";
+import { checkDatabase, pool } from "./db/pool.js";
+import { logger } from "./logger.js";
 
-const port = Number(process.env.PORT ?? 3000);
+// Fail at boot rather than on the first request that needs the database.
+try {
+  await checkDatabase();
+  logger.info("Connected to PostgreSQL");
+} catch (error) {
+  logger.error({ err: error }, "Cannot reach PostgreSQL; aborting startup");
+  process.exit(1);
+}
 
-const server = app.listen(port, () => {
-  console.log(`API listening on http://localhost:${port}`);
+const server = app.listen(config.port, () => {
+  logger.info(`API listening on http://localhost:${config.port}`);
 });
 
-function shutdown(signal: string) {
-  console.log(`${signal} received; shutting down gracefully`);
+let shuttingDown = false;
 
-  server.close((error) => {
+function shutdown(signal: string) {
+  if (shuttingDown) {
+    return;
+  }
+
+  shuttingDown = true;
+  logger.info(`${signal} received; shutting down gracefully`);
+
+  server.close(async (error) => {
     if (error) {
-      console.error("Failed to close HTTP server", error);
+      logger.error({ err: error }, "Failed to close HTTP server");
       process.exit(1);
     }
+
+    await pool.end().catch((poolError: unknown) => {
+      logger.error({ err: poolError }, "Failed to close the database pool");
+    });
 
     process.exit(0);
   });
 
   setTimeout(() => {
-    console.error("Forced shutdown after timeout");
+    logger.error("Forced shutdown after timeout");
     process.exit(1);
   }, 10_000).unref();
 }
