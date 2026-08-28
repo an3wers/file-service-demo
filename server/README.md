@@ -1,111 +1,113 @@
-# File service — server
+# Файловый сервис — сервер
 
-REST API for storing files in Cloud.ru Object Storage (S3-compatible) with metadata in PostgreSQL.
-A client-supplied "directory" becomes the prefix of the S3 object key, which is what gives the
-service its folder structure — S3 itself has no folders.
+REST API для хранения файлов в Cloud.ru Object Storage (S3-совместимое) с метаданными в PostgreSQL.
+Переданная клиентом «директория» становится префиксом ключа S3-объекта — именно это и даёт сервису
+структуру папок, ведь в самом S3 никаких папок нет.
 
-## Running
+## Запуск
 
 ```bash
 npm install
-npm run db:migrate     # create the schema (idempotent)
-npm run s3:cors        # once per bucket, required for browser presigned uploads
+npm run db:migrate     # создать схему (идемпотентно)
+npm run s3:cors        # один раз на бакет, необходимо для presigned-загрузок из браузера
 npm run dev
 ```
 
-| Script | What it does |
+| Скрипт | Что делает |
 |---|---|
-| `npm run dev` | watch-mode server |
-| `npm run build` / `npm start` | compile to `dist/` and run |
+| `npm run dev` | сервер в watch-режиме |
+| `npm run build` / `npm start` | сборка в `dist/` и запуск |
 | `npm run typecheck` | `tsc --noEmit` |
-| `npm run db:migrate` | apply `src/db/migrations/*.sql`, tracked in `schema_migrations` |
-| `npm run db:cleanup` | resolve presigned uploads that were never confirmed |
-| `npm run s3:cors` | apply the bucket CORS rules for `CORS_ORIGIN` |
+| `npm run db:migrate` | применяет `src/db/migrations/*.sql`, история в `schema_migrations` |
+| `npm run db:cleanup` | разбирает presigned-загрузки, которые так и не подтвердили |
+| `npm run s3:cors` | применяет CORS-правила бакета для `CORS_ORIGIN` |
 
-## Configuration
+## Конфигурация
 
-All of `.env` is validated by `src/config.ts` at boot; the process exits on anything missing.
+Весь `.env` валидируется в `src/config.ts` при старте; при любом пропущенном значении процесс завершается.
 
-Storage keys are Cloud.ru-specific: the S3 **access key id is `S3_TENANT_ID:KEY_ID`**, and the
-bucket only resolves through the **path-style** endpoint (`forcePathStyle: true`), never
+Ключи хранилища специфичны для Cloud.ru: **access key id для S3 — это `S3_TENANT_ID:KEY_ID`**, а бакет
+резолвится только через **path-style** эндпоинт (`forcePathStyle: true`), но не через
 `<bucket>.s3.cloud.ru`.
 
-| Variable | Default | Notes |
+| Переменная | По умолчанию | Примечания |
 |---|---|---|
 | `PORT` | `3000` | |
-| `API_KEY` | — | required in `X-API-Key` on every `/api/*` route |
-| `CORS_ORIGIN` | `http://localhost:5173` | comma-separated; also used by `npm run s3:cors` |
-| `MAX_UPLOAD_SIZE_MB` | `50` | server-proxied uploads only |
+| `API_KEY` | — | обязателен в `X-API-Key` на каждом маршруте `/api/*` |
+| `CORS_ORIGIN` | `http://localhost:5173` | через запятую; используется и в `npm run s3:cors` |
+| `MAX_UPLOAD_SIZE_MB` | `50` | только для загрузок через сервер |
 | `PRESIGN_UPLOAD_TTL_SECONDS` | `900` | |
 | `PRESIGN_DOWNLOAD_TTL_SECONDS` | `300` | |
-| `PENDING_TTL_HOURS` | `24` | age at which `db:cleanup` resolves a pending row |
+| `PENDING_TTL_HOURS` | `24` | возраст, при котором `db:cleanup` разбирает запись в статусе pending |
 | `DATABASE_SSL` | `false` | |
 
 ## API
 
-`/health` and `/health/ready` are open. Everything under `/api` requires `X-API-Key`.
-Errors are always `{ "error": { "code", "message", "details"? } }`.
+`/health` и `/health/ready` открыты. Всё под `/api` требует `X-API-Key`.
+Ошибки всегда имеют вид `{ "error": { "code", "message", "details"? } }`.
 
-### Uploading
+### Загрузка
 
-Two flows write the same kind of record and are interchangeable from the client's point of view.
+Оба сценария создают запись одного и того же вида и взаимозаменяемы с точки зрения клиента.
 
-**Through the server** — simple, capped at `MAX_UPLOAD_SIZE_MB`:
+**Через сервер** — просто, ограничено `MAX_UPLOAD_SIZE_MB`:
 
 ```
 POST /api/files          multipart/form-data: file, directory?
 → 201 FileDto
 ```
 
-**Direct to S3** — for anything larger; the bytes never touch the API process:
+**Напрямую в S3** — для файлов побольше; байты не проходят через процесс API:
 
 ```
 POST /api/files/presign-upload   { filename, directory?, contentType?, size? }
 → 201 { id, key, directory, uploadUrl, expiresAt, requiredHeaders }
 
-PUT <uploadUrl>                  with exactly the headers in requiredHeaders
-                                 (Content-Type is part of the signature)
+PUT <uploadUrl>                  ровно с теми заголовками, что в requiredHeaders
+                                 (Content-Type входит в подпись)
 
 POST /api/files/:id/complete
 → 200 FileDto
 ```
 
-The `complete` call is not optional. Until it runs the row stays `pending`, and it is what fills
-in `size` and `etag` — read back from S3 with `HeadObject` rather than trusted from the client.
-It is idempotent, and returns `409 UPLOAD_NOT_COMPLETED` if no object reached the reserved key.
+Вызов `complete` не опционален. Пока он не выполнен, запись остаётся в статусе `pending`, и именно он
+заполняет `size` и `etag` — они вычитываются из S3 через `HeadObject`, а не берутся на веру у клиента.
+Вызов идемпотентен и возвращает `409 UPLOAD_NOT_COMPLETED`, если по зарезервированному ключу так и не
+появился объект.
 
-### Reading
+### Чтение
 
 ```
 GET /api/files?directory=&recursive=&search=&status=&page=&limit=&sort=&order=
 → { items: FileDto[], pagination: { page, limit, total, totalPages } }
 ```
 
-`directory` matches exactly unless `recursive=true`. `status` defaults to `ready` (`any` for all),
-`limit` caps at 200, `sort` is one of `created_at` | `original_name` | `size_bytes`.
+`directory` сопоставляется точно, если не указано `recursive=true`. `status` по умолчанию `ready`
+(`any` — все), `limit` ограничен сверху значением 200, `sort` — одно из `created_at` |
+`original_name` | `size_bytes`.
 
 ```
-GET /api/files/:id?withUrl=true          → FileDto (withUrl adds a fresh downloadUrl)
+GET /api/files/:id?withUrl=true          → FileDto (withUrl добавляет свежий downloadUrl)
 GET /api/files/:id/download-url?disposition=attachment|inline&expiresIn=
                                          → { url, expiresAt, name }
 DELETE /api/files/:id                    → 204
 GET /api/directories?parent=docs         → { parent, items: [{ name, path, fileCount }] }
 ```
 
-`/api/directories` derives the folder tree from the stored directory paths; `fileCount` covers the
-whole subtree. Download URLs carry a `Content-Disposition` that restores the original file name,
-including non-ASCII ones, via RFC 5987 `filename*`.
+`/api/directories` выводит дерево папок из сохранённых путей директорий; `fileCount` учитывает всё
+поддерево. Ссылки на скачивание несут `Content-Disposition`, восстанавливающий исходное имя файла,
+включая не-ASCII, через RFC 5987 `filename*`.
 
 ### FileDto
 
 ```jsonc
 {
-  "id": "a5e1ee53-…",              // also the basename of the S3 key
-  "name": "Отчёт за Q3.pdf",       // original name, preserved in the DB
-  "directory": "docs/reports",     // normalised: no leading/trailing/repeated slashes
+  "id": "a5e1ee53-…",              // он же — базовое имя ключа S3
+  "name": "Отчёт за Q3.pdf",       // исходное имя, сохраняется в БД
+  "directory": "docs/reports",     // нормализовано: без ведущих/конечных/повторяющихся слэшей
   "extension": "pdf",
   "contentType": "application/pdf",
-  "size": 74,                      // null until a presigned upload is confirmed
+  "size": 74,                      // null, пока presigned-загрузка не подтверждена
   "etag": "\"9020e7b4…\"",
   "status": "ready",               // pending | ready | failed
   "uploadSource": "server",        // server | presigned
@@ -116,28 +118,29 @@ including non-ASCII ones, via RFC 5987 `filename*`.
 }
 ```
 
-## Design notes
+## Заметки по устройству
 
-- **Object keys are `<directory>/<uuid>.<ext>`,** never the original file name. The key is
-  therefore known before any bytes exist — which is what makes the presigned flow possible — and
-  uploads can never collide or trip over characters that are awkward in a URL. The display name
-  lives in the database and comes back through `Content-Disposition`.
-- **Directory strings are the one untrusted input that becomes part of a key,** so
-  `normalizeDirectory` in `src/s3/keys.ts` rejects `..`, control characters and oversized segments
-  outright instead of rewriting them.
-- **Deletes are soft in the database and best-effort in S3.** The metadata row is the source of
-  truth, so it is retired first; a failed storage delete only leaves an unreferenced object.
-- **`src/middleware/validate.ts`** publishes validated query strings and route params on
-  `res.locals` because Express 5 makes `req.query` getter-only.
+- **Ключи объектов — это `<directory>/<uuid>.<ext>`,** а не исходное имя файла. Поэтому ключ известен
+  ещё до того, как появятся байты, — именно это делает возможным presigned-сценарий, — а загрузки не
+  могут ни столкнуться друг с другом, ни споткнуться о символы, неудобные в URL. Отображаемое имя
+  живёт в базе и возвращается через `Content-Disposition`.
+- **Строка директории — единственный недоверенный ввод, попадающий в ключ,** поэтому
+  `normalizeDirectory` в `src/s3/keys.ts` прямо отвергает `..`, управляющие символы и слишком длинные
+  сегменты, а не пытается их переписать.
+- **Удаление мягкое в базе и best-effort в S3.** Источник истины — запись с метаданными, поэтому её
+  выводят из обращения первой; неудачное удаление в хранилище оставит лишь объект, на который никто
+  не ссылается.
+- **`src/middleware/validate.ts`** кладёт провалидированные query-строки и параметры маршрута в
+  `res.locals`, потому что в Express 5 `req.query` доступен только на чтение.
 
-## Layout
+## Структура
 
 ```
 src/
   config.ts logger.ts errors.ts app.ts server.ts
   db/        pool.ts, migrate.ts, migrations/
-  s3/        client.ts (Cloud.ru specifics), keys.ts (naming and sanitising)
+  s3/        client.ts (специфика Cloud.ru), keys.ts (именование и санитизация)
   middleware/ api-key.ts, upload.ts, validate.ts, error-handler.ts
-  modules/files/  routes → service → repo, plus schemas/types/mapper
+  modules/files/  routes → service → repo, плюс schemas/types/mapper
   scripts/   s3-cors.ts, cleanup-pending.ts
 ```

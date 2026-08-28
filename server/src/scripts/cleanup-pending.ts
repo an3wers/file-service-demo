@@ -7,7 +7,7 @@ import * as repo from "../modules/files/files.repo.js";
 
 /**
  * Rows stay `pending` when a client asked for a presigned URL and never called
- * /complete. Ask S3 what actually happened: if the object is there the upload
+ * complete. Ask S3 what actually happened: if the object is there the upload
  * did succeed and only the confirmation was lost, otherwise the row is dead.
  */
 async function main(): Promise<void> {
@@ -34,20 +34,35 @@ async function main(): Promise<void> {
       });
 
       recovered += 1;
-      logger.info({ id: file.id, key: file.object_key }, "Recovered pending upload");
+      logger.info(
+        { id: file.id, key: file.object_key },
+        "Recovered pending upload",
+      );
     } catch (error) {
-      if (error instanceof NotFound || (error as { name?: string }).name === "NotFound") {
+      if (
+        error instanceof NotFound ||
+        (error as { name?: string }).name === "NotFound"
+      ) {
         await repo.markFileFailed(file.id);
         failed += 1;
-        logger.info({ id: file.id, key: file.object_key }, "Marked pending upload failed");
+        logger.info(
+          { id: file.id, key: file.object_key },
+          "Marked pending upload failed",
+        );
         continue;
       }
 
-      logger.error({ err: error, id: file.id }, "Could not inspect pending upload");
+      logger.error(
+        { err: error, id: file.id },
+        "Could not inspect pending upload",
+      );
     }
   }
 
-  logger.info({ examined: expired.length, recovered, failed }, "Cleanup finished");
+  logger.info(
+    { examined: expired.length, recovered, failed },
+    "Cleanup finished",
+  );
 }
 
 try {

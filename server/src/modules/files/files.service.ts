@@ -153,7 +153,11 @@ export async function createPresignedUpload(body: PresignUploadBody): Promise<{
 
   const uploadUrl = await getSignedUrl(
     s3,
-    new PutObjectCommand({ Bucket: bucket, Key: key, ContentType: contentType }),
+    new PutObjectCommand({
+      Bucket: bucket,
+      Key: key,
+      ContentType: contentType,
+    }),
     { expiresIn: ttl },
   );
 
@@ -187,7 +191,10 @@ export async function completeUpload(id: string): Promise<FileDto> {
       new HeadObjectCommand({ Bucket: file.bucket, Key: file.object_key }),
     );
   } catch (error) {
-    if (error instanceof NotFound || (error as { name?: string }).name === "NotFound") {
+    if (
+      error instanceof NotFound ||
+      (error as { name?: string }).name === "NotFound"
+    ) {
       throw conflict(
         "UPLOAD_NOT_COMPLETED",
         "No object was found at the reserved key; upload the file before confirming",
@@ -227,13 +234,19 @@ export async function getDownloadUrl(
   const expiresIn = query.expiresIn ?? config.uploads.presignDownloadTtlSeconds;
 
   return {
-    url: await presignDownload(file, { disposition: query.disposition, expiresIn }),
+    url: await presignDownload(file, {
+      disposition: query.disposition,
+      expiresIn,
+    }),
     expiresAt: expiresAt(expiresIn),
     name: file.original_name,
   };
 }
 
-export async function getFileCard(id: string, withUrl: boolean): Promise<FileDto> {
+export async function getFileCard(
+  id: string,
+  withUrl: boolean,
+): Promise<FileDto> {
   const file = await requireFile(id);
 
   if (!withUrl || file.status !== "ready") {
@@ -250,7 +263,12 @@ export async function getFileCard(id: string, withUrl: boolean): Promise<FileDto
 
 export async function listFiles(query: ListFilesQuery): Promise<{
   items: FileDto[];
-  pagination: { page: number; limit: number; total: number; totalPages: number };
+  pagination: {
+    page: number;
+    limit: number;
+    total: number;
+    totalPages: number;
+  };
 }> {
   const params: ListFilesParams = {
     recursive: query.recursive,
