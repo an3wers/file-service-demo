@@ -23,7 +23,10 @@ export default defineConfig({
       "@": path.resolve(__dirname, "./src"),
     },
   },
-  server: { proxy: apiProxy },
+  // Порт закреплён: presigned-PUT уходит напрямую в S3 с origin браузера, а CORS
+  // бакета настроен ровно на http://localhost:5173. Молчаливый сдвиг на 5174
+  // сломал бы presigned-загрузку непрозрачной CORS-ошибкой.
+  server: { port: 5173, strictPort: true, proxy: apiProxy },
   // `vite preview` needs the same proxy, otherwise the production build served
   // locally has no API to talk to.
   preview: { proxy: apiProxy },

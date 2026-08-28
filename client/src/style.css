@@ -122,3 +122,9 @@
     @apply bg-background text-foreground;
   }
 }
+
+/* `@theme inline` ссылается на `--font-sans`, которого не существовало, поэтому
+   импортированный Inter ни к чему не применялся. Блок именно `@theme`, не inline. */
+@theme {
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+}
