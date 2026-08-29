@@ -2,7 +2,6 @@
 import { HardDriveIcon } from "@lucide/vue"
 import { Toaster } from "@/components/ui/sonner"
 import FileBrowser from "@/components/FileBrowser.vue"
-import UploadPanel from "@/components/UploadPanel.vue"
 </script>
 
 <template>
@@ -20,7 +19,6 @@ import UploadPanel from "@/components/UploadPanel.vue"
     </header>
 
     <main class="mx-auto flex max-w-6xl flex-col gap-6 p-6">
-      <UploadPanel />
       <FileBrowser />
     </main>
 

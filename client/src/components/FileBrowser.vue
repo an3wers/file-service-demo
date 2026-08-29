@@ -1,15 +1,20 @@
 <script setup lang="ts">
-import { computed, ref } from "vue"
-import { SearchIcon } from "@lucide/vue"
-import type { FileDto } from "@/types/api"
+import { computed, ref } from "vue";
+import { SearchIcon, UploadIcon } from "@lucide/vue";
+import type { FileDto } from "@/types/api";
 import {
   Card,
   CardContent,
   CardDescription,
   CardHeader,
   CardTitle,
-} from "@/components/ui/card"
-import { InputGroup, InputGroupAddon, InputGroupInput } from "@/components/ui/input-group"
+  CardAction,
+} from "@/components/ui/card";
+import {
+  InputGroup,
+  InputGroupAddon,
+  InputGroupInput,
+} from "@/components/ui/input-group";
 import {
   Pagination,
   PaginationContent,
@@ -17,7 +22,7 @@ import {
   PaginationItem,
   PaginationNext,
   PaginationPrevious,
-} from "@/components/ui/pagination"
+} from "@/components/ui/pagination";
 import {
   Select,
   SelectContent,
@@ -25,46 +30,49 @@ import {
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from "@/components/ui/select"
-import { Separator } from "@/components/ui/separator"
-import DeleteFileDialog from "./DeleteFileDialog.vue"
-import DirectoryBreadcrumbs from "./DirectoryBreadcrumbs.vue"
-import FileCardDialog from "./FileCardDialog.vue"
-import FileTable from "./FileTable.vue"
-import { useFileActions } from "@/composables/useFileActions"
-import { useFileBrowser } from "@/composables/useFileBrowser"
+} from "@/components/ui/select";
+import { Separator } from "@/components/ui/separator";
+import { Button } from "@/components/ui/button";
+import DeleteFileDialog from "./DeleteFileDialog.vue";
+import DirectoryBreadcrumbs from "./DirectoryBreadcrumbs.vue";
+import FileCardDialog from "./FileCardDialog.vue";
+import FileTable from "./FileTable.vue";
+import UploadPanel from "./UploadPanel.vue";
+import { useFileActions } from "@/composables/useFileActions";
+import { useFileBrowser } from "@/composables/useFileBrowser";
 
-const browser = useFileBrowser()
-const actions = useFileActions()
+const browser = useFileBrowser();
+const actions = useFileActions();
 
-const selectedFile = ref<FileDto | null>(null)
-const cardOpen = ref(false)
-const fileToDelete = ref<FileDto | null>(null)
-const deleteOpen = ref(false)
+const selectedFile = ref<FileDto | null>(null);
+const cardOpen = ref(false);
+const fileToDelete = ref<FileDto | null>(null);
+const deleteOpen = ref(false);
+const uploadOpen = ref(false);
 
 const limitValue = computed({
   get: () => String(browser.limit.value),
   set: (value: string) => browser.setLimit(Number(value)),
-})
+});
 
-const totalPages = computed(() => browser.pagination.value?.totalPages ?? 1)
-const total = computed(() => browser.pagination.value?.total ?? 0)
+const totalPages = computed(() => browser.pagination.value?.totalPages ?? 1);
+const total = computed(() => browser.pagination.value?.total ?? 0);
 
 function openCard(file: FileDto): void {
-  selectedFile.value = file
-  cardOpen.value = true
+  selectedFile.value = file;
+  cardOpen.value = true;
 }
 
 function askDelete(file: FileDto): void {
   // Карточку закрываем: два модальных слоя подряд дерутся за фокус.
-  cardOpen.value = false
-  fileToDelete.value = file
-  deleteOpen.value = true
+  cardOpen.value = false;
+  fileToDelete.value = file;
+  deleteOpen.value = true;
 }
 
 function onDeleted(file: FileDto): void {
   if (selectedFile.value?.id === file.id) {
-    cardOpen.value = false
+    cardOpen.value = false;
   }
 }
 </script>
@@ -76,6 +84,12 @@ function onDeleted(file: FileDto): void {
       <CardDescription>
         Найдено: {{ total }}. Поиск идёт по текущей папке и её подпапкам.
       </CardDescription>
+      <CardAction>
+        <Button @click="uploadOpen = true">
+          <UploadIcon data-icon="inline-start" />
+          Загрузить файл
+        </Button>
+      </CardAction>
     </CardHeader>
 
     <CardContent class="flex flex-col gap-4">
@@ -136,13 +150,19 @@ function onDeleted(file: FileDto): void {
             >
               {{ item.value }}
             </PaginationItem>
-            <PaginationEllipsis v-else :key="`ellipsis-${index}`" :index="index" />
+            <PaginationEllipsis
+              v-else
+              :key="`ellipsis-${index}`"
+              :index="index"
+            />
           </template>
           <PaginationNext />
         </PaginationContent>
       </Pagination>
     </CardContent>
   </Card>
+
+  <UploadPanel v-model:open="uploadOpen" />
 
   <FileCardDialog
     v-model:open="cardOpen"
