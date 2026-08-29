@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { extname } from "node:path";
-import { badRequest } from "../errors.js";
+import { ERROR_CODES, badRequest } from "../errors.js";
 
 const MAX_SEGMENT_LENGTH = 100;
 const MAX_DIRECTORY_BYTES = 700;
@@ -30,18 +30,18 @@ export function normalizeDirectory(input: string | undefined | null): string {
   for (const segment of segments) {
     if (segment === "." || segment === "..") {
       throw badRequest(
-        "INVALID_DIRECTORY",
+        ERROR_CODES.INVALID_DIRECTORY,
         `Directory segment "${segment}" is not allowed`,
       );
     }
 
     if (CONTROL_CHARS.test(segment)) {
-      throw badRequest("INVALID_DIRECTORY", "Directory contains control characters");
+      throw badRequest(ERROR_CODES.INVALID_DIRECTORY, "Directory contains control characters");
     }
 
     if (segment.length > MAX_SEGMENT_LENGTH) {
       throw badRequest(
-        "INVALID_DIRECTORY",
+        ERROR_CODES.INVALID_DIRECTORY,
         `Directory segment exceeds ${MAX_SEGMENT_LENGTH} characters`,
       );
     }
@@ -51,7 +51,7 @@ export function normalizeDirectory(input: string | undefined | null): string {
 
   if (Buffer.byteLength(directory, "utf8") > MAX_DIRECTORY_BYTES) {
     throw badRequest(
-      "INVALID_DIRECTORY",
+      ERROR_CODES.INVALID_DIRECTORY,
       `Directory path exceeds ${MAX_DIRECTORY_BYTES} bytes`,
     );
   }
@@ -69,7 +69,7 @@ export function sanitizeFileName(input: string): string {
     ?.trim();
 
   if (!name || name === "." || name === ".." || CONTROL_CHARS.test(name)) {
-    throw badRequest("INVALID_FILE_NAME", "File name is missing or not usable");
+    throw badRequest(ERROR_CODES.INVALID_FILE_NAME, "File name is missing or not usable");
   }
 
   return name.slice(0, MAX_NAME_LENGTH);

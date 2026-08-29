@@ -1,6 +1,7 @@
 import pg from "pg";
 import { config } from "../config.js";
 import { logger } from "../logger.js";
+import { databaseError } from "./errors.js";
 
 const { Pool, types } = pg;
 
@@ -21,17 +22,29 @@ export const pool = new Pool({
   ssl: config.database.ssl ? { rejectUnauthorized: false } : false,
   connectionTimeoutMillis: 10_000,
   idleTimeoutMillis: 30_000,
+  // Without this a wedged query holds its connection until the client gives up;
+  // with it Postgres cancels the query and returns 57014, which `databaseError`
+  // turns into a 503 instead of a hung request.
+  statement_timeout: 15_000,
 });
 
 pool.on("error", (error) => {
   logger.error({ err: error }, "Idle PostgreSQL client error");
 });
 
+/**
+ * Every repository call goes through here, so this is the one place that has to
+ * translate driver failures into AppErrors.
+ */
 export async function query<T extends pg.QueryResultRow>(
   text: string,
   values: unknown[] = [],
 ): Promise<pg.QueryResult<T>> {
-  return pool.query<T>(text, values);
+  try {
+    return await pool.query<T>(text, values);
+  } catch (error) {
+    throw databaseError(error);
+  }
 }
 
 export async function checkDatabase(): Promise<void> {

@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { badRequest } from "../../errors.js";
+import { ERROR_CODES, badRequest } from "../../errors.js";
 import { upload } from "../../middleware/upload.js";
 import {
   validateBody,
@@ -35,7 +35,10 @@ filesRouter.post(
   validateBody(uploadBodySchema),
   async (req, res) => {
     if (!req.file) {
-      throw badRequest("FILE_REQUIRED", 'A file must be sent in the "file" field');
+      throw badRequest(
+        ERROR_CODES.FILE_REQUIRED,
+        'A file must be sent in the "file" field',
+      );
     }
 
     res.status(201).json(await service.uploadThroughServer(req.file, req.body.directory));

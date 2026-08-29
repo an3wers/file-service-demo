@@ -1,7 +1,7 @@
 import type { ErrorRequestHandler, RequestHandler } from "express";
 import { MulterError } from "multer";
-import { ZodError } from "zod";
-import { AppError } from "../errors.js";
+import { ZodError, z } from "zod";
+import { AppError, ERROR_CODES, badRequest, payloadTooLarge } from "../errors.js";
 import { config } from "../config.js";
 import { logger } from "../logger.js";
 
@@ -9,62 +9,74 @@ export const notFoundHandler: RequestHandler = (req, _res, next) => {
   next(
     new AppError(
       404,
-      "ROUTE_NOT_FOUND",
+      ERROR_CODES.ROUTE_NOT_FOUND,
       `Route not found: ${req.method} ${req.originalUrl}`,
     ),
   );
 };
 
-export const errorHandler: ErrorRequestHandler = (error, _req, res, _next) => {
-  if (error instanceof ZodError) {
-    res.status(422).json({
-      error: {
-        code: "VALIDATION_ERROR",
-        message: "Request validation failed",
-        details: error.flatten(),
-      },
-    });
+/**
+ * Normalizes everything that can reach the handler into an AppError, so status,
+ * code and logging are decided once rather than per branch. Client-facing codes
+ * therefore all come from `errors.ts`, including the ones Multer raises.
+ */
+function toAppError(error: unknown): AppError {
+  if (error instanceof AppError) {
+    return error;
+  }
 
-    return;
+  if (error instanceof ZodError) {
+    return new AppError(
+      422,
+      ERROR_CODES.VALIDATION_ERROR,
+      "Request validation failed",
+      z.flattenError(error),
+      { cause: error },
+    );
   }
 
   if (error instanceof MulterError) {
-    const tooLarge = error.code === "LIMIT_FILE_SIZE";
+    const details = { field: error.field, multerCode: error.code };
 
-    res.status(tooLarge ? 413 : 400).json({
-      error: {
-        code: error.code,
-        message: tooLarge
-          ? `File exceeds the ${config.uploads.maxSizeMb} MB limit for server-side uploads; use the presigned upload flow instead`
-          : error.message,
-        details: { field: error.field },
-      },
-    });
-
-    return;
+    return error.code === "LIMIT_FILE_SIZE"
+      ? payloadTooLarge(
+          `File exceeds the ${config.uploads.maxSizeMb} MB limit for server-side uploads; use the presigned upload flow instead`,
+          details,
+          { cause: error },
+        )
+      : badRequest(ERROR_CODES.UPLOAD_REJECTED, error.message, details, {
+          cause: error,
+        });
   }
 
-  if (error instanceof AppError) {
-    res.status(error.statusCode).json({
-      error: {
-        code: error.code,
-        message: error.message,
-        details: error.details,
-      },
-    });
+  return new AppError(
+    500,
+    ERROR_CODES.INTERNAL_SERVER_ERROR,
+    "An unexpected error occurred",
+    !config.isProduction && error instanceof Error
+      ? { message: error.message, stack: error.stack }
+      : undefined,
+    { cause: error },
+  );
+}
 
-    return;
-  }
+export const errorHandler: ErrorRequestHandler = (error, req, res, _next) => {
+  const appError = toAppError(error);
+  // `req.log` is the pino-http child carrying `req.id`, so the error line can be
+  // matched against the access line for the same request.
+  const log = req.log ?? logger;
 
-  logger.error({ err: error }, "Unhandled error");
+  log[appError.statusCode >= 500 ? "error" : "warn"](
+    { err: appError, ...appError.logContext },
+    appError.message,
+  );
 
-  res.status(500).json({
+  res.status(appError.statusCode).json({
     error: {
-      code: "INTERNAL_SERVER_ERROR",
-      message: "An unexpected error occurred",
-      ...(!config.isProduction && error instanceof Error
-        ? { details: { message: error.message, stack: error.stack } }
-        : {}),
+      code: appError.code,
+      message: appError.message,
+      details: appError.details,
+      requestId: req.id,
     },
   });
 };

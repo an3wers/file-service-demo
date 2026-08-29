@@ -44,7 +44,49 @@ npm run dev
 ## API
 
 `/health` и `/health/ready` открыты. Всё под `/api` требует `X-API-Key`.
-Ошибки всегда имеют вид `{ "error": { "code", "message", "details"? } }`.
+
+### Ошибки
+
+Ответ с ошибкой всегда имеет один и тот же вид:
+
+```jsonc
+{
+  "error": {
+    "code": "STORAGE_UNAVAILABLE",  // стабильный код, по нему клиент выбирает текст
+    "message": "Object storage is unreachable right now; please try again shortly",
+    "details": { "operation": "PutObject" },   // необязательное, зависит от кода
+    "requestId": 42                            // тот же id, что и в строке лога
+  }
+}
+```
+
+`requestId` присваивает `pino-http`; по нему в логе находятся и access-строка, и строка ошибки —
+это единственный способ связать жалобу клиента с тем, что реально произошло на сервере. Внутренности
+зависимостей (имя ошибки AWS, ключ объекта, SQLSTATE, имя констрейнта) в ответ не попадают: они
+уходят только в лог.
+
+| Код | Статус | Когда |
+|---|---|---|
+| `UNAUTHORIZED` | 401 | нет или неверен `X-API-Key` |
+| `ROUTE_NOT_FOUND` | 404 | такого маршрута нет |
+| `VALIDATION_ERROR` | 422 | не прошла zod-схема; `details` — `{ formErrors, fieldErrors }` |
+| `FILE_REQUIRED` | 400 | в `multipart/form-data` нет поля `file` |
+| `INVALID_DIRECTORY`, `INVALID_FILE_NAME` | 400 | путь или имя не пережили нормализацию |
+| `UPLOAD_REJECTED` | 400 | multer отверг форму (лишнее поле, больше одного файла) |
+| `PAYLOAD_TOO_LARGE` | 413 | файл больше `MAX_UPLOAD_SIZE_MB` — нужен presigned-сценарий |
+| `FILE_NOT_FOUND` | 404 | записи нет или она уже удалена |
+| `FILE_NOT_READY` | 409 | файл ещё не `ready`, скачивать нечего |
+| `UPLOAD_NOT_COMPLETED` | 409 | по зарезервированному ключу так и не появился объект |
+| `DUPLICATE_RESOURCE` | 409 | нарушен уникальный индекс |
+| `STORAGE_MISCONFIGURED` | 502 | S3 отверг запрос: не тот бакет или ключи |
+| `STORAGE_ERROR` | 502 | S3 ответил тем, с чем сервис работать не может |
+| `STORAGE_UNAVAILABLE` | 503 | до S3 не достучаться |
+| `DATABASE_TIMEOUT` | 503 | запрос снят по `statement_timeout` |
+| `DATABASE_UNAVAILABLE` | 503 | БД недоступна |
+| `INTERNAL_SERVER_ERROR` | 500 | всё остальное; вне production в `details` кладётся стек |
+
+Разделение 502 и 503 намеренное: 502 повторять бессмысленно (сломана конфигурация — это чинится
+деплоем), 503 — стоит, зависимость может ответить через секунду.
 
 ### Загрузка
 
@@ -73,7 +115,8 @@ POST /api/files/:id/complete
 Вызов `complete` не опционален. Пока он не выполнен, запись остаётся в статусе `pending`, и именно он
 заполняет `size` и `etag` — они вычитываются из S3 через `HeadObject`, а не берутся на веру у клиента.
 Вызов идемпотентен и возвращает `409 UPLOAD_NOT_COMPLETED`, если по зарезервированному ключу так и не
-появился объект.
+появился объект. Запись в статусе `failed` (её уже успел разобрать `db:cleanup`) он тоже примет, если
+объект в хранилище всё-таки есть: это значит, что загрузка прошла, а потерялось лишь подтверждение.
 
 ### Чтение
 
@@ -138,8 +181,9 @@ GET /api/directories?parent=docs         → { parent, items: [{ name, path, fil
 ```
 src/
   config.ts logger.ts errors.ts app.ts server.ts
-  db/        pool.ts, migrate.ts, migrations/
-  s3/        client.ts (специфика Cloud.ru), keys.ts (именование и санитизация)
+  db/        pool.ts, errors.ts (трансляция ошибок pg), migrate.ts, migrations/
+  s3/        client.ts (специфика Cloud.ru), keys.ts (именование и санитизация),
+             errors.ts (трансляция ошибок AWS SDK)
   middleware/ api-key.ts, upload.ts, validate.ts, error-handler.ts
   modules/files/  routes → service → repo, плюс schemas/types/mapper
   scripts/   s3-cors.ts, cleanup-pending.ts

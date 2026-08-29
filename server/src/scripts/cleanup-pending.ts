@@ -1,8 +1,9 @@
-import { HeadObjectCommand, NotFound } from "@aws-sdk/client-s3";
+import { HeadObjectCommand } from "@aws-sdk/client-s3";
 import { config } from "../config.js";
 import { pool } from "../db/pool.js";
 import { logger } from "../logger.js";
 import { s3 } from "../s3/client.js";
+import { isS3NotFound } from "../s3/errors.js";
 import * as repo from "../modules/files/files.repo.js";
 
 /**
@@ -39,10 +40,7 @@ async function main(): Promise<void> {
         "Recovered pending upload",
       );
     } catch (error) {
-      if (
-        error instanceof NotFound ||
-        (error as { name?: string }).name === "NotFound"
-      ) {
+      if (isS3NotFound(error)) {
         await repo.markFileFailed(file.id);
         failed += 1;
         logger.info(
