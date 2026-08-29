@@ -1,8 +1,8 @@
 <script setup lang="ts">
-import { ref, watch } from "vue"
-import type { FileDto } from "@/types/api"
-import { Badge } from "@/components/ui/badge"
-import { Button } from "@/components/ui/button"
+import { ref, watch } from "vue";
+import type { FileDto } from "@/types/api";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import {
   Dialog,
   DialogContent,
@@ -10,64 +10,66 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-} from "@/components/ui/dialog"
-import { Skeleton } from "@/components/ui/skeleton"
-import { getFile } from "@/api/files"
-import { errorMessage } from "@/lib/errors"
-import { formatBytes, formatDate } from "@/lib/format"
-import { useFileActions } from "@/composables/useFileActions"
+} from "@/components/ui/dialog";
+import { Skeleton } from "@/components/ui/skeleton";
+import { getFile } from "@/api/files";
+import { errorMessage } from "@/lib/errors";
+import { formatBytes, formatDate } from "@/lib/format";
+import { useFileActions } from "@/composables/useFileActions";
 
-const props = defineProps<{ file: FileDto | null; open: boolean }>()
+const props = defineProps<{ file: FileDto | null; open: boolean }>();
+
+const s3Host = import.meta.env.VITE_S3_HOST;
 
 const emit = defineEmits<{
-  "update:open": [value: boolean]
-  download: [file: FileDto]
-  remove: [file: FileDto]
-}>()
+  "update:open": [value: boolean];
+  download: [file: FileDto];
+  remove: [file: FileDto];
+}>();
 
-const actions = useFileActions()
+const actions = useFileActions();
 
 // Данные в списке могут быть устаревшими, поэтому карточку дозапрашиваем.
-const fresh = ref<FileDto | null>(null)
-const loading = ref(false)
-const error = ref<string | null>(null)
+const fresh = ref<FileDto | null>(null);
+const loading = ref(false);
+const error = ref<string | null>(null);
 
 watch(
   () => [props.open, props.file?.id] as const,
   async ([open, id]) => {
     if (!open || !id) {
-      return
+      return;
     }
 
-    fresh.value = null
-    error.value = null
-    loading.value = true
+    fresh.value = null;
+    error.value = null;
+    loading.value = true;
 
     try {
-      fresh.value = await getFile(id, true)
+      fresh.value = await getFile(id, true);
     } catch (cause) {
-      error.value = errorMessage(cause, "Не удалось загрузить карточку файла")
+      error.value = errorMessage(cause, "Не удалось загрузить карточку файла");
     } finally {
-      loading.value = false
+      loading.value = false;
     }
   },
   { immediate: true },
-)
+);
 
 function download(): void {
-  const file = fresh.value
+  const file = fresh.value;
 
   if (!file) {
-    return
+    return;
   }
 
   // `downloadUrl` уже пришёл вместе с карточкой — второй запрос не нужен.
   if (file.downloadUrl) {
-    actions.downloadByUrl(file.downloadUrl)
-    return
+    actions.downloadByUrl(file.downloadUrl);
+    return;
   }
 
-  emit("download", file)
+  emit("download", file);
 }
 </script>
 
@@ -77,7 +79,11 @@ function download(): void {
       <DialogHeader>
         <DialogTitle class="break-all">{{ file?.name ?? "Файл" }}</DialogTitle>
         <DialogDescription>
-          {{ file?.directory ? `Директория: ${file.directory}` : "Директория: корень" }}
+          {{
+            file?.directory
+              ? `Директория: ${file.directory}`
+              : "Директория: корень"
+          }}
         </DialogDescription>
       </DialogHeader>
 
@@ -126,6 +132,13 @@ function download(): void {
 
         <dt class="text-muted-foreground">Ключ объекта</dt>
         <dd class="font-mono text-xs break-all">{{ fresh.key }}</dd>
+
+        <dt class="text-muted-foreground">Статичный url</dt>
+        <dd class="font-mono text-xs break-all">
+          <a target="_blank" :href="`${s3Host}/${fresh.key}`"
+            >{{ s3Host }}/{{ fresh.key }}</a
+          >
+        </dd>
 
         <dt class="text-muted-foreground">Создан</dt>
         <dd>{{ formatDate(fresh.createdAt) }}</dd>
