@@ -6,6 +6,7 @@ import {
   PaperclipIcon,
   ServerIcon,
   UploadIcon,
+  XIcon,
 } from "@lucide/vue";
 import { toast } from "vue-sonner";
 import type { UploadMode } from "@/composables/useUpload";
@@ -28,9 +29,10 @@ import {
   FieldLabel,
 } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
+import { Progress } from "@/components/ui/progress";
 import { Spinner } from "@/components/ui/spinner";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
-import { isApiError } from "@/api/client";
+import { isAbortError, isApiError } from "@/api/client";
 import { errorMessage } from "@/lib/errors";
 import {
   MAX_DIRECTORY_BYTES,
@@ -108,19 +110,40 @@ const oversized = computed(
 const STAGE_LABELS: Record<string, string> = {
   presigning: "Готовим ссылку…",
   sending: "Отправляем…",
+  processing: "Обрабатываем…",
   completing: "Подтверждаем…",
 };
 
+const stageLabel = computed(
+  () => STAGE_LABELS[upload.stage.value] ?? "Отправляем…",
+);
+
+// Подробности стадии живут в блоке прогресса — на кнопке они бы дублировались.
 const submitLabel = computed(() =>
-  upload.uploading.value
-    ? (STAGE_LABELS[upload.stage.value] ?? "Отправляем…")
-    : "Загрузить",
+  upload.uploading.value ? "Загрузка…" : "Загрузить",
+);
+
+// Проценты движутся только на стадии отправки тела — на остальных шкала замирает.
+const indeterminate = computed(
+  () => upload.uploading.value && upload.stage.value !== "sending",
+);
+
+const waitingForServer = computed(
+  () =>
+    upload.stage.value === "processing" || upload.stage.value === "completing",
 );
 
 function setMode(value: unknown): void {
   // ToggleGroup в режиме single умеет снимать выбор — пустое значение игнорируем.
   if (value === "server" || value === "presigned") {
     upload.mode.value = value as UploadMode;
+  }
+}
+
+// Пока байты идут, закрытие диалога только прячет прогресс — загрузка не прервётся.
+function blockWhileUploading(event: Event): void {
+  if (upload.uploading.value) {
+    event.preventDefault();
   }
 }
 
@@ -159,6 +182,12 @@ async function submit(): Promise<void> {
       browser.refresh();
     }
   } catch (error) {
+    if (isAbortError(error)) {
+      // Файл и диалог оставляем как есть — отмена обычно означает «выберу другой».
+      toast.info("Загрузка отменена");
+      return;
+    }
+
     if (isApiError(error) && error.status === 413) {
       toast.error(errorMessage(error), {
         description:
@@ -182,7 +211,12 @@ async function submit(): Promise<void> {
 
 <template>
   <Dialog :open="open" @update:open="emit('update:open', $event)">
-    <DialogContent class="sm:max-w-lg">
+    <DialogContent
+      class="sm:max-w-lg"
+      :show-close-button="!upload.uploading.value"
+      @escape-key-down="blockWhileUploading"
+      @interact-outside="blockWhileUploading"
+    >
       <DialogHeader>
         <DialogTitle>Загрузка файла</DialogTitle>
         <DialogDescription>
@@ -197,6 +231,7 @@ async function submit(): Promise<void> {
           <ToggleGroup
             type="single"
             variant="outline"
+            :disabled="upload.uploading.value"
             :model-value="upload.mode.value"
             @update:model-value="setMode"
           >
@@ -227,6 +262,7 @@ async function submit(): Promise<void> {
             id="directory"
             v-model="directoryInput"
             placeholder="docs/reports"
+            :disabled="upload.uploading.value"
             :aria-invalid="directoryError ? true : undefined"
             @input="dirty = true"
           />
@@ -250,7 +286,12 @@ async function submit(): Promise<void> {
         <Field>
           <FieldLabel>Файл</FieldLabel>
           <div class="flex flex-wrap items-center gap-3">
-            <Button type="button" variant="outline" @click="openFileDialog()">
+            <Button
+              type="button"
+              variant="outline"
+              :disabled="upload.uploading.value"
+              @click="openFileDialog()"
+            >
               <PaperclipIcon data-icon="inline-start" />
               Выбрать файл
             </Button>
@@ -272,10 +313,38 @@ async function submit(): Promise<void> {
             ответит 413. Отправку это не блокирует.
           </FieldDescription>
         </Field>
+
+        <Field v-if="upload.uploading.value">
+          <div class="flex items-center justify-between gap-2 text-sm">
+            <span>{{ stageLabel }}</span>
+            <span class="text-muted-foreground tabular-nums">
+              {{ upload.percent.value }}%
+            </span>
+          </div>
+          <Progress
+            aria-label="Прогресс загрузки"
+            :model-value="upload.percent.value"
+            :class="indeterminate ? 'animate-pulse' : undefined"
+          />
+          <FieldDescription>
+            {{ formatBytes(upload.sentBytes.value) }} из
+            {{ formatBytes(upload.totalBytes.value) }}
+            <template v-if="waitingForServer"> — ждём ответ </template>
+          </FieldDescription>
+        </Field>
       </FieldGroup>
 
       <DialogFooter>
-        <DialogClose as-child>
+        <Button
+          v-if="upload.uploading.value"
+          variant="outline"
+          :disabled="!upload.cancellable.value"
+          @click="upload.cancel"
+        >
+          <XIcon data-icon="inline-start" />
+          Отменить
+        </Button>
+        <DialogClose v-else as-child>
           <Button variant="outline">Отмена</Button>
         </DialogClose>
         <Button

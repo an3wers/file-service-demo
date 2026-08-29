@@ -153,3 +153,117 @@ export async function apiRequest<T>(
 
   return parseBody(text) as T;
 }
+
+/** Прогресс отправки тела запроса. `total === null` — размер неизвестен. */
+export interface UploadProgress {
+  loaded: number;
+  total: number | null;
+}
+
+export interface UploadOptions {
+  onProgress?: (progress: UploadProgress) => void;
+  /** Тело ушло целиком, но ответ ещё не получен: дальше ждём сервер/хранилище. */
+  onSent?: () => void;
+  signal?: AbortSignal;
+}
+
+type XhrOptions = UploadOptions & { headers?: Record<string, string> };
+
+function abortError(): DOMException {
+  // Ровно та же форма ошибки, что у fetch, — её ловит `isAbortError`.
+  return new DOMException("The operation was aborted.", "AbortError");
+}
+
+/**
+ * fetch не сообщает, сколько байт тела уже ушло, поэтому файлы отправляем через
+ * XHR. Возвращает сырой ответ: трактовка статуса — на вызывающем, у сервера и у
+ * S3 она разная.
+ */
+export function xhrSend(
+  method: string,
+  url: string,
+  body: XMLHttpRequestBodyInit,
+  options: XhrOptions = {},
+): Promise<{ status: number; text: string }> {
+  const { headers = {}, onProgress, onSent, signal } = options;
+
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(abortError());
+
+      return;
+    }
+
+    const xhr = new XMLHttpRequest();
+    const abort = (): void => xhr.abort();
+    const settle = (finish: () => void): void => {
+      signal?.removeEventListener("abort", abort);
+      finish();
+    };
+
+    xhr.open(method, url, true);
+
+    for (const [name, value] of Object.entries(headers)) {
+      xhr.setRequestHeader(name, value);
+    }
+
+    // События прогресса живут на xhr.upload — на самом xhr это загрузка ОТВЕТА.
+    xhr.upload.addEventListener("progress", (event) => {
+      onProgress?.({
+        loaded: event.loaded,
+        total: event.lengthComputable ? event.total : null,
+      });
+    });
+
+    xhr.upload.addEventListener("load", () => onSent?.());
+
+    xhr.addEventListener("load", () => {
+      settle(() => resolve({ status: xhr.status, text: xhr.responseText }));
+    });
+
+    xhr.addEventListener("error", () => {
+      // Сюда же приходит непрозрачный CORS-сбой: деталей браузер не даёт.
+      settle(() => reject(new ApiError(0, "NETWORK_ERROR", "Сервер недоступен")));
+    });
+
+    xhr.addEventListener("timeout", () => {
+      settle(() => reject(new ApiError(0, "NETWORK_ERROR", "Сервер недоступен")));
+    });
+
+    xhr.addEventListener("abort", () => {
+      settle(() => reject(abortError()));
+    });
+
+    signal?.addEventListener("abort", abort, { once: true });
+
+    xhr.send(body);
+  });
+}
+
+/**
+ * Аналог `apiRequest` для отправки файла: тот же префикс, ключ и разбор ошибок,
+ * но поверх XHR — ради прогресса.
+ */
+export async function apiUpload<T>(
+  path: string,
+  body: XMLHttpRequestBodyInit,
+  options: UploadOptions = {},
+): Promise<T> {
+  const { status, text } = await xhrSend("POST", `/api${path}`, body, {
+    ...options,
+    // Content-Type не трогаем: у FormData его вместе с boundary ставит браузер.
+    headers: { "X-API-Key": import.meta.env.VITE_API_KEY },
+  });
+
+  if (status === 204) {
+    return undefined as unknown as T;
+  }
+
+  if (status < 200 || status >= 300) {
+    const { code, message, details } = parseErrorBody(status, text);
+
+    throw new ApiError(status, code, message, details);
+  }
+
+  return parseBody(text) as T;
+}
