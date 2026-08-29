@@ -2,8 +2,22 @@ import { toast } from "vue-sonner"
 import type { FileDto } from "@/types/api"
 import { deleteFile, getDownloadUrl } from "@/api/files"
 import { isApiError } from "@/api/client"
-import { errorMessage } from "@/lib/errors"
+import { errorMessage, isRetryable, requestReference } from "@/lib/errors"
 import { useFileBrowser } from "./useFileBrowser"
+
+/**
+ * Общая обвязка тоста ошибки: номер обращения для 5xx (по нему причина ищется в
+ * логе сервера) и повтор действия там, где он осмыслен — при 502 конфигурация
+ * сервера сломана, и повторять нечего.
+ */
+function errorToast(error: unknown, fallback: string, retry: () => void): void {
+  toast.error(errorMessage(error, fallback), {
+    description: requestReference(error) ?? undefined,
+    action: isRetryable(error)
+      ? { label: "Повторить", onClick: () => retry() }
+      : undefined,
+  })
+}
 
 /**
  * Навигация, а не `window.open`: после `await` открытие окна попадает под
@@ -24,7 +38,9 @@ async function download(file: FileDto): Promise<void> {
 
     navigateToDownload(url)
   } catch (error) {
-    toast.error(errorMessage(error, "Не удалось получить ссылку на скачивание"))
+    errorToast(error, "Не удалось получить ссылку на скачивание", () =>
+      void download(file),
+    )
   }
 }
 
@@ -48,7 +64,11 @@ async function remove(file: FileDto): Promise<void> {
       return
     }
 
-    toast.error(errorMessage(error, "Не удалось удалить файл"))
+    // Повтор из тоста идёт мимо диалога, поэтому проброс наверх здесь гасим:
+    // ошибку второй попытки покажет тот же `errorToast`.
+    errorToast(error, "Не удалось удалить файл", () => {
+      void remove(file).catch(() => undefined)
+    })
     throw error
   }
 }

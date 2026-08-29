@@ -4,6 +4,8 @@ export class ApiError extends Error {
   status: number;
   code: string;
   details?: unknown;
+  /** Тот же id, что и в строке лога сервера; есть только у JSON-ошибок API. */
+  requestId?: string | number;
 
   // Параметры-свойства (`constructor(readonly x)`) запрещены `erasableSyntaxOnly`.
   constructor(
@@ -11,12 +13,14 @@ export class ApiError extends Error {
     code: string,
     message: string,
     details?: unknown,
+    requestId?: string | number,
   ) {
     super(message);
     this.name = "ApiError";
     this.status = status;
     this.code = code;
     this.details = details;
+    this.requestId = requestId;
   }
 }
 
@@ -83,7 +87,12 @@ function parseBody(text: string): unknown {
 export function parseErrorBody(
   status: number,
   text: string,
-): { code: string; message: string; details?: unknown } {
+): {
+  code: string;
+  message: string;
+  details?: unknown;
+  requestId?: string | number;
+} {
   const body = parseBody(text) as ApiErrorBody | null;
 
   if (body?.error?.code) {
@@ -91,6 +100,8 @@ export function parseErrorBody(
       code: body.error.code,
       message: body.error.message || `HTTP ${status}`,
       details: body.error.details,
+      // Только у ответа сервера: ни у XML от S3, ни у фолбэка ниже его нет.
+      requestId: body.error.requestId,
     };
   }
 
@@ -146,9 +157,12 @@ export async function apiRequest<T>(
   const text = await response.text();
 
   if (!response.ok) {
-    const { code, message, details } = parseErrorBody(response.status, text);
+    const { code, message, details, requestId } = parseErrorBody(
+      response.status,
+      text,
+    );
 
-    throw new ApiError(response.status, code, message, details);
+    throw new ApiError(response.status, code, message, details, requestId);
   }
 
   return parseBody(text) as T;
@@ -260,9 +274,9 @@ export async function apiUpload<T>(
   }
 
   if (status < 200 || status >= 300) {
-    const { code, message, details } = parseErrorBody(status, text);
+    const { code, message, details, requestId } = parseErrorBody(status, text);
 
-    throw new ApiError(status, code, message, details);
+    throw new ApiError(status, code, message, details, requestId);
   }
 
   return parseBody(text) as T;

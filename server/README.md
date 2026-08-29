@@ -17,7 +17,10 @@ npm run dev
 |---|---|
 | `npm run dev` | сервер в watch-режиме |
 | `npm run build` / `npm start` | сборка в `dist/` и запуск |
-| `npm run typecheck` | `tsc --noEmit` |
+| `npm run typecheck` | `tsc` по `tsconfig.test.json` — исходники и тесты одним проходом |
+| `npm test` | один прогон vitest |
+| `npm run test:watch` | vitest в watch-режиме |
+| `npm run test:coverage` | покрытие (нужен `@vitest/coverage-v8`) |
 | `npm run db:migrate` | применяет `src/db/migrations/*.sql`, история в `schema_migrations` |
 | `npm run db:cleanup` | разбирает presigned-загрузки, которые так и не подтвердили |
 | `npm run s3:cors` | применяет CORS-правила бакета для `CORS_ORIGIN` |
@@ -176,6 +179,28 @@ GET /api/directories?parent=docs         → { parent, items: [{ name, path, fil
 - **`src/middleware/validate.ts`** кладёт провалидированные query-строки и параметры маршрута в
   `res.locals`, потому что в Express 5 `req.query` доступен только на чтение.
 
+## Тесты
+
+Vitest, конфигурация в `vitest.config.ts`.
+
+```bash
+npm test               # один прогон
+npm run test:watch     # watch-режим
+npm run test:coverage  # покрытие; требует npm i -D @vitest/coverage-v8
+```
+
+Тесты лежат рядом с кодом — `src/**/*.test.ts`. В `tsconfig.json` они исключены, поэтому в `dist/` не
+попадают, а `npm run typecheck` проверяет их вместе с исходниками через `tsconfig.test.json`.
+
+Окружение задано фиктивными значениями прямо в `vitest.config.ts` (`test.env`) и перекрывает `.env`.
+Иначе никак: `src/config.ts` валидирует переменные на импорте и завершает процесс при нехватке любой
+из них, так что без полного набора не поднимется ни один модуль, который его импортирует. Заодно
+прогон перестаёт зависеть от того, что лежит в локальном `.env`.
+
+Набор покрывает логику, которой не нужны ни S3, ни база: именование и санитизация ключей, трансляция
+ошибок pg и AWS SDK, маппер `FileDto`, сверка API-ключа. Для тестов на уровне HTTP-маршрутов
+понадобится `supertest` — он пока не установлен.
+
 ## Структура
 
 ```
@@ -187,4 +212,5 @@ src/
   middleware/ api-key.ts, upload.ts, validate.ts, error-handler.ts
   modules/files/  routes → service → repo, плюс schemas/types/mapper
   scripts/   s3-cors.ts, cleanup-pending.ts
+  **/*.test.ts  тесты рядом с модулями, которые они проверяют
 ```

@@ -68,10 +68,11 @@ export interface DownloadUrlResponse {
 }
 
 export interface ApiErrorBody {
-  error: { code: string; message: string; details?: unknown }
+  /** `requestId` присваивает `pino-http` — по нему ошибка ищется в логе сервера. */
+  error: { code: string; message: string; details?: unknown; requestId?: string | number }
 }
 
-/** Форма `details` у 422 VALIDATION_ERROR — это `z.flatten()`. */
+/** Форма `details` у 422 VALIDATION_ERROR — это `z.flattenError()`. */
 export interface ValidationDetails {
   formErrors: string[]
   fieldErrors: Record<string, string[]>

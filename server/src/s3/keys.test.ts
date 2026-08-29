@@ -1,0 +1,158 @@
+import { describe, expect, it } from "vitest";
+import { AppError, ERROR_CODES } from "../errors.js";
+import {
+  buildObjectKey,
+  contentDisposition,
+  decodeOriginalName,
+  fileExtension,
+  normalizeDirectory,
+  sanitizeFileName,
+} from "./keys.js";
+
+/** Возвращает выброшенную ошибку, чтобы проверить её код, а не только факт броска. */
+function thrownBy(run: () => unknown): AppError {
+  try {
+    run();
+  } catch (error) {
+    return error as AppError;
+  }
+
+  throw new Error("Expected the call to throw, but it returned");
+}
+
+describe("normalizeDirectory", () => {
+  it("treats empty input as the bucket root", () => {
+    expect(normalizeDirectory(undefined)).toBe("");
+    expect(normalizeDirectory(null)).toBe("");
+    expect(normalizeDirectory("")).toBe("");
+    expect(normalizeDirectory("///")).toBe("");
+  });
+
+  it("collapses separators and trims segments", () => {
+    expect(normalizeDirectory("//docs// 2026 /reports/")).toBe("docs/2026/reports");
+  });
+
+  it("accepts backslashes as separators", () => {
+    expect(normalizeDirectory("docs\\2026")).toBe("docs/2026");
+  });
+
+  it("rejects traversal segments", () => {
+    for (const input of ["..", "docs/../etc", "./docs"]) {
+      expect(thrownBy(() => normalizeDirectory(input))).toMatchObject({
+        statusCode: 400,
+        code: ERROR_CODES.INVALID_DIRECTORY,
+      });
+    }
+  });
+
+  it("rejects control characters", () => {
+    expect(thrownBy(() => normalizeDirectory("docs/a\u0007b")).code).toBe(
+      ERROR_CODES.INVALID_DIRECTORY,
+    );
+  });
+
+  it("rejects an over-long segment", () => {
+    expect(thrownBy(() => normalizeDirectory("a".repeat(101))).code).toBe(
+      ERROR_CODES.INVALID_DIRECTORY,
+    );
+  });
+
+  it("rejects a path over the byte budget", () => {
+    const path = Array.from({ length: 8 }, () => "a".repeat(100)).join("/");
+
+    expect(thrownBy(() => normalizeDirectory(path)).code).toBe(ERROR_CODES.INVALID_DIRECTORY);
+  });
+});
+
+describe("sanitizeFileName", () => {
+  it("keeps only the last path segment", () => {
+    expect(sanitizeFileName("/tmp/report.pdf")).toBe("report.pdf");
+    expect(sanitizeFileName("C:\\Users\\me\\photo.png")).toBe("photo.png");
+    expect(sanitizeFileName("  spaced.txt  ")).toBe("spaced.txt");
+  });
+
+  it("truncates to 255 characters", () => {
+    expect(sanitizeFileName(`${"n".repeat(300)}.txt`)).toHaveLength(255);
+  });
+
+  it("rejects names that carry no usable file name", () => {
+    for (const input of ["", "   ", "docs/", "..", "bad\u0000name"]) {
+      expect(thrownBy(() => sanitizeFileName(input)).code).toBe(ERROR_CODES.INVALID_FILE_NAME);
+    }
+  });
+});
+
+describe("decodeOriginalName", () => {
+  it("leaves ASCII names alone", () => {
+    expect(decodeOriginalName("report.pdf")).toBe("report.pdf");
+  });
+
+  it("leaves already-decoded names alone", () => {
+    expect(decodeOriginalName("Отчёт.pdf")).toBe("Отчёт.pdf");
+  });
+
+  it("repairs a UTF-8 name that arrived as latin1 bytes", () => {
+    const original = "Отчёт за 2026.pdf";
+    const mojibake = Buffer.from(original, "utf8").toString("latin1");
+
+    expect(mojibake).not.toBe(original);
+    expect(decodeOriginalName(mojibake)).toBe(original);
+  });
+
+  it("keeps a latin1 name that is not valid UTF-8", () => {
+    expect(decodeOriginalName("café.txt")).toBe("café.txt");
+  });
+});
+
+describe("fileExtension", () => {
+  it("lowercases and drops the dot", () => {
+    expect(fileExtension("Report.PDF")).toBe("pdf");
+    expect(fileExtension("archive.tar.gz")).toBe("gz");
+  });
+
+  it("returns an empty string when there is nothing usable", () => {
+    expect(fileExtension("README")).toBe("");
+    expect(fileExtension("trailing.")).toBe("");
+    expect(fileExtension("файл.документ")).toBe("");
+  });
+});
+
+describe("buildObjectKey", () => {
+  it("names the object after a fresh uuid, not the original file", () => {
+    const { id, key, extension } = buildObjectKey("docs/2026", "Отчёт.PDF");
+
+    expect(extension).toBe("pdf");
+    expect(key).toBe(`docs/2026/${id}.pdf`);
+    expect(id).toMatch(/^[0-9a-f-]{36}$/);
+  });
+
+  it("keeps root keys free of a leading slash", () => {
+    const { id, key } = buildObjectKey("", "notes");
+
+    expect(key).toBe(id);
+  });
+
+  it("never repeats a key", () => {
+    const first = buildObjectKey("docs", "a.txt");
+    const second = buildObjectKey("docs", "a.txt");
+
+    expect(first.key).not.toBe(second.key);
+  });
+});
+
+describe("contentDisposition", () => {
+  it("carries both an ASCII fallback and the UTF-8 name", () => {
+    const name = 'Отчёт "v2".pdf';
+    const header = contentDisposition(name, "attachment");
+
+    expect(header).toBe(
+      `attachment; filename="_____ _v2_.pdf"; filename*=UTF-8''${encodeURIComponent(name)}`,
+    );
+  });
+
+  it("honours the inline disposition", () => {
+    expect(contentDisposition("a.png", "inline")).toBe(
+      "inline; filename=\"a.png\"; filename*=UTF-8''a.png",
+    );
+  });
+});

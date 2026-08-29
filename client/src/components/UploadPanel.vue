@@ -33,7 +33,7 @@ import { Progress } from "@/components/ui/progress";
 import { Spinner } from "@/components/ui/spinner";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { isAbortError, isApiError } from "@/api/client";
-import { errorMessage } from "@/lib/errors";
+import { errorMessage, isRetryable, requestReference } from "@/lib/errors";
 import {
   MAX_DIRECTORY_BYTES,
   checkDirectory,
@@ -188,7 +188,9 @@ async function submit(): Promise<void> {
       return;
     }
 
-    if (isApiError(error) && error.status === 413) {
+    // Ветка по коду, а не по статусу: код гарантирован сервером, а 413 в будущем
+    // может прийти и от чего-то другого.
+    if (isApiError(error) && error.code === "PAYLOAD_TOO_LARGE") {
       toast.error(errorMessage(error), {
         description:
           "Переключитесь на режим «Напрямую в S3» — на него лимит не действует",
@@ -204,7 +206,13 @@ async function submit(): Promise<void> {
       return;
     }
 
-    toast.error(errorMessage(error, "Не удалось загрузить файл"));
+    toast.error(errorMessage(error, "Не удалось загрузить файл"), {
+      // Номер обращения — единственное, по чему причину 5xx найдут в логе сервера.
+      description: requestReference(error) ?? undefined,
+      action: isRetryable(error)
+        ? { label: "Повторить", onClick: () => void submit() }
+        : undefined,
+    });
   }
 }
 </script>

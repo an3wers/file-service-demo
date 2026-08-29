@@ -73,8 +73,18 @@ const skeletonRows = [0, 1, 2, 3, 4]
       <TriangleAlertIcon />
       <AlertTitle>Не удалось загрузить список</AlertTitle>
       <AlertDescription>
-        <p>{{ browser.error.value }}</p>
-        <Button variant="outline" size="sm" class="mt-2" @click="browser.refresh()">
+        <p>{{ browser.error.value.message }}</p>
+        <p v-if="browser.error.value.reference" class="opacity-80">
+          {{ browser.error.value.reference }}
+        </p>
+        <!-- Кнопки нет, когда повтор заведомо бесполезен: 502 чинится деплоем. -->
+        <Button
+          v-if="browser.error.value.retryable"
+          variant="outline"
+          size="sm"
+          class="mt-2"
+          @click="browser.refresh()"
+        >
           <RefreshCwIcon data-icon="inline-start" />
           Повторить
         </Button>

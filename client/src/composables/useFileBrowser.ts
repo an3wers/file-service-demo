@@ -4,7 +4,16 @@ import type { DirectoryDto, FileDto, Pagination, SortField, SortOrder } from "@/
 import { listDirectories } from "@/api/directories"
 import { listFiles } from "@/api/files"
 import { isAbortError } from "@/api/client"
-import { errorMessage } from "@/lib/errors"
+import { errorMessage, isRetryable, requestReference } from "@/lib/errors"
+
+/** Ошибка списка: текст плюс то, что решает, как её показать. */
+export interface BrowserError {
+  message: string
+  /** Повтор имеет смысл (503 или сетевой сбой) — в UI появляется «Повторить». */
+  retryable: boolean
+  /** «Код обращения: N» для 5xx, иначе `null`. */
+  reference: string | null
+}
 
 /**
  * Состояние живёт на уровне модуля: страница одна, браузер файлов один. Так
@@ -23,7 +32,7 @@ const files = ref<FileDto[]>([])
 const directories = ref<DirectoryDto[]>([])
 const pagination = ref<Pagination | null>(null)
 const loading = ref(false)
-const error = ref<string | null>(null)
+const error = ref<BrowserError | null>(null)
 
 let controller: AbortController | null = null
 let requestId = 0
@@ -91,7 +100,11 @@ async function load(): Promise<void> {
     files.value = []
     directories.value = []
     pagination.value = null
-    error.value = errorMessage(cause, "Не удалось загрузить список файлов")
+    error.value = {
+      message: errorMessage(cause, "Не удалось загрузить список файлов"),
+      retryable: isRetryable(cause),
+      reference: requestReference(cause),
+    }
   } finally {
     if (id === requestId) {
       loading.value = false

@@ -105,7 +105,12 @@ async function uploadPresigned(
     return await completeUpload(reservation.id)
   } catch (error) {
     // S3 бывает виден не мгновенно — одна повторная попытка и только потом ошибка.
-    if (isApiError(error) && error.code === "UPLOAD_NOT_COMPLETED") {
+    // 503 здесь про то же самое: сервер не достучался до S3 на `HeadObject`, и это
+    // временный сбой, а не отказ (502 — уже отказ, его не повторяем).
+    if (
+      isApiError(error) &&
+      (error.code === "UPLOAD_NOT_COMPLETED" || error.status === 503)
+    ) {
       await delay(800)
 
       return await completeUpload(reservation.id)
