@@ -3,6 +3,8 @@ import type {
   FileDto,
   ListFilesResponse,
   ListStatusFilter,
+  MultipartStatusResponse,
+  PartUrlsResponse,
   PresignUploadResponse,
   SortField,
   SortOrder,
@@ -75,19 +77,19 @@ export function presignUpload(
 
 /**
  * Голый XHR в обход `apiRequest`: это чужой origin (S3), туда не идут ни
- * `X-API-Key`, ни credentials. Заголовки — РОВНО `requiredHeaders` из ответа
- * сервера, потому что именно они попали в подпись.
+ * `X-API-Key`, ни credentials. Заголовки — РОВНО те, что попали в подпись:
+ * любой лишний браузеру пришлось бы воспроизвести байт-в-байт.
  */
-export async function putToPresignedUrl(
+async function putToS3(
   url: string,
-  file: File,
+  body: Blob,
   headers: Record<string, string>,
-  options: UploadOptions = {},
+  options: UploadOptions,
 ): Promise<void> {
   let response: { status: number; text: string }
 
   try {
-    response = await xhrSend("PUT", url, file, { ...options, headers })
+    response = await xhrSend("PUT", url, body, { ...options, headers })
   } catch (error) {
     if (isAbortError(error)) {
       throw error
@@ -102,6 +104,57 @@ export async function putToPresignedUrl(
 
     throw new ApiError(response.status, "S3_UPLOAD_FAILED", message, details)
   }
+}
+
+/** Весь файл одним PUT: заголовки берутся из `requiredHeaders` ответа сервера. */
+export function putToPresignedUrl(
+  url: string,
+  file: File,
+  headers: Record<string, string>,
+  options: UploadOptions = {},
+): Promise<void> {
+  return putToS3(url, file, headers, options)
+}
+
+/**
+ * Одна часть multipart-загрузки. Заголовков нет ни одного, и это не упущение:
+ * сервер подписывает часть голой (`Bucket`, `Key`, `UploadId`, `PartNumber`), а
+ * Content-Type объекта зафиксирован ещё при открытии загрузки. Срез
+ * `file.slice()` отдаёт Blob с пустым `type`, поэтому Content-Type браузер тоже
+ * не подставит — подпись сходится.
+ */
+export function putPart(
+  url: string,
+  part: Blob,
+  options: UploadOptions = {},
+): Promise<void> {
+  return putToS3(url, part, {}, options)
+}
+
+/**
+ * Следующая пачка ссылок на части — и она же способ заменить протухшую: подписи
+ * живут `PRESIGN_PART_TTL_SECONDS`, а загрузка может идти дольше. Больше
+ * `MULTIPART_URL_BATCH` номеров за раз сервер не примет (422).
+ */
+export function fetchPartUrls(
+  id: string,
+  partNumbers: number[],
+  signal?: AbortSignal,
+): Promise<PartUrlsResponse> {
+  return apiRequest<PartUrlsResponse>(`/files/${id}/multipart/part-urls`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ partNumbers }),
+    signal,
+  })
+}
+
+/** Что из частей реально долетело: ответ строится по `ListParts`, а не по базе. */
+export function getMultipartStatus(
+  id: string,
+  signal?: AbortSignal,
+): Promise<MultipartStatusResponse> {
+  return apiRequest<MultipartStatusResponse>(`/files/${id}/multipart`, { signal })
 }
 
 export function completeUpload(id: string): Promise<FileDto> {

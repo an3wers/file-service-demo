@@ -4,7 +4,7 @@
  */
 
 export type FileStatus = "pending" | "ready" | "failed"
-export type UploadSource = "server" | "presigned"
+export type UploadSource = "server" | "presigned" | "multipart"
 export type SortField = "created_at" | "original_name" | "size_bytes"
 export type SortOrder = "asc" | "desc"
 export type ListStatusFilter = FileStatus | "any"
@@ -51,7 +51,19 @@ export interface DirectoriesResponse {
   items: DirectoryDto[]
 }
 
-export interface PresignUploadResponse {
+/**
+ * Одна часть плана. `offset`/`size` считает сервер — клиент подставляет их прямо
+ * в `file.slice(offset, offset + size)` и ничего не пересчитывает.
+ */
+export interface MultipartPartDto {
+  partNumber: number
+  offset: number
+  size: number
+  url: string
+}
+
+export interface PresignSingleResponse {
+  strategy: "single"
   id: string
   key: string
   directory: string
@@ -59,6 +71,50 @@ export interface PresignUploadResponse {
   expiresAt: string
   /** Фактически `{ "Content-Type": string }` — эти заголовки входят в подпись. */
   requiredHeaders: Record<string, string>
+}
+
+export interface PresignMultipartResponse {
+  strategy: "multipart"
+  id: string
+  key: string
+  directory: string
+  uploadId: string
+  size: number
+  partSize: number
+  partCount: number
+  /**
+   * Сколько частей держать в полёте. Число назначает сервер: он один знает и
+   * лимиты хранилища, и сколько загрузок идёт прямо сейчас. Своей константы у
+   * клиента быть не должно — иначе потолок меняется только релизом фронтенда.
+   */
+  maxConcurrency: number
+  /** Общий срок жизни всей пачки ссылок. */
+  expiresAt: string
+  /** Первая пачка — `min(partCount, MULTIPART_URL_BATCH)` ссылок. */
+  parts: MultipartPartDto[]
+}
+
+/**
+ * Стратегию выбирает сервер по присланному `size`; дискриминатор — `strategy`.
+ * Ответ без него (сервер до multipart) разбирается как `single`, потому что
+ * ветвление идёт по `strategy === "multipart"`.
+ */
+export type PresignUploadResponse = PresignSingleResponse | PresignMultipartResponse
+
+export interface PartUrlsResponse {
+  expiresAt: string
+  parts: MultipartPartDto[]
+}
+
+/** Что реально лежит в S3: по нему догружаются недостающие части. */
+export interface MultipartStatusResponse {
+  id: string
+  uploadId: string
+  size: number | null
+  partSize: number | null
+  partCount: number | null
+  uploadedParts: number[]
+  uploadedBytes: number
 }
 
 export interface DownloadUrlResponse {

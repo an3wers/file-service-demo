@@ -9,6 +9,7 @@ import {
   XIcon,
 } from "@lucide/vue";
 import { toast } from "vue-sonner";
+import type { UploadSource } from "@/types/api";
 import type { UploadMode } from "@/composables/useUpload";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -107,6 +108,14 @@ const oversized = computed(
     selected.value.size > MAX_UPLOAD_SIZE_BYTES,
 );
 
+// Способ загрузки выбирает сервер (по размеру файла), поэтому в тосте показываем
+// то, что он вернул, а не то, что просил клиент.
+const SOURCE_LABELS: Record<UploadSource, string> = {
+  server: "Через сервер",
+  presigned: "Напрямую в S3 (presigned)",
+  multipart: "Частями напрямую в S3 (multipart)",
+};
+
 const STAGE_LABELS: Record<string, string> = {
   presigning: "Готовим ссылку…",
   sending: "Отправляем…",
@@ -126,6 +135,13 @@ const submitLabel = computed(() =>
 // Проценты движутся только на стадии отправки тела — на остальных шкала замирает.
 const indeterminate = computed(
   () => upload.uploading.value && upload.stage.value !== "sending",
+);
+
+// Ноль частей — обычная загрузка целиком: счётчику в таком случае нечего показывать.
+const partsLabel = computed(() =>
+  upload.partsTotal.value > 0
+    ? `часть ${Math.min(upload.partsDone.value + 1, upload.partsTotal.value)} из ${upload.partsTotal.value}`
+    : null,
 );
 
 const waitingForServer = computed(
@@ -165,10 +181,7 @@ async function submit(): Promise<void> {
     const result = await upload.upload(file, directory.value);
 
     toast.success(`Файл «${result.name}» загружен`, {
-      description:
-        result.uploadSource === "server"
-          ? "Через сервер"
-          : "Напрямую в S3 (presigned)",
+      description: SOURCE_LABELS[result.uploadSource],
     });
 
     upload.selectedFile.value = null;
@@ -193,7 +206,19 @@ async function submit(): Promise<void> {
     if (isApiError(error) && error.code === "PAYLOAD_TOO_LARGE") {
       toast.error(errorMessage(error), {
         description:
-          "Переключитесь на режим «Напрямую в S3» — на него лимит не действует",
+          upload.mode.value === "server"
+            ? `Через сервер проходит не больше ${MAX_UPLOAD_SIZE_MB} МБ — переключитесь на режим «Напрямую в S3»`
+            : "Файл больше потолка хранилища (MAX_OBJECT_SIZE_GB на сервере) — его не примет ни один режим",
+      });
+      return;
+    }
+
+    // 429 здесь — про занятые слоты, а не про частоту запросов: кнопки «Повторить»
+    // быть не должно, повтор упрётся в тот же слот (`isRetryable` его и не даёт).
+    if (isApiError(error) && error.code === "TOO_MANY_ACTIVE_UPLOADS") {
+      toast.error(errorMessage(error), {
+        description:
+          "Место освобождает завершение или отмена одной из идущих загрузок частями",
       });
       return;
     }
@@ -259,7 +284,8 @@ async function submit(): Promise<void> {
             </p>
             <p>
               Напрямую: presigned-PUT в хранилище и подтверждение загрузки,
-              лимита нет.
+              лимита нет. Большие файлы сервер сам разложит на части и пришлёт
+              план — грузить их можно параллельно.
             </p>
           </FieldDescription>
         </Field>
@@ -337,6 +363,7 @@ async function submit(): Promise<void> {
           <FieldDescription>
             {{ formatBytes(upload.sentBytes.value) }} из
             {{ formatBytes(upload.totalBytes.value) }}
+            <template v-if="partsLabel"> — {{ partsLabel }} </template>
             <template v-if="waitingForServer"> — ждём ответ </template>
           </FieldDescription>
         </Field>

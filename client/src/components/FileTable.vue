@@ -179,7 +179,7 @@ const skeletonRows = [0, 1, 2, 3, 4]
               </TableCell>
               <TableCell>
                 <Badge :variant="file.uploadSource === 'server' ? 'secondary' : 'outline'">
-                  {{ file.uploadSource === "server" ? "server" : "presigned" }}
+                  {{ file.uploadSource }}
                 </Badge>
               </TableCell>
               <TableCell class="text-right">
