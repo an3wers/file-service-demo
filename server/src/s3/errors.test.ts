@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { AppError, ERROR_CODES, notFound } from "../errors.js";
-import { isS3NotFound, storageError } from "./errors.js";
+import { isS3NoSuchUpload, isS3NotFound, storageError } from "./errors.js";
 
 const context = { operation: "getObject", bucket: "test-bucket", key: "docs/a.pdf" };
 
@@ -21,6 +21,19 @@ describe("isS3NotFound", () => {
   it("does not swallow other failures", () => {
     expect(isS3NotFound(awsError("AccessDenied", 403))).toBe(false);
     expect(isS3NotFound(null)).toBe(false);
+  });
+});
+
+describe("isS3NoSuchUpload", () => {
+  it("recognises the named error and the bare 404 behind it", () => {
+    expect(isS3NoSuchUpload(awsError("NoSuchUpload", 404))).toBe(true);
+    expect(isS3NoSuchUpload(awsError("NoSuchUpload"))).toBe(true);
+    expect(isS3NoSuchUpload(awsError("SomethingElse", 404))).toBe(true);
+  });
+
+  it("does not swallow other failures", () => {
+    expect(isS3NoSuchUpload(awsError("AccessDenied", 403))).toBe(false);
+    expect(isS3NoSuchUpload(null)).toBe(false);
   });
 });
 

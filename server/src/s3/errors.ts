@@ -62,6 +62,18 @@ export function isS3NotFound(error: unknown): boolean {
 }
 
 /**
+ * No upload answers to this id: it was completed, it was aborted, or it never
+ * existed. The SDK ships no `NoSuchUpload` exception class, so this goes by name
+ * and by the bare 404 the same way `isS3NotFound` does. Only call it on the
+ * multipart commands, where a 404 cannot mean anything else.
+ */
+export function isS3NoSuchUpload(error: unknown): boolean {
+  const shape = error as AwsErrorShape | null | undefined;
+
+  return shape?.name === "NoSuchUpload" || shape?.$metadata?.httpStatusCode === 404;
+}
+
+/**
  * Turns an AWS SDK failure into an AppError with a stable client-facing code.
  * Vendor internals (error name, request id, bucket, key) go to `logContext` so
  * they reach the log without being served to the caller.

@@ -41,7 +41,15 @@ npm run dev
 | `MAX_UPLOAD_SIZE_MB` | `50` | только для загрузок через сервер |
 | `PRESIGN_UPLOAD_TTL_SECONDS` | `900` | |
 | `PRESIGN_DOWNLOAD_TTL_SECONDS` | `300` | |
-| `PENDING_TTL_HOURS` | `24` | возраст, при котором `db:cleanup` разбирает запись в статусе pending |
+| `PENDING_TTL_HOURS` | `24` | возраст, при котором `db:cleanup` разбирает запись в статусе pending; `0` — разобрать всё прямо сейчас |
+| `MULTIPART_THRESHOLD_MB` | `100` | от какого размера `presign-upload` отвечает multipart-планом |
+| `MULTIPART_PART_SIZE_MB` | `16` | желаемый размер части; не меньше 5 — это floor самого S3 |
+| `MULTIPART_MAX_PARTS` | `10000` | потолок S3; часть растёт, лишь бы уложиться в него |
+| `MULTIPART_URL_BATCH` | `100` | ссылок за один запрос: размер ответа и длина всплеска на подписи |
+| `MULTIPART_MAX_CONCURRENCY` | `4` | уезжает клиенту как `maxConcurrency` |
+| `MULTIPART_MAX_ACTIVE_UPLOADS` | `10` | незакрытых multipart-загрузок во всём сервисе |
+| `PRESIGN_PART_TTL_SECONDS` | `3600` | TTL ссылки на часть |
+| `MAX_OBJECT_SIZE_GB` | `200` | потолок размера одного объекта |
 | `DATABASE_SSL` | `false` | |
 
 ## API
@@ -80,6 +88,11 @@ npm run dev
 | `FILE_NOT_FOUND` | 404 | записи нет или она уже удалена |
 | `FILE_NOT_READY` | 409 | файл ещё не `ready`, скачивать нечего |
 | `UPLOAD_NOT_COMPLETED` | 409 | по зарезервированному ключу так и не появился объект |
+| `INVALID_UPLOAD_SIZE` | 400 | `size` не положительное число |
+| `INVALID_PART_NUMBER` | 400 | номер части вне `1..partCount` |
+| `MULTIPART_NOT_FOUND` | 409 | у записи нет незавершённой multipart-загрузки |
+| `MULTIPART_INCOMPLETE` | 409 | при завершении в S3 лежат не все части |
+| `TOO_MANY_ACTIVE_UPLOADS` | 429 | исчерпан `MULTIPART_MAX_ACTIVE_UPLOADS` |
 | `DUPLICATE_RESOURCE` | 409 | нарушен уникальный индекс |
 | `STORAGE_MISCONFIGURED` | 502 | S3 отверг запрос: не тот бакет или ключи |
 | `STORAGE_ERROR` | 502 | S3 ответил тем, с чем сервис работать не может |
@@ -89,7 +102,9 @@ npm run dev
 | `INTERNAL_SERVER_ERROR` | 500 | всё остальное; вне production в `details` кладётся стек |
 
 Разделение 502 и 503 намеренное: 502 повторять бессмысленно (сломана конфигурация — это чинится
-деплоем), 503 — стоит, зависимость может ответить через секунду.
+деплоем), 503 — стоит, зависимость может ответить через секунду. `TOO_MANY_ACTIVE_UPLOADS` — про
+занятые слоты, а не про частоту запросов: автоматический повтор упрётся в тот же занятый слот, место
+освобождает только `complete` или `DELETE` одной из идущих загрузок.
 
 ### Загрузка
 
@@ -120,6 +135,53 @@ POST /api/files/:id/complete
 Вызов идемпотентен и возвращает `409 UPLOAD_NOT_COMPLETED`, если по зарезервированному ключу так и не
 появился объект. Запись в статусе `failed` (её уже успел разобрать `db:cleanup`) он тоже примет, если
 объект в хранилище всё-таки есть: это значит, что загрузка прошла, а потерялось лишь подтверждение.
+
+**Частями напрямую в S3** — для файлов, которые не стоит лить одним запросом. Тот же
+`presign-upload`: если в теле есть `size` и он не меньше `MULTIPART_THRESHOLD_MB`, ответ приходит с
+`strategy: "multipart"` вместо `strategy: "single"`. Без `size` сценарий всегда single.
+
+```
+POST /api/files/presign-upload   { filename, directory?, contentType?, size }
+→ 201 { strategy: "multipart", id, key, directory, uploadId, size, partSize, partCount,
+        maxConcurrency, expiresAt,
+        parts: [{ partNumber, offset, size, url }, …] }   // первые MULTIPART_URL_BATCH
+
+PUT <parts[i].url>               тело = file.slice(offset, offset + size)
+                                 не больше maxConcurrency запросов одновременно
+
+POST /api/files/:id/multipart/part-urls   { partNumbers: [ … ] }
+→ 200 { expiresAt, parts: [{ partNumber, offset, size, url }, …] }
+
+GET  /api/files/:id/multipart
+→ 200 { id, uploadId, size, partSize, partCount, uploadedParts, uploadedBytes }
+
+POST /api/files/:id/complete     → 200 FileDto
+DELETE /api/files/:id            → 204 (отменяет незавершённую загрузку)
+```
+
+**На сколько частей резать, решает сервер.** `src/s3/multipart.ts` берёт желаемый `partSize` из
+конфига и, если частей выходит больше `MULTIPART_MAX_PARTS`, увеличивает часть до
+`ceil(size / maxParts)`, округлённого вверх до мегабайта. Клиент получает готовые `offset`/`size` и
+ничего не пересчитывает.
+
+| Размер файла | `partSize` | `partCount` |
+|---|---|---|
+| 80 МиБ | — | `strategy: "single"` |
+| 100 МиБ | 16 МиБ | 7 (последняя — 4 МиБ) |
+| 1 ГиБ | 16 МиБ | 64 |
+| 160 ГиБ | **17 МиБ** | 9 638 |
+
+Последняя часть почти всегда меньше 5 МиБ — правило минимума на неё не распространяется.
+
+`part-urls` выдаёт и следующую пачку ссылок, и замену протухшим: подписи живут
+`PRESIGN_PART_TTL_SECONDS`, а загрузка может идти дольше. `GET /:id/multipart` отвечает тем, что
+реально лежит в S3, — этого достаточно, чтобы продолжить прерванную загрузку, в том числе после
+перезагрузки страницы.
+
+Завершение и отмена — **те же маршруты, что у single-сценария**. `complete` смотрит на запись: если
+это multipart, он собирает объект из частей и только потом читает результат через `HeadObject`.
+`DELETE` по незавершённой загрузке делает `AbortMultipartUpload`, а не `DeleteObject`: объекта по
+ключу ещё нет, убирать надо залитые части.
 
 ### Чтение
 
@@ -156,7 +218,7 @@ GET /api/directories?parent=docs         → { parent, items: [{ name, path, fil
   "size": 74,                      // null, пока presigned-загрузка не подтверждена
   "etag": "\"9020e7b4…\"",
   "status": "ready",               // pending | ready | failed
-  "uploadSource": "server",        // server | presigned
+  "uploadSource": "server",        // server | presigned | multipart
   "bucket": "bucket-4f84ee",
   "key": "docs/reports/a5e1ee53-….pdf",
   "createdAt": "2026-08-27T12:45:43.437Z",
@@ -176,6 +238,15 @@ GET /api/directories?parent=docs         → { parent, items: [{ name, path, fil
 - **Удаление мягкое в базе и best-effort в S3.** Источник истины — запись с метаданными, поэтому её
   выводят из обращения первой; неудачное удаление в хранилище оставит лишь объект, на который никто
   не ссылается.
+- **Частями multipart-загрузки владеет S3, а не база.** Отдельной таблицы частей нет: при завершении
+  и при возобновлении список берётся из `ListParts`. Это то же решение, по которому `size` и `etag`
+  вычитываются из `HeadObject`, и оно же бесплатно даёт возобновление с другой вкладки или машины. В
+  записи живут только `upload_id`, `part_size` и `part_count`, и все три обнуляются, как только
+  загрузка завершилась или была разобрана.
+- **Гонки в multipart разрешаются без блокировок.** Два одновременных `complete` разводит сам S3:
+  проигравший получает `NoSuchUpload` и дочитывает результат победителя через `HeadObject`. Уборщик
+  же сначала захватывает строку одним `update` (`claimExpiredMultipart`) и только потом отменяет
+  загрузку, поэтому не может снести файл, который клиент дособирает прямо сейчас.
 - **`src/middleware/validate.ts`** кладёт провалидированные query-строки и параметры маршрута в
   `res.locals`, потому что в Express 5 `req.query` доступен только на чтение.
 
@@ -208,9 +279,10 @@ src/
   config.ts logger.ts errors.ts app.ts server.ts
   db/        pool.ts, errors.ts (трансляция ошибок pg), migrate.ts, migrations/
   s3/        client.ts (специфика Cloud.ru), keys.ts (именование и санитизация),
-             errors.ts (трансляция ошибок AWS SDK)
+             errors.ts (трансляция ошибок AWS SDK), multipart.ts (разбиение на части)
   middleware/ api-key.ts, upload.ts, validate.ts, error-handler.ts
   modules/files/  routes → service → repo, плюс schemas/types/mapper
+                  и multipart.service.ts (работа с multipart-загрузкой в S3)
   scripts/   s3-cors.ts, cleanup-pending.ts
   **/*.test.ts  тесты рядом с модулями, которые они проверяют
 ```

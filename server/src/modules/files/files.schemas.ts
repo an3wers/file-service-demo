@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { config } from "../../config.js";
 
 const flag = (defaultValue: boolean) =>
   z
@@ -19,6 +20,16 @@ export const presignUploadSchema = z.object({
   directory: z.string().max(1024).optional(),
   contentType: z.string().min(1).max(255).optional(),
   size: z.coerce.number().int().nonnegative().optional(),
+});
+
+export const partUrlsSchema = z.object({
+  // The upper bound is the same knob that caps the first batch: it bounds the
+  // response and the signing burst alike. The `1..partCount` range needs the
+  // stored plan, so it is checked in the service.
+  partNumbers: z
+    .array(z.coerce.number().int().positive())
+    .min(1)
+    .max(config.uploads.multipartUrlBatch),
 });
 
 export const listFilesQuerySchema = z.object({
@@ -47,6 +58,7 @@ export const directoriesQuerySchema = z.object({
 
 export type UploadBody = z.infer<typeof uploadBodySchema>;
 export type PresignUploadBody = z.infer<typeof presignUploadSchema>;
+export type PartUrlsBody = z.infer<typeof partUrlsSchema>;
 export type ListFilesQuery = z.infer<typeof listFilesQuerySchema>;
 export type FileCardQuery = z.infer<typeof fileCardQuerySchema>;
 export type DownloadUrlQuery = z.infer<typeof downloadUrlQuerySchema>;

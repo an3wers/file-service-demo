@@ -18,6 +18,12 @@ export const ERROR_CODES = {
   FILE_NOT_READY: "FILE_NOT_READY",
   UPLOAD_NOT_COMPLETED: "UPLOAD_NOT_COMPLETED",
 
+  INVALID_UPLOAD_SIZE: "INVALID_UPLOAD_SIZE",
+  INVALID_PART_NUMBER: "INVALID_PART_NUMBER",
+  MULTIPART_NOT_FOUND: "MULTIPART_NOT_FOUND",
+  MULTIPART_INCOMPLETE: "MULTIPART_INCOMPLETE",
+  TOO_MANY_ACTIVE_UPLOADS: "TOO_MANY_ACTIVE_UPLOADS",
+
   STORAGE_UNAVAILABLE: "STORAGE_UNAVAILABLE",
   STORAGE_MISCONFIGURED: "STORAGE_MISCONFIGURED",
   STORAGE_ERROR: "STORAGE_ERROR",
@@ -84,6 +90,14 @@ export const payloadTooLarge = (
   details?: unknown,
   options?: AppErrorOptions,
 ) => new AppError(413, ERROR_CODES.PAYLOAD_TOO_LARGE, message, details, options);
+
+/** Nothing is permanently wrong: free a slot and the same request goes through. */
+export const tooManyRequests = (
+  code: ErrorCode,
+  message: string,
+  details?: unknown,
+  options?: AppErrorOptions,
+) => new AppError(429, code, message, details, options);
 
 /** The service reached a dependency and got an answer it cannot work with. */
 export const badGateway = (

@@ -1,5 +1,5 @@
 export type FileStatus = "pending" | "ready" | "failed";
-export type UploadSource = "server" | "presigned";
+export type UploadSource = "server" | "presigned" | "multipart";
 
 export interface FileRow {
   id: string;
@@ -13,6 +13,10 @@ export interface FileRow {
   etag: string | null;
   status: FileStatus;
   upload_source: UploadSource;
+  /** Set only while a multipart upload is in flight; cleared once it settles. */
+  upload_id: string | null;
+  part_size: number | null;
+  part_count: number | null;
   created_at: Date;
   updated_at: Date;
   deleted_at: Date | null;
@@ -47,7 +51,45 @@ export interface InsertFileInput {
   etag: string | null;
   status: FileStatus;
   uploadSource: UploadSource;
+  uploadId?: string | null;
+  partSize?: number | null;
+  partCount?: number | null;
 }
+
+export interface MultipartPartDto {
+  partNumber: number;
+  /** Byte range in the source file: the client slices exactly this. */
+  offset: number;
+  size: number;
+  url: string;
+}
+
+export interface PresignSingleResult {
+  strategy: "single";
+  id: string;
+  key: string;
+  directory: string;
+  uploadUrl: string;
+  expiresAt: string;
+  requiredHeaders: Record<string, string>;
+}
+
+export interface PresignMultipartResult {
+  strategy: "multipart";
+  id: string;
+  key: string;
+  directory: string;
+  uploadId: string;
+  size: number;
+  partSize: number;
+  partCount: number;
+  /** How many parts the client may keep in flight; the server owns this number. */
+  maxConcurrency: number;
+  expiresAt: string;
+  parts: MultipartPartDto[];
+}
+
+export type PresignUploadResult = PresignSingleResult | PresignMultipartResult;
 
 export interface ListFilesParams {
   directory?: string;

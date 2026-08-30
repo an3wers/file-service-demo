@@ -21,9 +21,10 @@ export async function insertFile(input: InsertFileInput): Promise<FileRow> {
   const { rows } = await query<FileRow>(
     `insert into files (
        id, bucket, object_key, directory, original_name, extension,
-       content_type, size_bytes, etag, status, upload_source
+       content_type, size_bytes, etag, status, upload_source,
+       upload_id, part_size, part_count
      )
-     values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+     values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
      returning *`,
     [
       input.id,
@@ -37,6 +38,9 @@ export async function insertFile(input: InsertFileInput): Promise<FileRow> {
       input.etag,
       input.status,
       input.uploadSource,
+      input.uploadId ?? null,
+      input.partSize ?? null,
+      input.partCount ?? null,
     ],
   );
 
@@ -62,6 +66,9 @@ export async function markFileReady(
             size_bytes = $2,
             etag = $3,
             content_type = $4,
+            upload_id = null,
+            part_size = null,
+            part_count = null,
             updated_at = now()
       where id = $1 and deleted_at is null
       returning *`,
@@ -75,6 +82,46 @@ export async function markFileFailed(id: string): Promise<void> {
   await query("update files set status = 'failed', updated_at = now() where id = $1", [
     id,
   ]);
+}
+
+/** Slots taken by multipart uploads that have neither completed nor been abandoned. */
+export async function countActiveMultipart(): Promise<number> {
+  const { rows } = await query<{ count: number }>(
+    `select count(*)::int as count
+       from files
+      where status = 'pending' and upload_id is not null and deleted_at is null`,
+  );
+
+  return rows[0]?.count ?? 0;
+}
+
+/**
+ * Takes an abandoned multipart upload out of circulation and hands back the
+ * `upload_id` that has to be aborted in S3, in one statement. Claiming first is
+ * what keeps the cleanup pass from cancelling an upload a client is finishing
+ * right now: whoever updates the row wins, and the loser gets no rows back.
+ *
+ * `returning` yields the *new* values, so the old `upload_id` has to come out of
+ * the subquery in `from` — reading it off `f` would return the null just written.
+ */
+export async function claimExpiredMultipart(
+  id: string,
+  ttlHours: number,
+): Promise<string | null> {
+  const { rows } = await query<{ upload_id: string | null }>(
+    `update files f
+        set status = 'failed', upload_id = null, updated_at = now()
+       from (select id, upload_id from files where id = $1 for update) old
+      where f.id = old.id
+        and f.status = 'pending'
+        and f.upload_id is not null
+        and f.deleted_at is null
+        and f.created_at < now() - make_interval(hours => $2)
+      returning old.upload_id`,
+    [id, ttlHours],
+  );
+
+  return rows[0]?.upload_id ?? null;
 }
 
 export async function softDeleteFile(id: string): Promise<FileRow | null> {
@@ -141,6 +188,23 @@ export async function listFiles(
     items: rows,
     total: rows[0]?.total_count ?? 0,
   };
+}
+
+/**
+ * Which of these upload ids the metadata table still knows about. Used by the
+ * orphan sweep, where anything missing here is an upload no row can reach.
+ */
+export async function findKnownUploadIds(ids: string[]): Promise<Set<string>> {
+  if (ids.length === 0) {
+    return new Set();
+  }
+
+  const { rows } = await query<{ upload_id: string }>(
+    "select upload_id from files where upload_id = any($1::text[])",
+    [ids],
+  );
+
+  return new Set(rows.map((row) => row.upload_id));
 }
 
 export async function listExpiredPending(ttlHours: number): Promise<FileRow[]> {

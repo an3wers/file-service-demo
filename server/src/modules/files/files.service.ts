@@ -17,17 +17,22 @@ import {
   normalizeDirectory,
   sanitizeFileName,
 } from "../../s3/keys.js";
+import { needsMultipart } from "../../s3/multipart.js";
 import { toFileDto } from "./files.mapper.js";
+import * as multipart from "./multipart.service.js";
 import * as repo from "./files.repo.js";
 import type {
   DirectoryDto,
   FileDto,
   FileRow,
   ListFilesParams,
+  MultipartPartDto,
+  PresignUploadResult,
 } from "./files.types.js";
 import type {
   DownloadUrlQuery,
   ListFilesQuery,
+  PartUrlsBody,
   PresignUploadBody,
 } from "./files.schemas.js";
 
@@ -150,15 +155,24 @@ export async function uploadThroughServer(
  * Reserves an id, key and metadata row, then hands back a URL the client can
  * PUT to directly. The row stays `pending` until `completeUpload` confirms the
  * object actually landed.
+ *
+ * Past `MULTIPART_THRESHOLD_MB` the same call answers with a multipart plan
+ * instead, discriminated by `strategy`. A request that sends no `size` cannot be
+ * planned and stays on the single-PUT path, which is also what keeps callers
+ * that predate multipart working unchanged.
  */
-export async function createPresignedUpload(body: PresignUploadBody): Promise<{
-  id: string;
-  key: string;
-  directory: string;
-  uploadUrl: string;
-  expiresAt: string;
-  requiredHeaders: Record<string, string>;
-}> {
+export async function createPresignedUpload(
+  body: PresignUploadBody,
+): Promise<PresignUploadResult> {
+  if (needsMultipart(body.size, config.uploads.multipartThresholdBytes)) {
+    return await multipart.createMultipartUpload({
+      filename: body.filename,
+      directory: body.directory,
+      contentType: body.contentType,
+      size: body.size!,
+    });
+  }
+
   const directory = normalizeDirectory(body.directory);
   const originalName = sanitizeFileName(body.filename);
   const { id, key, extension } = buildObjectKey(directory, originalName);
@@ -198,6 +212,7 @@ export async function createPresignedUpload(body: PresignUploadBody): Promise<{
   });
 
   return {
+    strategy: "single",
     id,
     key,
     directory,
@@ -206,6 +221,19 @@ export async function createPresignedUpload(body: PresignUploadBody): Promise<{
     // The signature covers Content-Type, so the client must send it verbatim.
     requiredHeaders: { "Content-Type": contentType },
   };
+}
+
+/** A further batch of part URLs for an upload already in flight. */
+export async function getPartUrls(
+  id: string,
+  body: PartUrlsBody,
+): Promise<{ expiresAt: string; parts: MultipartPartDto[] }> {
+  return await multipart.createPartUrls(await requireFile(id), body);
+}
+
+/** Which parts S3 already holds, so an interrupted upload can be resumed. */
+export async function getMultipartStatus(id: string) {
+  return await multipart.getMultipartStatus(await requireFile(id));
 }
 
 /**
@@ -230,6 +258,12 @@ export async function completeUpload(id: string): Promise<FileDto> {
     );
   }
 
+  if (file.upload_id) {
+    // Assembles the object out of its parts first; everything below then reads
+    // the finished object exactly as it does for a single-PUT upload.
+    await multipart.completeMultipartUpload(file);
+  }
+
   let head;
 
   try {
@@ -239,7 +273,7 @@ export async function completeUpload(id: string): Promise<FileDto> {
   } catch (error) {
     if (isS3NotFound(error)) {
       throw conflict(
-        ERROR_CODES.UPLOAD_NOT_COMPLETED,
+        file.upload_id ? ERROR_CODES.MULTIPART_NOT_FOUND : ERROR_CODES.UPLOAD_NOT_COMPLETED,
         "No object was found at the reserved key; upload the file before confirming",
         { key: file.object_key },
       );
@@ -356,9 +390,15 @@ export async function deleteFile(id: string): Promise<void> {
   }
 
   try {
-    await s3.send(
-      new DeleteObjectCommand({ Bucket: file.bucket, Key: file.object_key }),
-    );
+    if (file.upload_id && file.status === "pending") {
+      // No object exists under this key yet — the uploaded parts are what has to
+      // go, and only Abort removes those.
+      await multipart.abortMultipartUpload(file, file.upload_id);
+    } else {
+      await s3.send(
+        new DeleteObjectCommand({ Bucket: file.bucket, Key: file.object_key }),
+      );
+    }
   } catch (error) {
     logger.error(
       { err: error, id, bucket: file.bucket, key: file.object_key },

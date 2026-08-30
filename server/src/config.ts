@@ -31,7 +31,23 @@ const envSchema = z.object({
   MAX_UPLOAD_SIZE_MB: z.coerce.number().int().positive().default(50),
   PRESIGN_UPLOAD_TTL_SECONDS: z.coerce.number().int().positive().max(604800).default(900),
   PRESIGN_DOWNLOAD_TTL_SECONDS: z.coerce.number().int().positive().max(604800).default(300),
-  PENDING_TTL_HOURS: z.coerce.number().int().positive().default(24),
+  // Zero is allowed and means "settle everything pending right now": it is how
+  // the cleanup pass is exercised without waiting out a real TTL.
+  PENDING_TTL_HOURS: z.coerce.number().int().nonnegative().default(24),
+
+  // A part below 5 MiB is rejected by S3 itself, so the floor is the protocol's
+  // and not a preference. The ceilings are ours: they keep a bad `.env` from
+  // turning into an S3 error on the first upload instead of a startup failure.
+  MULTIPART_THRESHOLD_MB: z.coerce.number().int().min(5).default(100),
+  MULTIPART_PART_SIZE_MB: z.coerce.number().int().min(5).default(16),
+  MULTIPART_MAX_PARTS: z.coerce.number().int().positive().max(10000).default(10000),
+  MULTIPART_URL_BATCH: z.coerce.number().int().positive().max(1000).default(100),
+  // Not a technical ceiling: past ~6 the browser's per-origin connection limit
+  // queues the rest anyway, and every extra slot is another part held in memory.
+  MULTIPART_MAX_CONCURRENCY: z.coerce.number().int().min(1).max(16).default(4),
+  MULTIPART_MAX_ACTIVE_UPLOADS: z.coerce.number().int().positive().default(10),
+  PRESIGN_PART_TTL_SECONDS: z.coerce.number().int().positive().max(604800).default(3600),
+  MAX_OBJECT_SIZE_GB: z.coerce.number().int().positive().max(5120).default(200),
 });
 
 const parsed = envSchema.safeParse(process.env);
@@ -80,5 +96,14 @@ export const config = {
     presignUploadTtlSeconds: env.PRESIGN_UPLOAD_TTL_SECONDS,
     presignDownloadTtlSeconds: env.PRESIGN_DOWNLOAD_TTL_SECONDS,
     pendingTtlHours: env.PENDING_TTL_HOURS,
+
+    multipartThresholdBytes: env.MULTIPART_THRESHOLD_MB * 1024 * 1024,
+    multipartPartSizeBytes: env.MULTIPART_PART_SIZE_MB * 1024 * 1024,
+    multipartMaxParts: env.MULTIPART_MAX_PARTS,
+    multipartUrlBatch: env.MULTIPART_URL_BATCH,
+    multipartMaxConcurrency: env.MULTIPART_MAX_CONCURRENCY,
+    multipartMaxActiveUploads: env.MULTIPART_MAX_ACTIVE_UPLOADS,
+    presignPartTtlSeconds: env.PRESIGN_PART_TTL_SECONDS,
+    maxObjectSizeBytes: env.MAX_OBJECT_SIZE_GB * 1024 * 1024 * 1024,
   },
 } as const;

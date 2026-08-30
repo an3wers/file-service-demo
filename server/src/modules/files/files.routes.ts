@@ -14,6 +14,7 @@ import {
   fileCardQuerySchema,
   idParamsSchema,
   listFilesQuerySchema,
+  partUrlsSchema,
   presignUploadSchema,
   uploadBodySchema,
 } from "./files.schemas.js";
@@ -45,9 +46,29 @@ filesRouter.post(
   },
 );
 
-// Step 1 of the direct-to-S3 flow: reserve the key and hand out a signed URL.
+// Step 1 of the direct-to-S3 flow: reserve the key and hand out a signed URL —
+// or, past the multipart threshold, a split plan with the first batch of them.
 filesRouter.post("/presign-upload", validateBody(presignUploadSchema), async (req, res) => {
   res.status(201).json(await service.createPresignedUpload(req.body));
+});
+
+// A further batch of part URLs, and the way an expired one gets reissued.
+filesRouter.post(
+  "/:id/multipart/part-urls",
+  validateParams(idParamsSchema),
+  validateBody(partUrlsSchema),
+  async (req, res) => {
+    const { id } = validatedParams<IdParams>(res);
+
+    res.json(await service.getPartUrls(id, req.body));
+  },
+);
+
+// What S3 already holds, so an interrupted upload can pick up where it stopped.
+filesRouter.get("/:id/multipart", validateParams(idParamsSchema), async (_req, res) => {
+  const { id } = validatedParams<IdParams>(res);
+
+  res.json(await service.getMultipartStatus(id));
 });
 
 filesRouter.get("/", validateQuery(listFilesQuerySchema), async (_req, res) => {
@@ -67,6 +88,8 @@ filesRouter.get(
 );
 
 // Step 2 of the direct-to-S3 flow: verify against S3 and record the real size.
+// Multipart uploads are assembled here too, so the client confirms the same way
+// whichever strategy it used.
 filesRouter.post("/:id/complete", validateParams(idParamsSchema), async (_req, res) => {
   const { id } = validatedParams<IdParams>(res);
 
