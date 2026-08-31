@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { HardDriveIcon } from "@lucide/vue"
-import { Toaster } from "@/components/ui/sonner"
-import FileBrowser from "@/components/FileBrowser.vue"
+import { HardDriveIcon } from "@lucide/vue";
+import { Toaster } from "@/components/ui/sonner";
+import FeaturesSection from "@/components/FeaturesSection.vue";
+import FileBrowser from "@/components/FileBrowser.vue";
 </script>
 
 <template>
@@ -19,6 +20,7 @@ import FileBrowser from "@/components/FileBrowser.vue"
     </header>
 
     <main class="mx-auto flex max-w-6xl flex-col gap-6 p-6">
+      <FeaturesSection />
       <FileBrowser />
     </main>
 
