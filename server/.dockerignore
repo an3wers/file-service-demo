@@ -1,0 +1,16 @@
+node_modules
+dist
+coverage
+# .env исключён намеренно: секреты приходят в рантайме через env_file,
+# в слоях образа им делать нечего.
+.env
+*.log
+.git
+.gitignore
+.claude
+.agents
+README.md
+skills-lock.json
+vitest.config.ts
+tsconfig.test.json
+Dockerfile

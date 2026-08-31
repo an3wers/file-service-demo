@@ -1,0 +1,49 @@
+# Минимальный MVP-деплой: наружу торчит только клиент на :5173.
+# Клиент ходит в API по внутренней сети app_network, API — в Postgres по
+# внешней shared-сети postgres_docker_db_networ, поднятой compose-файлом БД
+
+name: file-storage-demo
+
+services:
+  server:
+    build:
+      context: ./server
+    image: file-storage-server:latest
+    container_name: file-storage-server
+    restart: unless-stopped
+    # Секреты и настройки остаются в файле, а не в этом compose: правку
+    # server/.env достаточно применить через `docker compose up -d server`,
+    # пересборка образа не нужна.
+    env_file:
+      - ./server/.env
+    environment:
+      NODE_ENV: production
+    networks:
+      - app_network # сюда ходит клиент
+      - db_network  # shared
+
+  client:
+    build:
+      context: ./client
+    image: file-storage-client:latest
+    container_name: file-storage-client
+    restart: unless-stopped
+    # nginx внутри слушает 80, наружу отдаём привычный 5173 — этот же origin
+    # прописан в CORS бакета. Адрес API живёт в client/nginx.conf
+    # (proxy_pass http://server:3000), в окружении его задавать не нужно.
+    ports:
+      - "5173:80"
+    depends_on:
+      server:
+        condition: service_healthy
+    networks:
+      - app_network
+
+networks:
+  # Приватная сеть пары клиент↔сервер.
+  app_network:
+    driver: bridge
+
+  db_network:
+    external: true
+    name: postgres_docker_db_network

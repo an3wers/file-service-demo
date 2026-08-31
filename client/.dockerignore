@@ -1,0 +1,12 @@
+node_modules
+dist
+coverage
+*.log
+.git
+.gitignore
+.claude
+.agents
+.vscode
+skills-lock.json
+Dockerfile
+# .env НЕ исключён: VITE_* читаются на сборке и впечатываются в бандл.
