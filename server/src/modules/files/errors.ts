@@ -4,61 +4,22 @@ export class FilesDomainError extends Error {
     public readonly details?: unknown,
   ) {
     super(message);
+    this.name = new.target.name;
   }
 }
 
-export class FileNotFoundError extends FilesDomainError {
-  constructor(message: string, details?: unknown) {
-    super(message, details);
-    this.name = "FileNotFoundError";
-  }
-}
+export class FileNotFoundError extends FilesDomainError {}
 
-export class FileNotReadyError extends FilesDomainError {
-  constructor(message: string, details?: unknown) {
-    super(message, details);
-    this.name = "FileNotReadyError";
-  }
-}
+export class FileNotReadyError extends FilesDomainError {}
 
-export class UploadNotCompletedError extends FilesDomainError {
-  constructor(message: string, details?: unknown) {
-    super(message, details);
-    this.name = "UploadNotCompletedError";
-  }
-}
+export class UploadNotCompletedError extends FilesDomainError {}
 
-export class MultipartNotFoundError extends FilesDomainError {
-  constructor(message: string, details?: unknown) {
-    super(message, details);
-    this.name = "MultipartNotFoundError";
-  }
-}
+export class MultipartNotFoundError extends FilesDomainError {}
 
-export class TooManyActiveUploadsError extends FilesDomainError {
-  constructor(message: string, details?: unknown) {
-    super(message, details);
-    this.name = "TooManyActiveUploadsError";
-  }
-}
+export class TooManyActiveUploadsError extends FilesDomainError {}
 
-export class InvalidDirectoryError extends FilesDomainError {
-  constructor(message: string, details?: unknown) {
-    super(message, details);
-    this.name = "InvalidDirectoryError";
-  }
-}
+export class InvalidDirectoryError extends FilesDomainError {}
 
-export class InvalidFileNameError extends FilesDomainError {
-  constructor(message: string, details?: unknown) {
-    super(message, details);
-    this.name = "InvalidFileNameError";
-  }
-}
+export class InvalidFileNameError extends FilesDomainError {}
 
-export class FileTooLargeError extends FilesDomainError {
-  constructor(message: string, details?: unknown) {
-    super(message, details);
-    this.name = "FileTooLargeError";
-  }
-}
+export class FileTooLargeError extends FilesDomainError {}
