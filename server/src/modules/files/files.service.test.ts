@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import { FileNotReadyError, MultipartNotFoundError, UploadNotCompletedError } from "./errors.js";
 import { THREE_PART_SIZE, buildHarness, thrownBy } from "./files-module.harness.js";
-import type { FilesModule } from "./files.service.js";
+import type { FilesModule, UploadThroughServerInput } from "./files.service.js";
 import type { PresignMultipartResult, PresignSingleResult } from "./files.types.js";
 
 /**
@@ -76,7 +76,7 @@ describe("confirming an upload", () => {
 
       expect(await files.completeUpload(reserved.id)).toMatchObject({
         id: reserved.id,
-        status: "ready",
+        kind: "ready",
         size: body.byteLength,
         etag: etagOf(body),
         contentType: "text/plain",
@@ -126,7 +126,7 @@ describe("confirming an upload", () => {
       const confirmed = await files.completeUpload(reserved.id);
 
       expect(confirmed).toMatchObject({
-        status: "ready",
+        kind: "ready",
         size: assembled.byteLength,
         etag: etagOf(assembled),
       });
@@ -156,7 +156,7 @@ describe("confirming an upload", () => {
       ]);
 
       expect(second).toEqual(first);
-      expect(first).toMatchObject({ status: "ready", size: Buffer.concat(PARTS).byteLength });
+      expect(first).toMatchObject({ kind: "ready", size: Buffer.concat(PARTS).byteLength });
       // Объект собран один раз, и второй сборки под тем же ключом не случилось.
       expect(objectStore.objectKeys()).toEqual([reserved.key]);
     });
@@ -179,26 +179,25 @@ describe("confirming an upload", () => {
 });
 
 describe("uploading through the server", () => {
-  /** То, что кладёт multer: тело уже в памяти. */
-  function multerFile(body: Buffer): Express.Multer.File {
+  /** То, что попадает в сценарий: тело уже в памяти, без формы multer. */
+  function uploadInput(body: Buffer): UploadThroughServerInput {
     return {
-      fieldname: "file",
-      originalname: "report.bin",
-      encoding: "7bit",
-      mimetype: "text/plain",
+      filename: "report.bin",
+      directory: "docs",
+      contentType: "text/plain",
+      bytes: body,
       size: body.byteLength,
-      buffer: body,
-    } as Express.Multer.File;
+    };
   }
 
   it("stores the bytes and confirms the row in one call", async () => {
     const { files, objectStore } = buildHarness();
     const body = Buffer.from("through the server");
 
-    const uploaded = await files.uploadThroughServer(multerFile(body), "docs");
+    const uploaded = await files.uploadThroughServer(uploadInput(body));
 
     expect(uploaded).toMatchObject({
-      status: "ready",
+      kind: "ready",
       uploadSource: "server",
       directory: "docs",
       size: body.byteLength,
@@ -213,7 +212,7 @@ describe("uploading through the server", () => {
 
     fileRows.failNext("insertFile", failure);
 
-    await expect(files.uploadThroughServer(multerFile(Buffer.from("orphan")), "docs")).rejects.toBe(
+    await expect(files.uploadThroughServer(uploadInput(Buffer.from("orphan")))).rejects.toBe(
       failure,
     );
     // Ни строки, ни объекта: сироты, за которую хранилище тарифицирует, нет.
@@ -230,7 +229,7 @@ describe("uploading through the server", () => {
     // были записаны до строки и убирает их именно откат, а не их отсутствие.
     objectStore.failNext("remove", new Error("storage is down"));
 
-    await expect(files.uploadThroughServer(multerFile(Buffer.from("orphan")), "docs")).rejects.toBe(
+    await expect(files.uploadThroughServer(uploadInput(Buffer.from("orphan")))).rejects.toBe(
       failure,
     );
     expect(objectStore.objectKeys()).toHaveLength(1);
@@ -256,8 +255,8 @@ describe("handing out a signed download link", () => {
 
     const card = await files.getFileCard(reserved.id, true);
 
-    expect(card).toMatchObject({ status: "pending" });
-    expect(card).not.toHaveProperty("downloadUrl");
+    expect(card.file).toMatchObject({ kind: "reserved" });
+    expect(card.downloadUrl).toBeUndefined();
   });
 
   it("signs a link once the upload is confirmed", async () => {

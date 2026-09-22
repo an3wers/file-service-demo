@@ -8,7 +8,6 @@ import type { UploadPlan } from "./upload-plan.js";
 import type { UploadPolicy } from "./upload-policy.js";
 import { MultipartNotFoundError, TooManyActiveUploadsError } from "./errors.js";
 import type { MultipartPartDto, PresignMultipartResult } from "./files.types.js";
-import type { PartUrlsBody } from "./files.schemas.js";
 import { statusOf } from "./stored-file.js";
 import type { LiveMultipartUpload, StoredFile } from "./stored-file.js";
 
@@ -25,6 +24,22 @@ export interface MultipartModuleDeps {
   bucket: string;
 }
 
+export interface PartUrlsInput {
+  partNumbers: number[];
+}
+
+export interface PartUrlsResult {
+  expiresAt: Date;
+  parts: MultipartPartDto[];
+}
+
+export interface MultipartUploadInput {
+  filename: string;
+  directory?: string | undefined;
+  contentType?: string | undefined;
+  size: number;
+}
+
 export interface MultipartStatus {
   id: string;
   uploadId: string;
@@ -36,17 +51,9 @@ export interface MultipartStatus {
 }
 
 export interface MultipartModule {
-  createMultipartUpload(body: {
-    filename: string;
-    directory?: string | undefined;
-    contentType?: string | undefined;
-    size: number;
-  }): Promise<PresignMultipartResult>;
+  createMultipartUpload(input: MultipartUploadInput): Promise<PresignMultipartResult>;
 
-  createPartUrls(
-    file: StoredFile,
-    body: PartUrlsBody,
-  ): Promise<{ expiresAt: string; parts: MultipartPartDto[] }>;
+  createPartUrls(file: StoredFile, input: PartUrlsInput): Promise<PartUrlsResult>;
 
   getMultipartStatus(file: StoredFile): Promise<MultipartStatus>;
 

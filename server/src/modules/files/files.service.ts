@@ -1,10 +1,9 @@
 import { logger } from "../../logger.js";
 import type { ObjectStore } from "../../storage/object-store.js";
-import { decodeOriginalName, normalizeDirectory } from "../../storage/keys.js";
-import { toFileDto } from "./files.mapper.js";
+import { normalizeDirectory } from "../../storage/keys.js";
 import { FileNotFoundError, FileNotReadyError, MultipartNotFoundError, UploadNotCompletedError } from "./errors.js";
 import type { FileRowsForFiles } from "./file-rows.js";
-import type { MultipartModule, MultipartStatus } from "./multipart.service.js";
+import type { MultipartModule, MultipartStatus, PartUrlsInput, PartUrlsResult } from "./multipart.service.js";
 import { expiresAt, reserveKey } from "./reservation.js";
 import { needsMultipart } from "./upload-plan.js";
 import { statusOf } from "./stored-file.js";
@@ -12,17 +11,10 @@ import type { StoredFile } from "./stored-file.js";
 import type { UploadPolicy } from "./upload-policy.js";
 import type {
   DirectoryDto,
-  FileDto,
+  FileStatus,
   ListFilesParams,
-  MultipartPartDto,
   PresignUploadResult,
 } from "./files.types.js";
-import type {
-  DownloadUrlQuery,
-  ListFilesQuery,
-  PartUrlsBody,
-  PresignUploadBody,
-} from "./files.schemas.js";
 
 export interface FilesModuleDeps {
   objectStore: ObjectStore;
@@ -34,34 +26,62 @@ export interface FilesModuleDeps {
   bucket: string;
 }
 
+export interface UploadThroughServerInput {
+  filename: string;
+  directory?: string | undefined;
+  contentType?: string | undefined;
+  bytes: Buffer;
+  size: number;
+}
+
+export interface CreatePresignedUploadInput {
+  filename: string;
+  directory?: string | undefined;
+  contentType?: string | undefined;
+  size?: number | undefined;
+}
+
+export interface GetDownloadUrlInput {
+  disposition: "attachment" | "inline";
+  expiresIn?: number | undefined;
+}
+
+export interface GetDownloadUrlResult {
+  url: string;
+  expiresAt: Date;
+  name: string;
+}
+
+export interface FileCardResult {
+  file: StoredFile;
+  downloadUrl?: string | undefined;
+}
+
+export interface ListFilesInput {
+  directory?: string | undefined;
+  recursive: boolean;
+  search?: string | undefined;
+  status: FileStatus | "any";
+  page: number;
+  limit: number;
+  sort: "created_at" | "original_name" | "size_bytes";
+  order: "asc" | "desc";
+}
+
 export interface ListFilesResult {
-  items: FileDto[];
-  pagination: {
-    page: number;
-    limit: number;
-    total: number;
-    totalPages: number;
-  };
+  items: StoredFile[];
+  total: number;
 }
 
 export interface FilesModule {
-  uploadThroughServer(
-    file: Express.Multer.File,
-    rawDirectory: string | undefined,
-  ): Promise<FileDto>;
-  createPresignedUpload(body: PresignUploadBody): Promise<PresignUploadResult>;
-  getPartUrls(
-    id: string,
-    body: PartUrlsBody,
-  ): Promise<{ expiresAt: string; parts: MultipartPartDto[] }>;
+  uploadThroughServer(input: UploadThroughServerInput): Promise<StoredFile>;
+  createPresignedUpload(input: CreatePresignedUploadInput): Promise<PresignUploadResult>;
+  getPartUrls(id: string, input: PartUrlsInput): Promise<PartUrlsResult>;
   getMultipartStatus(id: string): Promise<MultipartStatus>;
-  completeUpload(id: string): Promise<FileDto>;
-  getDownloadUrl(
-    id: string,
-    query: DownloadUrlQuery,
-  ): Promise<{ url: string; expiresAt: string; name: string }>;
-  getFileCard(id: string, withUrl: boolean): Promise<FileDto>;
-  listFiles(query: ListFilesQuery): Promise<ListFilesResult>;
+  completeUpload(id: string): Promise<StoredFile>;
+  getDownloadUrl(id: string, input: GetDownloadUrlInput): Promise<GetDownloadUrlResult>;
+  getFileCard(id: string, withUrl: boolean): Promise<FileCardResult>;
+  listFiles(input: ListFilesInput): Promise<ListFilesResult>;
   deleteFile(id: string): Promise<void>;
   listDirectories(rawParent: string | undefined): Promise<{
     parent: string;
@@ -104,20 +124,20 @@ export function createFilesModule({
 
   const files: FilesModule = {
     /** Upload proxied through the server: the request body is already in memory. */
-    async uploadThroughServer(file, rawDirectory): Promise<FileDto> {
+    async uploadThroughServer(input): Promise<StoredFile> {
       const { id, key, directory, originalName, extension, contentType } = reserveKey({
-        filename: decodeOriginalName(file.originalname),
-        directory: rawDirectory,
-        contentType: file.mimetype,
+        filename: input.filename,
+        directory: input.directory,
+        contentType: input.contentType,
       });
 
-      const { etag } = await objectStore.put(key, file.buffer, {
+      const { etag } = await objectStore.put(key, input.bytes, {
         contentType,
-        contentLength: file.size,
+        contentLength: input.size,
       });
 
       try {
-        const row = await fileRows.insertFile({
+        return await fileRows.insertFile({
           id,
           bucket,
           objectKey: key,
@@ -125,13 +145,11 @@ export function createFilesModule({
           originalName,
           extension,
           contentType,
-          sizeBytes: file.size,
+          sizeBytes: input.size,
           etag,
           status: "ready",
           uploadSource: "server",
         });
-
-        return toFileDto(row);
       } catch (error) {
         // The object is already stored but has no metadata row, so nothing can
         // ever reach it again. Roll the storage side back rather than leak an
@@ -159,17 +177,17 @@ export function createFilesModule({
      * planned and stays on the single-PUT path, which is also what keeps callers
      * that predate multipart working unchanged.
      */
-    async createPresignedUpload(body): Promise<PresignUploadResult> {
-      if (needsMultipart(body.size, policy.multipartThresholdBytes)) {
+    async createPresignedUpload(input): Promise<PresignUploadResult> {
+      if (needsMultipart(input.size, policy.multipartThresholdBytes)) {
         return await multipart.createMultipartUpload({
-          filename: body.filename,
-          directory: body.directory,
-          contentType: body.contentType,
-          size: body.size!,
+          filename: input.filename,
+          directory: input.directory,
+          contentType: input.contentType,
+          size: input.size!,
         });
       }
 
-      const { id, key, directory, originalName, extension, contentType } = reserveKey(body);
+      const { id, key, directory, originalName, extension, contentType } = reserveKey(input);
       const ttl = policy.presignUploadTtlSeconds;
 
       // Sign before recording anything: the key is already fixed, and a signing
@@ -187,7 +205,7 @@ export function createFilesModule({
         originalName,
         extension,
         contentType,
-        sizeBytes: body.size ?? null,
+        sizeBytes: input.size ?? null,
         etag: null,
         status: "pending",
         uploadSource: "presigned",
@@ -206,8 +224,8 @@ export function createFilesModule({
     },
 
     /** A further batch of part URLs for an upload already in flight. */
-    async getPartUrls(id, body) {
-      return await multipart.createPartUrls(await requireFile(id), body);
+    async getPartUrls(id, input) {
+      return await multipart.createPartUrls(await requireFile(id), input);
     },
 
     /** Which parts storage already holds, so an interrupted upload can resume. */
@@ -220,11 +238,11 @@ export function createFilesModule({
      * object rather than taken from the client, so the metadata reflects the
      * bytes that were actually stored.
      */
-    async completeUpload(id): Promise<FileDto> {
+    async completeUpload(id): Promise<StoredFile> {
       const file = await requireFile(id);
 
       if (file.kind === "ready") {
-        return toFileDto(file); // Idempotent: a retried confirmation is not an error.
+        return file; // Idempotent: a retried confirmation is not an error.
       }
 
       if (file.kind === "failed") {
@@ -272,10 +290,10 @@ export function createFilesModule({
         throw fileNotFound(id); // Deleted between the lookup and the update.
       }
 
-      return toFileDto(row);
+      return row;
     },
 
-    async getDownloadUrl(id, query) {
+    async getDownloadUrl(id, input) {
       const file = await requireFile(id);
 
       if (file.kind !== "ready") {
@@ -284,57 +302,47 @@ export function createFilesModule({
         );
       }
 
-      const expiresIn = query.expiresIn ?? policy.presignDownloadTtlSeconds;
+      const expiresIn = input.expiresIn ?? policy.presignDownloadTtlSeconds;
 
       return {
-        url: await presignDownload(file, { disposition: query.disposition, expiresIn }),
+        url: await presignDownload(file, { disposition: input.disposition, expiresIn }),
         expiresAt: expiresAt(expiresIn),
         name: file.originalName,
       };
     },
 
-    async getFileCard(id, withUrl): Promise<FileDto> {
+    async getFileCard(id, withUrl): Promise<FileCardResult> {
       const file = await requireFile(id);
 
       if (!withUrl || file.kind !== "ready") {
-        return toFileDto(file);
+        return { file };
       }
 
       // The caller asked for a link, so a signing failure is the whole answer
       // failing rather than a card quietly served without one.
-      const url = await presignDownload(file, {
+      const downloadUrl = await presignDownload(file, {
         disposition: "attachment",
         expiresIn: policy.presignDownloadTtlSeconds,
       });
 
-      return toFileDto(file, url);
+      return { file, downloadUrl };
     },
 
-    async listFiles(query): Promise<ListFilesResult> {
+    async listFiles(input): Promise<ListFilesResult> {
       const params: ListFilesParams = {
-        recursive: query.recursive,
-        page: query.page,
-        limit: query.limit,
-        sort: query.sort,
-        order: query.order,
-        ...(query.directory !== undefined
-          ? { directory: normalizeDirectory(query.directory) }
+        recursive: input.recursive,
+        page: input.page,
+        limit: input.limit,
+        sort: input.sort,
+        order: input.order,
+        ...(input.directory !== undefined
+          ? { directory: normalizeDirectory(input.directory) }
           : {}),
-        ...(query.search ? { search: query.search } : {}),
-        ...(query.status !== "any" ? { status: query.status } : {}),
+        ...(input.search ? { search: input.search } : {}),
+        ...(input.status !== "any" ? { status: input.status } : {}),
       };
 
-      const { items, total } = await fileRows.listFiles(params);
-
-      return {
-        items: items.map((row) => toFileDto(row)),
-        pagination: {
-          page: query.page,
-          limit: query.limit,
-          total,
-          totalPages: Math.ceil(total / query.limit),
-        },
-      };
+      return await fileRows.listFiles(params);
     },
 
     async deleteFile(id): Promise<void> {

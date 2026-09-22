@@ -1,6 +1,7 @@
 import { Router } from "express";
 import type { RequestHandler } from "express";
 import { ERROR_CODES, badRequest } from "../../errors.js";
+import { decodeOriginalName } from "../../storage/keys.js";
 import {
   validateBody,
   validateParams,
@@ -25,6 +26,7 @@ import type {
   IdParams,
   ListFilesQuery,
 } from "./files.schemas.js";
+import { toFileDto } from "./files.mapper.js";
 import type { FilesModule } from "./files.service.js";
 
 export interface FilesRouterDeps {
@@ -57,14 +59,29 @@ export function createFilesRouter({ files, uploadSingleFile }: FilesRouterDeps):
         );
       }
 
-      res.status(201).json(await files.uploadThroughServer(req.file, req.body.directory));
+      const file = await files.uploadThroughServer({
+        filename: decodeOriginalName(req.file.originalname),
+        directory: req.body.directory,
+        contentType: req.file.mimetype,
+        bytes: req.file.buffer,
+        size: req.file.size,
+      });
+
+      res.status(201).json(toFileDto(file));
     },
   );
 
   // Step 1 of the direct-to-storage flow: reserve the key and hand out a signed URL —
   // or, past the multipart threshold, a split plan with the first batch of them.
   filesRouter.post("/presign-upload", validateBody(presignUploadSchema), async (req, res) => {
-    res.status(201).json(await files.createPresignedUpload(req.body));
+    res.status(201).json(
+      await files.createPresignedUpload({
+        filename: req.body.filename,
+        directory: req.body.directory,
+        contentType: req.body.contentType,
+        size: req.body.size,
+      }),
+    );
   });
 
   // A further batch of part URLs, and the way an expired one gets reissued.
@@ -75,7 +92,7 @@ export function createFilesRouter({ files, uploadSingleFile }: FilesRouterDeps):
     async (req, res) => {
       const { id } = validatedParams<IdParams>(res);
 
-      res.json(await files.getPartUrls(id, req.body));
+      res.json(await files.getPartUrls(id, { partNumbers: req.body.partNumbers }));
     },
   );
 
@@ -88,7 +105,18 @@ export function createFilesRouter({ files, uploadSingleFile }: FilesRouterDeps):
   });
 
   filesRouter.get("/", validateQuery(listFilesQuerySchema), async (_req, res) => {
-    res.json(await files.listFiles(validatedQuery<ListFilesQuery>(res)));
+    const query = validatedQuery<ListFilesQuery>(res);
+    const { items, total } = await files.listFiles(query);
+
+    res.json({
+      items: items.map((file) => toFileDto(file)),
+      pagination: {
+        page: query.page,
+        limit: query.limit,
+        total,
+        totalPages: Math.ceil(total / query.limit),
+      },
+    });
   });
 
   filesRouter.get(
@@ -98,8 +126,9 @@ export function createFilesRouter({ files, uploadSingleFile }: FilesRouterDeps):
     async (_req, res) => {
       const { id } = validatedParams<IdParams>(res);
       const { withUrl } = validatedQuery<FileCardQuery>(res);
+      const { file, downloadUrl } = await files.getFileCard(id, withUrl);
 
-      res.json(await files.getFileCard(id, withUrl));
+      res.json(toFileDto(file, downloadUrl));
     },
   );
 
@@ -110,7 +139,7 @@ export function createFilesRouter({ files, uploadSingleFile }: FilesRouterDeps):
   filesRouter.post("/:id/complete", validateParams(idParamsSchema), async (_req, res) => {
     const { id } = validatedParams<IdParams>(res);
 
-    res.json(await files.completeUpload(id));
+    res.json(toFileDto(await files.completeUpload(id)));
   });
 
   filesRouter.get(
@@ -119,8 +148,9 @@ export function createFilesRouter({ files, uploadSingleFile }: FilesRouterDeps):
     validateQuery(downloadUrlQuerySchema),
     async (_req, res) => {
       const { id } = validatedParams<IdParams>(res);
+      const { disposition, expiresIn } = validatedQuery<DownloadUrlQuery>(res);
 
-      res.json(await files.getDownloadUrl(id, validatedQuery<DownloadUrlQuery>(res)));
+      res.json(await files.getDownloadUrl(id, { disposition, expiresIn }));
     },
   );
 

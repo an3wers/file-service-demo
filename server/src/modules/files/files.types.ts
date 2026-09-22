@@ -70,7 +70,7 @@ export interface PresignSingleResult {
   key: string;
   directory: string;
   uploadUrl: string;
-  expiresAt: string;
+  expiresAt: Date;
   requiredHeaders: Record<string, string>;
 }
 
@@ -85,7 +85,7 @@ export interface PresignMultipartResult {
   partCount: number;
   /** How many parts the client may keep in flight; the server owns this number. */
   maxConcurrency: number;
-  expiresAt: string;
+  expiresAt: Date;
   parts: MultipartPartDto[];
 }
 

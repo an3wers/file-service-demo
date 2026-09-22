@@ -2,8 +2,8 @@ import { buildObjectKey, normalizeDirectory, sanitizeFileName } from "../../stor
 
 export const DEFAULT_CONTENT_TYPE = "application/octet-stream";
 
-export function expiresAt(seconds: number): string {
-  return new Date(Date.now() + seconds * 1000).toISOString();
+export function expiresAt(seconds: number): Date {
+  return new Date(Date.now() + seconds * 1000);
 }
 
 /** An id, a key and the names that go on the row, fixed before any bytes exist. */
