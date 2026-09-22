@@ -1,4 +1,5 @@
 import { ERROR_CODES, conflict } from "../../errors.js";
+import { createFailureSwitch } from "../../testing/failure-switch.js";
 import type {
   FileRows,
   FileRowsForCleanup,
@@ -28,6 +29,10 @@ import type { DirectoryDto, FileRow, InsertFileInput, ListFilesParams } from "./
  *
  * Time is a knob here. TTL is the one rule that cannot be exercised without
  * moving the clock, so the store owns one and `advance` turns it.
+ *
+ * Failure is the other knob: `failNext` makes one call reject, which is how the
+ * paths that have to undo a storage side effect when the table refuses a row
+ * get exercised at all.
  */
 
 /** A clock the test drives, standing in for the database's `now()`. */
@@ -39,6 +44,8 @@ interface MemoryClock {
 export interface MemoryFileRows extends FileRows {
   /** Moves the clock forward, which is how a reserved row becomes expired. */
   advance(hours: number): void;
+  /** Makes the next call to this method fail, for the error paths. */
+  failNext(method: keyof FileRows, error: unknown): void;
 }
 
 const HOUR_MS = 60 * 60 * 1000;
@@ -84,6 +91,7 @@ function compareText(a: string, b: string): number {
 export function createMemoryFileRows(options: { now?: Date } = {}): MemoryFileRows {
   const rows = new Map<string, FileRow>();
   const clock = createClock(options.now ?? new Date());
+  const failures = createFailureSwitch<keyof FileRows>();
 
   /** Rows leave by value: a caller mutating one must not rewrite the table. */
   const copy = (row: FileRow): FileRow => ({ ...row });
@@ -95,6 +103,8 @@ export function createMemoryFileRows(options: { now?: Date } = {}): MemoryFileRo
 
   const files: FileRowsForFiles & FileRowsForMultipart & FileRowsForCleanup = {
     async insertFile(input: InsertFileInput): Promise<FileRow> {
+      failures.check("insertFile");
+
       if (rows.has(input.id)) {
         throw conflict(ERROR_CODES.DUPLICATE_RESOURCE, `File ${input.id} already exists`);
       }
@@ -137,12 +147,16 @@ export function createMemoryFileRows(options: { now?: Date } = {}): MemoryFileRo
     },
 
     async findFileById(id: string): Promise<FileRow | null> {
+      failures.check("findFileById");
+
       const row = rows.get(id);
 
       return row && live(row) ? copy(row) : null;
     },
 
     async markFileReady(id: string, values: ReadyValues): Promise<FileRow | null> {
+      failures.check("markFileReady");
+
       const row = rows.get(id);
 
       if (!row || !live(row)) {
@@ -163,6 +177,8 @@ export function createMemoryFileRows(options: { now?: Date } = {}): MemoryFileRo
 
     /** Unlike the rest, the SQL statement carries no `deleted_at` check. */
     async markFileFailed(id: string): Promise<void> {
+      failures.check("markFileFailed");
+
       const row = rows.get(id);
 
       if (!row) {
@@ -174,12 +190,16 @@ export function createMemoryFileRows(options: { now?: Date } = {}): MemoryFileRo
     },
 
     async countActiveMultipart(): Promise<number> {
+      failures.check("countActiveMultipart");
+
       return [...rows.values()].filter(
         (row) => row.status === "pending" && row.upload_id !== null && live(row),
       ).length;
     },
 
     async claimExpiredMultipart(id: string, ttlHours: number): Promise<string | null> {
+      failures.check("claimExpiredMultipart");
+
       const row = rows.get(id);
 
       if (
@@ -203,6 +223,8 @@ export function createMemoryFileRows(options: { now?: Date } = {}): MemoryFileRo
     },
 
     async softDeleteFile(id: string): Promise<FileRow | null> {
+      failures.check("softDeleteFile");
+
       const row = rows.get(id);
 
       if (!row || !live(row)) {
@@ -216,6 +238,8 @@ export function createMemoryFileRows(options: { now?: Date } = {}): MemoryFileRo
     },
 
     async listFiles(params: ListFilesParams): Promise<{ items: FileRow[]; total: number }> {
+      failures.check("listFiles");
+
       const matched = [...rows.values()].filter((row) => {
         if (!live(row)) {
           return false;
@@ -280,6 +304,8 @@ export function createMemoryFileRows(options: { now?: Date } = {}): MemoryFileRo
     },
 
     async findKnownUploadIds(ids: string[]): Promise<Set<string>> {
+      failures.check("findKnownUploadIds");
+
       if (ids.length === 0) {
         return new Set();
       }
@@ -295,6 +321,8 @@ export function createMemoryFileRows(options: { now?: Date } = {}): MemoryFileRo
     },
 
     async listExpiredPending(ttlHours: number): Promise<FileRow[]> {
+      failures.check("listExpiredPending");
+
       return [...rows.values()]
         .filter((row) => row.status === "pending" && live(row) && expired(row, ttlHours))
         .sort((a, b) => a.created_at.getTime() - b.created_at.getTime())
@@ -302,6 +330,8 @@ export function createMemoryFileRows(options: { now?: Date } = {}): MemoryFileRo
     },
 
     async listChildDirectories(parent: string): Promise<DirectoryDto[]> {
+      failures.check("listChildDirectories");
+
       const counts = new Map<string, number>();
 
       for (const row of rows.values()) {
@@ -343,6 +373,10 @@ export function createMemoryFileRows(options: { now?: Date } = {}): MemoryFileRo
 
     advance(hours: number): void {
       clock.advance(hours);
+    },
+
+    failNext(method, error): void {
+      failures.failNext(method, error);
     },
   };
 }

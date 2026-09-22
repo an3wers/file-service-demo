@@ -319,4 +319,16 @@ describe("memory file rows", () => {
       ]);
     });
   });
+  describe("failNext", () => {
+    it("fails the next call to that method and only that one", async () => {
+      const store = createMemoryFileRows();
+      const boom = new Error("the metadata table is down");
+      const input = reserve();
+
+      store.failNext("insertFile", boom);
+
+      await expect(store.insertFile(input)).rejects.toBe(boom);
+      await expect(store.insertFile(input)).resolves.toMatchObject({ id: input.id });
+    });
+  });
 });

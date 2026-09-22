@@ -122,6 +122,18 @@ describe("memory object store", () => {
     });
   });
 
+  describe("listing what is stored", () => {
+    it("names every key bytes were written to, and nothing else", async () => {
+      const store = createMemoryObjectStore();
+
+      store.uploadObject("docs/a.bin", Buffer.from("a"));
+      store.uploadObject("docs/b.bin", Buffer.from("b"));
+      await store.remove("docs/a.bin");
+
+      expect(store.objectKeys()).toEqual(["docs/b.bin"]);
+    });
+  });
+
   describe("failNext", () => {
     it("fails the next call to that method and only that one", async () => {
       const store = createMemoryObjectStore();

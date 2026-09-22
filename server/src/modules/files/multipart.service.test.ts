@@ -1,15 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { AppError, ERROR_CODES } from "../../errors.js";
-import { createMemoryObjectStore } from "../../storage/memory-object-store.js";
-import type { MemoryObjectStore } from "../../storage/memory-object-store.js";
-import { createMemoryFileRows } from "./memory-file-rows.js";
-import type { MemoryFileRows } from "./memory-file-rows.js";
-import { createFilesModule } from "./files.service.js";
-import type { FilesModule } from "./files.service.js";
-import { createMultipartModule } from "./multipart.service.js";
-import type { MultipartModule } from "./multipart.service.js";
-import type { UploadPolicy } from "./upload-policy.js";
-import type { FileRow } from "./files.types.js";
+import { ERROR_CODES } from "../../errors.js";
+import {
+  MIB,
+  THREE_PART_SIZE,
+  buildHarness,
+  thrownBy,
+} from "./files-module.harness.js";
 
 /**
  * Правила составных загрузок через интерфейс фабрики модуля: хранилище и
@@ -17,95 +13,6 @@ import type { FileRow } from "./files.types.js";
  * Утверждения — о наблюдаемом результате: что вернулось вызывающему коду и в
  * каком состоянии оказались строка метаданных и объектное хранилище.
  */
-
-const MIB = 1024 * 1024;
-const GIB = 1024 * MIB;
-const BUCKET = "test-bucket";
-
-/**
- * Границы политики заданы здесь, а не прочитаны из окружения: тест выбирает
- * маленькие пределы, чтобы их было видно на трёх частях и двух загрузках.
- * Размер части упирается в протокольный пол в 5 МиБ, поэтому план строится на
- * нём, а не на числе поменьше.
- */
-function testPolicy(overrides: Partial<UploadPolicy> = {}): UploadPolicy {
-  return {
-    multipartThresholdBytes: 5 * MIB,
-    planLimits: { partSize: 5 * MIB, maxParts: 10_000, maxObjectSize: 200 * GIB },
-    partUrlBatch: 2,
-    maxConcurrency: 3,
-    maxActiveUploads: 2,
-    presignUploadTtlSeconds: 900,
-    presignDownloadTtlSeconds: 900,
-    presignPartTtlSeconds: 900,
-    ...overrides,
-  };
-}
-
-interface Harness {
-  multipart: MultipartModule;
-  /** Настоящий файловый модуль поверх тех же зависимостей: удаление живёт в нём. */
-  files: FilesModule;
-  objectStore: MemoryObjectStore;
-  fileRows: MemoryFileRows;
-  policy: UploadPolicy;
-  /** Строка метаданных так, как её увидел бы роутер: по идентификатору. */
-  rowOf(id: string): Promise<FileRow>;
-  /** Сколько строк вообще записано — включая удалённые и неудавшиеся. */
-  rowCount(): Promise<number>;
-}
-
-function buildMultipart(policyOverrides: Partial<UploadPolicy> = {}): Harness {
-  const objectStore = createMemoryObjectStore();
-  const fileRows = createMemoryFileRows();
-  const policy = testPolicy(policyOverrides);
-  const multipart = createMultipartModule({ objectStore, fileRows, policy, bucket: BUCKET });
-
-  return {
-    multipart,
-    files: createFilesModule({ objectStore, fileRows, policy, multipart, bucket: BUCKET }),
-    objectStore,
-    fileRows,
-    policy,
-    async rowCount() {
-      // Строка без статуса и без живой загрузки счётчиком активных не видна,
-      // поэтому «не записана» проверяется списком, а не этим счётчиком.
-      const { items } = await fileRows.listFiles({
-        recursive: true,
-        directory: "",
-        page: 1,
-        limit: 100,
-        sort: "created_at",
-        order: "desc",
-      });
-
-      return items.length;
-    },
-    async rowOf(id) {
-      const row = await fileRows.findFileById(id);
-
-      if (!row) {
-        throw new Error(`Expected a metadata row for ${id}`);
-      }
-
-      return row;
-    },
-  };
-}
-
-/** Возвращает выброшенную ошибку, чтобы проверить её код, а не только факт броска. */
-async function thrownBy(run: () => Promise<unknown>): Promise<AppError> {
-  try {
-    await run();
-  } catch (error) {
-    return error as AppError;
-  }
-
-  throw new Error("Expected the call to reject, but it resolved");
-}
-
-/** Файл на 12 МиБ: три части по плану — 5 МиБ, 5 МиБ и 2 МиБ. */
-const THREE_PART_SIZE = 12 * MIB;
 
 /** Тело запроса на старт составной загрузки — то, что приходит от клиента. */
 function uploadRequest(size = THREE_PART_SIZE) {
@@ -115,7 +22,7 @@ function uploadRequest(size = THREE_PART_SIZE) {
 describe("multipart uploads", () => {
   describe("part ranges", () => {
     it("hands out the ranges of the plan recorded at start, with a shorter last part", async () => {
-      const { multipart, rowOf } = buildMultipart({ partUrlBatch: 3 });
+      const { multipart, rowOf } = buildHarness({ partUrlBatch: 3 });
 
       const started = await multipart.createMultipartUpload(uploadRequest());
       const { parts } = await multipart.createPartUrls(await rowOf(started.id), {
@@ -131,7 +38,7 @@ describe("multipart uploads", () => {
     });
 
     it("signs the first batch at the start, capped by the policy", async () => {
-      const { multipart } = buildMultipart();
+      const { multipart } = buildHarness();
 
       const started = await multipart.createMultipartUpload(uploadRequest());
 
@@ -140,7 +47,7 @@ describe("multipart uploads", () => {
     });
 
     it("refuses a part number outside the plan", async () => {
-      const { multipart, rowOf } = buildMultipart();
+      const { multipart, rowOf } = buildHarness();
 
       const started = await multipart.createMultipartUpload(uploadRequest());
       const error = await thrownBy(async () =>
@@ -155,7 +62,7 @@ describe("multipart uploads", () => {
     });
 
     it("refuses a batch longer than the policy allows, naming the limit", async () => {
-      const { multipart, rowOf, policy } = buildMultipart();
+      const { multipart, rowOf, policy } = buildHarness();
 
       const started = await multipart.createMultipartUpload(uploadRequest());
       const error = await thrownBy(async () =>
@@ -172,7 +79,7 @@ describe("multipart uploads", () => {
 
   describe("admission", () => {
     it("refuses over the concurrent-upload limit before anything opens in storage", async () => {
-      const { multipart, objectStore, fileRows } = buildMultipart({ maxActiveUploads: 1 });
+      const { multipart, objectStore, fileRows } = buildHarness({ maxActiveUploads: 1 });
 
       await multipart.createMultipartUpload(uploadRequest());
 
@@ -195,7 +102,7 @@ describe("multipart uploads", () => {
 
   describe("cleaning up after a failed start", () => {
     it("aborts the upload it opened when the first batch of URLs cannot be signed", async () => {
-      const { multipart, objectStore, rowCount } = buildMultipart();
+      const { multipart, objectStore, rowCount } = buildHarness();
 
       objectStore.failNext("signPart", new Error("signing is down"));
       const error = await thrownBy(() => multipart.createMultipartUpload(uploadRequest()));
@@ -209,7 +116,7 @@ describe("multipart uploads", () => {
 
   describe("status of an interrupted upload", () => {
     it("reports the part numbers and bytes storage actually holds", async () => {
-      const { multipart, objectStore, rowOf } = buildMultipart();
+      const { multipart, objectStore, rowOf } = buildHarness();
 
       const started = await multipart.createMultipartUpload(uploadRequest());
 
@@ -229,7 +136,7 @@ describe("multipart uploads", () => {
     });
 
     it("reports nothing uploaded while storage holds no parts", async () => {
-      const { multipart, rowOf } = buildMultipart();
+      const { multipart, rowOf } = buildHarness();
 
       const started = await multipart.createMultipartUpload(uploadRequest());
 
@@ -240,7 +147,7 @@ describe("multipart uploads", () => {
     });
 
     it("conflicts when storage no longer knows the upload", async () => {
-      const { multipart, objectStore, rowOf } = buildMultipart();
+      const { multipart, objectStore, rowOf } = buildHarness();
 
       const started = await multipart.createMultipartUpload(uploadRequest());
 
@@ -259,7 +166,7 @@ describe("multipart uploads", () => {
 
   describe("deleting a live multipart upload", () => {
     it("cancels the parts instead of removing an object that does not exist", async () => {
-      const { multipart, files, objectStore, fileRows } = buildMultipart();
+      const { multipart, files, objectStore, fileRows } = buildHarness();
 
       const started = await multipart.createMultipartUpload(uploadRequest());
 

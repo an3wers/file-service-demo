@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
+import { createFailureSwitch } from "../testing/failure-switch.js";
 import type {
   CompleteOutcome,
   MultipartUpload,
@@ -49,6 +50,8 @@ export interface MemoryObjectStore extends ObjectStore {
   /** What the client does with a `signPart` URL. */
   uploadPart(uploadId: string, partNumber: number, body: Buffer): void;
   objectAt(key: string): StoredBytes | null;
+  /** Every key bytes are stored under: what shows that no orphan was left. */
+  objectKeys(): string[];
   openUploads(): MultipartUpload[];
   /** Makes the next call to this method fail, for the error paths. */
   failNext(method: keyof ObjectStore, error: unknown): void;
@@ -57,21 +60,10 @@ export interface MemoryObjectStore extends ObjectStore {
 export function createMemoryObjectStore(): MemoryObjectStore {
   const objects = new Map<string, StoredBytes>();
   const uploads = new Map<string, OpenUpload>();
-  const failures = new Map<string, unknown>();
+  const failures = createFailureSwitch<keyof ObjectStore>();
 
   /** Storage is reached by id, not by key: a stale key would still find it. */
   const openUpload = (uploadId: string): OpenUpload | undefined => uploads.get(uploadId);
-
-  const checkFailure = (method: keyof ObjectStore): void => {
-    if (!failures.has(method)) {
-      return;
-    }
-
-    const error = failures.get(method);
-
-    failures.delete(method);
-    throw error;
-  };
 
   const sign = (key: string, params: Record<string, string | number>): string => {
     const url = new URL(`https://memory.storage.test/${key}`);
@@ -85,11 +77,11 @@ export function createMemoryObjectStore(): MemoryObjectStore {
 
   return {
     async checkAvailable(): Promise<void> {
-      checkFailure("checkAvailable");
+      failures.check("checkAvailable");
     },
 
     async put(key, body, options) {
-      checkFailure("put");
+      failures.check("put");
 
       const stored = { body: Buffer.from(body), contentType: options.contentType };
 
@@ -99,7 +91,7 @@ export function createMemoryObjectStore(): MemoryObjectStore {
     },
 
     async head(key): Promise<StoredObject | null> {
-      checkFailure("head");
+      failures.check("head");
 
       const stored = objects.get(key);
 
@@ -115,18 +107,18 @@ export function createMemoryObjectStore(): MemoryObjectStore {
     },
 
     async remove(key): Promise<void> {
-      checkFailure("remove");
+      failures.check("remove");
       objects.delete(key);
     },
 
     async signUpload(key, options): Promise<string> {
-      checkFailure("signUpload");
+      failures.check("signUpload");
 
       return sign(key, { op: "put", contentType: options.contentType, expiresIn: options.expiresIn });
     },
 
     async signDownload(key, options): Promise<string> {
-      checkFailure("signDownload");
+      failures.check("signDownload");
 
       return sign(key, {
         op: "get",
@@ -137,7 +129,7 @@ export function createMemoryObjectStore(): MemoryObjectStore {
     },
 
     async beginMultipart(key, options): Promise<string> {
-      checkFailure("beginMultipart");
+      failures.check("beginMultipart");
 
       const uploadId = randomUUID();
 
@@ -152,13 +144,13 @@ export function createMemoryObjectStore(): MemoryObjectStore {
     },
 
     async signPart(key, uploadId, partNumber, options): Promise<string> {
-      checkFailure("signPart");
+      failures.check("signPart");
 
       return sign(key, { op: "part", uploadId, partNumber, expiresIn: options.expiresIn });
     },
 
     async listParts(_key, uploadId): Promise<UploadedPart[] | null> {
-      checkFailure("listParts");
+      failures.check("listParts");
 
       const upload = openUpload(uploadId);
 
@@ -176,7 +168,7 @@ export function createMemoryObjectStore(): MemoryObjectStore {
     },
 
     async completeMultipart(key, uploadId, parts): Promise<CompleteOutcome> {
-      checkFailure("completeMultipart");
+      failures.check("completeMultipart");
 
       const upload = openUpload(uploadId);
 
@@ -206,12 +198,12 @@ export function createMemoryObjectStore(): MemoryObjectStore {
     },
 
     async abortMultipart(_key, uploadId): Promise<void> {
-      checkFailure("abortMultipart");
+      failures.check("abortMultipart");
       uploads.delete(uploadId);
     },
 
     async listMultipartUploads(): Promise<MultipartUpload[]> {
-      checkFailure("listMultipartUploads");
+      failures.check("listMultipartUploads");
 
       return [...uploads.entries()].map(([uploadId, upload]) => ({
         uploadId,
@@ -240,6 +232,10 @@ export function createMemoryObjectStore(): MemoryObjectStore {
       return objects.get(key) ?? null;
     },
 
+    objectKeys(): string[] {
+      return [...objects.keys()].sort();
+    },
+
     openUploads(): MultipartUpload[] {
       return [...uploads.entries()].map(([uploadId, upload]) => ({
         uploadId,
@@ -249,7 +245,7 @@ export function createMemoryObjectStore(): MemoryObjectStore {
     },
 
     failNext(method, error): void {
-      failures.set(method, error);
+      failures.failNext(method, error);
     },
   };
 }
