@@ -18,7 +18,6 @@ describe("memory file rows", () => {
 
     return {
       id,
-      bucket: "test-bucket",
       objectKey: `docs/${id}.bin`,
       directory: "docs",
       originalName: "report.bin",

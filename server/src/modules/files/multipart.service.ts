@@ -1,7 +1,9 @@
 import { ERROR_CODES, badRequest, conflict } from "../../errors.js";
 import { logger } from "../../logger.js";
-import type { CompleteOutcome, ObjectStore } from "../../storage/object-store.js";
+import type { CompleteOutcome } from "../../storage/object-store.js";
+import type { Clock } from "./clock.js";
 import type { FileRowsForMultipart } from "./file-rows.js";
+import type { ObjectStoreForMultipart } from "./object-storage.js";
 import { expiresAt, reserveKey } from "./reservation.js";
 import { partRange, planMultipart } from "./upload-plan.js";
 import type { UploadPlan } from "./upload-plan.js";
@@ -12,16 +14,11 @@ import { statusOf } from "./stored-file.js";
 import type { LiveMultipartUpload, StoredFile } from "./stored-file.js";
 
 export interface MultipartModuleDeps {
-  objectStore: ObjectStore;
+  objectStore: ObjectStoreForMultipart;
   fileRows: FileRowsForMultipart;
   policy: UploadPolicy;
-  /**
-   * Recorded on every row, so a row keeps saying where its object was put. It is
-   * provenance only: every call goes to the bucket the object store was built
-   * with, so a deployment that moves buckets does not reach its old rows through
-   * this service. The assembly hands the same name to both.
-   */
-  bucket: string;
+  /** The wall clock a part URL's `expiresAt` reads, shared with every other scenario. */
+  clock: Clock;
 }
 
 export interface PartUrlsInput {
@@ -81,7 +78,7 @@ export function createMultipartModule({
   objectStore,
   fileRows,
   policy,
-  bucket,
+  clock,
 }: MultipartModuleDeps): MultipartModule {
   async function signParts(
     key: string,
@@ -130,7 +127,6 @@ export function createMultipartModule({
 
         await fileRows.insertFile({
           id,
-          bucket,
           objectKey: key,
           directory,
           originalName,
@@ -155,7 +151,7 @@ export function createMultipartModule({
           partSize: plan.partSize,
           partCount: plan.partCount,
           maxConcurrency: policy.maxConcurrency,
-          expiresAt: expiresAt(policy.presignPartTtlSeconds),
+          expiresAt: expiresAt(clock, policy.presignPartTtlSeconds),
           parts,
         };
       } catch (error) {
@@ -201,7 +197,7 @@ export function createMultipartModule({
       }
 
       return {
-        expiresAt: expiresAt(policy.presignPartTtlSeconds),
+        expiresAt: expiresAt(clock, policy.presignPartTtlSeconds),
         parts: await signParts(key, uploadId, plan, partNumbers),
       };
     },

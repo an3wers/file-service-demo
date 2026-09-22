@@ -1,19 +1,22 @@
 import { logger } from "../../logger.js";
-import type { ObjectStore } from "../../storage/object-store.js";
+import type { Clock } from "./clock.js";
 import type { FileRowsForCleanup } from "./file-rows.js";
+import type { ObjectStoreForCleanup } from "./object-storage.js";
 import type { StoredFile } from "./stored-file.js";
 import type { UploadPolicy } from "./upload-policy.js";
 
 export interface CleanupModuleDeps {
-  objectStore: ObjectStore;
+  objectStore: ObjectStoreForCleanup;
   fileRows: FileRowsForCleanup;
   policy: UploadPolicy;
   /**
    * The wall clock the age filter measures against. It is an argument for the
    * same reason the policy is: the sweep's whole rule is "older than the TTL",
-   * and nothing that reads the clock for itself can be shown obeying it.
+   * and nothing that reads the clock for itself can be shown obeying it. The
+   * same port every other scenario takes, so a reservation's expiry and the
+   * sweep's age filter age together.
    */
-  now?: () => Date;
+  clock: Clock;
 }
 
 /** What one pass over the expired rows settled. */
@@ -62,7 +65,7 @@ export function createCleanupModule({
   objectStore,
   fileRows,
   policy,
-  now = () => new Date(),
+  clock,
 }: CleanupModuleDeps): CleanupModule {
   const ttlHours = policy.pendingTtlHours;
 
@@ -181,7 +184,7 @@ export function createCleanupModule({
      * all of them in one question instead of one question per page.
      */
     async sweepOrphanUploads(): Promise<SweepResult> {
-      const cutoff = now().getTime() - ttlHours * HOUR_MS;
+      const cutoff = clock.now().getTime() - ttlHours * HOUR_MS;
       // The age filter is what keeps the sweep off uploads that are running right
       // now: those have no row yet only for as long as the insert takes.
       const stale = (await objectStore.listMultipartUploads()).filter(

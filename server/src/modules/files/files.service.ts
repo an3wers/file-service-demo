@@ -1,8 +1,9 @@
 import { logger } from "../../logger.js";
-import type { ObjectStore } from "../../storage/object-store.js";
 import { normalizeDirectory } from "../../storage/keys.js";
+import type { Clock } from "./clock.js";
 import { FileNotFoundError, FileNotReadyError, MultipartNotFoundError, UploadNotCompletedError } from "./errors.js";
 import type { FileRowsForFiles } from "./file-rows.js";
+import type { ObjectStoreForFiles } from "./object-storage.js";
 import type { MultipartModule, MultipartStatus, PartUrlsInput, PartUrlsResult } from "./multipart.service.js";
 import { expiresAt, reserveKey } from "./reservation.js";
 import { needsMultipart } from "./upload-plan.js";
@@ -17,13 +18,13 @@ import type {
 } from "./files.types.js";
 
 export interface FilesModuleDeps {
-  objectStore: ObjectStore;
+  objectStore: ObjectStoreForFiles;
   fileRows: FileRowsForFiles;
   policy: UploadPolicy;
   /** Multipart is a separate module this one drives, not a branch inside it. */
   multipart: MultipartModule;
-  /** Recorded on every row as provenance; see `MultipartModuleDeps.bucket`. */
-  bucket: string;
+  /** The wall clock a reservation's `expiresAt` reads, shared with every other scenario. */
+  clock: Clock;
 }
 
 export interface UploadThroughServerInput {
@@ -98,7 +99,7 @@ export function createFilesModule({
   fileRows,
   policy,
   multipart,
-  bucket,
+  clock,
 }: FilesModuleDeps): FilesModule {
   async function requireFile(id: string): Promise<StoredFile> {
     const file = await fileRows.findFileById(id);
@@ -139,7 +140,6 @@ export function createFilesModule({
       try {
         return await fileRows.insertFile({
           id,
-          bucket,
           objectKey: key,
           directory,
           originalName,
@@ -199,7 +199,6 @@ export function createFilesModule({
 
       await fileRows.insertFile({
         id,
-        bucket,
         objectKey: key,
         directory,
         originalName,
@@ -217,7 +216,7 @@ export function createFilesModule({
         key,
         directory,
         uploadUrl,
-        expiresAt: expiresAt(ttl),
+        expiresAt: expiresAt(clock, ttl),
         // The signature covers Content-Type, so the client must send it verbatim.
         requiredHeaders: { "Content-Type": contentType },
       };
@@ -306,7 +305,7 @@ export function createFilesModule({
 
       return {
         url: await presignDownload(file, { disposition: input.disposition, expiresIn }),
-        expiresAt: expiresAt(expiresIn),
+        expiresAt: expiresAt(clock, expiresIn),
         name: file.originalName,
       };
     },

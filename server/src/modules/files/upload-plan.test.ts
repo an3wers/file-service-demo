@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { ERROR_CODES } from "../../errors.js";
-import { FileTooLargeError } from "./errors.js";
-import { PROTOCOL_LIMITS, needsMultipart, partRange, planMultipart } from "./upload-plan.js";
+import { FileTooLargeError, InvalidPlanLimitsError } from "./errors.js";
+import { needsMultipart, partRange, planMultipart } from "./upload-plan.js";
 import type { PlanLimits } from "./upload-plan.js";
 
 const MIB = 1024 * 1024;
@@ -21,6 +21,8 @@ function thrownBy(run: () => unknown): Error {
 /** Значения по умолчанию из config; продублированы, чтобы тест не зависел от .env. */
 const limits: PlanLimits = {
   partSize: 16 * MIB,
+  minPartSize: 5 * MIB,
+  maxPartSize: 5 * 1024 * MIB,
   maxParts: 10_000,
   maxObjectSize: 200 * GIB,
 };
@@ -74,9 +76,9 @@ describe("planMultipart", () => {
   });
 
   it("never drops below the protocol minimum part size", () => {
-    const plan = planMultipart(6 * MIB, { ...limits, partSize: PROTOCOL_LIMITS.minPartSize });
+    const plan = planMultipart(6 * MIB, { ...limits, partSize: limits.minPartSize });
 
-    expect(plan.partSize).toBeGreaterThanOrEqual(PROTOCOL_LIMITS.minPartSize);
+    expect(plan.partSize).toBeGreaterThanOrEqual(limits.minPartSize);
   });
 
   it("keeps partCount within maxParts across a range of sizes", () => {
@@ -96,6 +98,28 @@ describe("planMultipart", () => {
         code: ERROR_CODES.INVALID_UPLOAD_SIZE,
       });
     }
+  });
+
+  describe("пределы, которые домену передала сборка", () => {
+    it("бросает доменную ошибку, когда предел частей не положителен", () => {
+      expect(
+        thrownBy(() => planMultipart(100 * MIB, { ...limits, maxParts: 0 })),
+      ).toBeInstanceOf(InvalidPlanLimitsError);
+    });
+
+    it("бросает доменную ошибку, когда верхняя граница части меньше нижней", () => {
+      expect(
+        thrownBy(() =>
+          planMultipart(100 * MIB, { ...limits, minPartSize: 10 * MIB, maxPartSize: 5 * MIB }),
+        ),
+      ).toBeInstanceOf(InvalidPlanLimitsError);
+    });
+
+    it("бросает доменную ошибку, когда потолок объекта не положителен", () => {
+      expect(
+        thrownBy(() => planMultipart(100 * MIB, { ...limits, maxObjectSize: 0 })),
+      ).toBeInstanceOf(InvalidPlanLimitsError);
+    });
   });
 });
 

@@ -5,14 +5,10 @@ import { checkDatabase } from "./db/pool.js";
 import { createUploadMiddleware } from "./middleware/upload.js";
 import { createHealthRouter } from "./routes/health.js";
 import { createS3Client } from "./storage/s3-client.js";
-import { createS3ObjectStore } from "./storage/s3-object-store.js";
+import { createS3ObjectStore, PROTOCOL_LIMITS } from "./storage/s3-object-store.js";
 import type { ObjectStore } from "./storage/object-store.js";
-import { sqlFileRows } from "./modules/files/files.repo.js";
-import { createFilesRouter, createDirectoriesRouter } from "./modules/files/files.routes.js";
-import { createFilesModule } from "./modules/files/files.service.js";
-import { createMultipartModule } from "./modules/files/multipart.service.js";
-import { PROTOCOL_LIMITS } from "./modules/files/upload-plan.js";
-import type { UploadPolicy } from "./modules/files/upload-policy.js";
+import { createFilesHttp } from "./modules/files/index.js";
+import type { UploadPolicy } from "./modules/files/index.js";
 
 /**
  * The assembly: the one place that names concrete adapters and reads the
@@ -35,12 +31,19 @@ export function createObjectStore(): ObjectStore {
   );
 }
 
+/** The bucket every row is written under; the object store keeps its own copy. */
+export function bucket(): string {
+  return config.s3.bucket;
+}
+
 /** This deployment's upload policy, read off the environment exactly once. */
 export function uploadPolicy(): UploadPolicy {
   return {
     multipartThresholdBytes: config.uploads.multipartThresholdBytes,
     planLimits: {
       partSize: config.uploads.multipartPartSizeBytes,
+      minPartSize: PROTOCOL_LIMITS.minPartSize,
+      maxPartSize: PROTOCOL_LIMITS.maxPartSize,
       // The configured ceilings are wishes; the protocol's are not negotiable.
       maxParts: Math.min(config.uploads.multipartMaxParts, PROTOCOL_LIMITS.maxParts),
       maxObjectSize: Math.min(
@@ -60,21 +63,17 @@ export function uploadPolicy(): UploadPolicy {
 
 export function buildApp(): Express {
   const objectStore = createObjectStore();
-  const policy = uploadPolicy();
-  // Recorded on rows; the store keeps its own copy for the calls it makes.
-  const bucket = config.s3.bucket;
-
-  const fileRows = sqlFileRows;
-  const multipart = createMultipartModule({ objectStore, fileRows, policy, bucket });
-  const files = createFilesModule({ objectStore, fileRows, policy, multipart, bucket });
+  const { filesRouter, directoriesRouter } = createFilesHttp({
+    objectStore,
+    bucket: bucket(),
+    policy: uploadPolicy(),
+    uploadSingleFile: createUploadMiddleware(config.uploads.maxSizeBytes),
+  });
 
   return createApp({
     corsOrigin: config.corsOrigin,
     healthRouter: createHealthRouter({ objectStore, checkDatabase }),
-    filesRouter: createFilesRouter({
-      files,
-      uploadSingleFile: createUploadMiddleware(config.uploads.maxSizeBytes),
-    }),
-    directoriesRouter: createDirectoriesRouter(files),
+    filesRouter,
+    directoriesRouter,
   });
 }

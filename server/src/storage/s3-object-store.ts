@@ -26,6 +26,24 @@ import type {
   UploadedPart,
 } from "./object-store.js";
 
+const MIB = 1024 * 1024;
+
+/**
+ * Hard limits of the multipart protocol itself, the same in every S3-compatible
+ * store that speaks it. Not configurable, and not a deployment's policy: a plan
+ * that breaks these is rejected by storage rather than by us. Vendor knowledge,
+ * so it lives here rather than in the domain — the assembly clamps a
+ * deployment's config with it before handing the result to the domain as
+ * `PlanLimits`.
+ */
+export const PROTOCOL_LIMITS = {
+  /** Every part except the last one. The last may be any size at all. */
+  minPartSize: 5 * MIB,
+  maxPartSize: 5 * 1024 * MIB,
+  maxParts: 10_000,
+  maxObjectSize: 5 * 1024 * 1024 * MIB,
+} as const;
+
 /**
  * The adapter that talks to S3. The bucket is fixed at construction: it is the
  * one fact every call would otherwise have to carry, and nothing in this service

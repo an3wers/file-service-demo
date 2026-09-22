@@ -3,26 +3,37 @@
 ## Архитектура
 
 ```
-composition.ts → routes (createFilesRouter) → module (createFilesModule, createMultipartModule)
-                 → объектное хранилище (ObjectStore) и строки метаданных (FileRows*)
-cleanup-pending.ts → module (createCleanupModule) → те же два шва
+composition.ts → modules/files/index.ts (createFilesHttp)    → routes → module → ObjectStore, FileRows*
+scripts/cleanup-pending.ts → modules/files/index.ts (createFilesCleanup) → module → те же два шва
 ```
 
-- **Зависимости передаются, а не импортируются.** Модули и роутеры — фабрики: принимают
-  `objectStore`, узкий интерфейс репозитория, `UploadPolicy` и — те, кто пишет строки, — `bucket`.
-  Внутри `src/modules`,
-  `src/routes` и `src/app.ts` нельзя импортировать `config.ts`, `files.repo.ts` и адаптеры.
+`modules/files/index.ts` — фасад модуля: единственный файл внутри `src/modules`, которому можно
+называть `files.repo.ts` и собирать `createFilesModule`/`createMultipartModule`/`createCleanupModule`
+в готовый узел. Наружу он отдаёт только эти две сборки и тип их входных зависимостей
+(`FilesModuleDependencies`) — `composition.ts` и `scripts/cleanup-pending.ts` не импортируют из
+`modules/files` ничего глубже `index.ts`.
+
+- **Зависимости передаются, а не импортируются.** Модули — фабрики: принимают `objectStore` (узкий
+  интерфейс порта хранилища из `object-storage.ts`), узкий интерфейс репозитория строк, `UploadPolicy`
+  и `Clock`. `bucket` в сценарии не приходит: колонку заполняет адаптер БД, собранный внутри
+  `modules/files/index.ts` через `createSqlFileRows(bucket)`. Внутри `src/modules` (кроме
+  `files/index.ts`), `src/routes` и `src/app.ts` нельзя импортировать `config.ts`, `files.repo.ts` и
+  адаптеры.
 - **Сборка** — `src/composition.ts`: единственное место, где называются конкретные адаптеры
-  (`createS3ObjectStore`, `sqlFileRows`) и читается `config`. Скрипт уборки — тонкая оболочка: он
-  собирает зависимости модуля уборки из тех же частей и не зависит от сборки приложения.
+  (`createS3ObjectStore`) и читается `config`. Дальше она передаёт объектное хранилище, `bucket` и
+  политику в `modules/files/index.ts`, который уже сам решает, каким репозиторием строк и какими
+  часами их собрать. Скрипт уборки — тонкая оболочка: он строит те же зависимости из тех же частей
+  композиции и не зависит от сборки приложения.
 - **Routes** — только валидация и HTTP: статус, `res.json(await files.x(...))`. Express 5 сам
   ловит отклонённые промисы, поэтому `try/catch` и `next(err)` в async-хендлерах не нужны — просто
   `throw`.
-- **Module** — бизнес-логика и оркестровка; работает с хранилищем через `ObjectStore`, со строками
-  через узкий интерфейс из `file-rows.ts`. Вендор за швом: имя `S3` внутри модулей не встречается.
+- **Module** — бизнес-логика и оркестровка; работает с хранилищем через узкий `ObjectStoreFor*` из
+  `object-storage.ts`, со строками через узкий интерфейс из `file-rows.ts`, со временем — через
+  `Clock` из `clock.ts`. Вендор за швом: имя `S3` внутри модулей не встречается.
 - **Repo** — сырой SQL через `query` из `src/db/pool.ts` (не `pool.query` напрямую: `query`
   транслирует ошибки pg в `AppError`). Параметры только через `$1, $2…`, SQL в нижнем регистре.
-  Связка `sqlFileRows` доказывает, что он отвечает за все узкие интерфейсы.
+  `createSqlFileRows(bucket): FileRows` доказывает при компиляции, что отвечает за все узкие
+  интерфейсы; `bucket` в нём фиксирован при сборке, а не приходит с каждым вызовом.
 - `files.schemas.ts` — zod-схемы запросов и выведенные из них типы; `files.types.ts` — строки БД
   (`FileRow`, snake_case) и DTO (camelCase); `stored-file.ts` — сущность `StoredFile` (сумма
   состояний) и `toStoredFile: FileRow → StoredFile`, единственное место, где сочетание полей

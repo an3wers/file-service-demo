@@ -48,7 +48,13 @@ export const PENDING_TTL_HOURS = 24;
 function testPolicy(overrides: Partial<UploadPolicy> = {}): UploadPolicy {
   return {
     multipartThresholdBytes: 5 * MIB,
-    planLimits: { partSize: 5 * MIB, maxParts: 10_000, maxObjectSize: 200 * GIB },
+    planLimits: {
+      partSize: 5 * MIB,
+      minPartSize: 5 * MIB,
+      maxPartSize: 5 * 1024 * MIB,
+      maxParts: 10_000,
+      maxObjectSize: 200 * GIB,
+    },
     partUrlBatch: 2,
     maxConcurrency: 3,
     maxActiveUploads: 2,
@@ -85,14 +91,14 @@ export interface Harness {
 export function buildHarness(policyOverrides: Partial<UploadPolicy> = {}): Harness {
   const clock = createTestClock();
   const objectStore = createMemoryObjectStore({ clock });
-  const fileRows = createMemoryFileRows({ clock });
+  const fileRows = createMemoryFileRows({ clock, bucket: BUCKET });
   const policy = testPolicy(policyOverrides);
-  const multipart = createMultipartModule({ objectStore, fileRows, policy, bucket: BUCKET });
+  const multipart = createMultipartModule({ objectStore, fileRows, policy, clock });
 
   return {
     multipart,
-    files: createFilesModule({ objectStore, fileRows, policy, multipart, bucket: BUCKET }),
-    cleanup: createCleanupModule({ objectStore, fileRows, policy, now: clock.now }),
+    files: createFilesModule({ objectStore, fileRows, policy, multipart, clock }),
+    cleanup: createCleanupModule({ objectStore, fileRows, policy, clock }),
     objectStore,
     fileRows,
     policy,

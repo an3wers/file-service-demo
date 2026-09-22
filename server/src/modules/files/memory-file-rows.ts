@@ -82,9 +82,12 @@ function compareText(a: string, b: string): number {
   return a < b ? -1 : 1;
 }
 
-export function createMemoryFileRows(options: { clock?: TestClock } = {}): MemoryFileRows {
+export function createMemoryFileRows(
+  options: { clock?: TestClock; bucket?: string } = {},
+): MemoryFileRows {
   const rows = new Map<string, FileRow>();
   const clock = options.clock ?? createTestClock();
+  const bucket = options.bucket ?? "test-bucket";
   const failures = createFailureSwitch<keyof FileRows>();
   let interleaved: (() => Promise<void>) | null = null;
 
@@ -105,7 +108,7 @@ export function createMemoryFileRows(options: { clock?: TestClock } = {}): Memor
       }
 
       const takenKey = [...rows.values()].some(
-        (row) => row.bucket === input.bucket && row.object_key === input.objectKey,
+        (row) => row.bucket === bucket && row.object_key === input.objectKey,
       );
 
       if (takenKey) {
@@ -118,7 +121,7 @@ export function createMemoryFileRows(options: { clock?: TestClock } = {}): Memor
       const now = clock.now();
       const row: FileRow = {
         id: input.id,
-        bucket: input.bucket,
+        bucket,
         object_key: input.objectKey,
         directory: input.directory,
         original_name: input.originalName,

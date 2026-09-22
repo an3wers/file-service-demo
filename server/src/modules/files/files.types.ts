@@ -39,9 +39,9 @@ export interface FileDto {
   downloadUrl?: string;
 }
 
+/** No `bucket` field: the row writer fills that column from its own construction, not per call. */
 export interface InsertFileInput {
   id: string;
-  bucket: string;
   objectKey: string;
   directory: string;
   originalName: string;

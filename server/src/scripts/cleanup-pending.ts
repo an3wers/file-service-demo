@@ -1,8 +1,7 @@
-import { createObjectStore, uploadPolicy } from "../composition.js";
+import { bucket, createObjectStore, uploadPolicy } from "../composition.js";
 import { pool } from "../db/pool.js";
 import { logger } from "../logger.js";
-import { createCleanupModule } from "../modules/files/cleanup.service.js";
-import { sqlFileRows } from "../modules/files/files.repo.js";
+import { createFilesCleanup } from "../modules/files/index.js";
 
 /**
  * The cleanup pass on a schedule: a second assembly next to the app's, building
@@ -11,9 +10,9 @@ import { sqlFileRows } from "../modules/files/files.repo.js";
  * they settled.
  */
 async function main(): Promise<void> {
-  const cleanup = createCleanupModule({
+  const cleanup = createFilesCleanup({
     objectStore: createObjectStore(),
-    fileRows: sqlFileRows,
+    bucket: bucket(),
     policy: uploadPolicy(),
   });
 

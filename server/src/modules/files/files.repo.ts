@@ -20,36 +20,6 @@ function escapeLike(value: string): string {
   return value.replaceAll(/[\\%_]/g, String.raw`\$&`);
 }
 
-export async function insertFile(input: InsertFileInput): Promise<StoredFile> {
-  const { rows } = await query<FileRow>(
-    `insert into files (
-       id, bucket, object_key, directory, original_name, extension,
-       content_type, size_bytes, etag, status, upload_source,
-       upload_id, part_size, part_count
-     )
-     values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
-     returning *`,
-    [
-      input.id,
-      input.bucket,
-      input.objectKey,
-      input.directory,
-      input.originalName,
-      input.extension,
-      input.contentType,
-      input.sizeBytes,
-      input.etag,
-      input.status,
-      input.uploadSource,
-      input.uploadId ?? null,
-      input.partSize ?? null,
-      input.partCount ?? null,
-    ],
-  );
-
-  return toStoredFile(rows[0]!);
-}
-
 export async function findFileById(id: string): Promise<StoredFile | null> {
   const { rows } = await query<FileRow>(
     "select * from files where id = $1 and deleted_at is null",
@@ -262,17 +232,53 @@ export async function listChildDirectories(parent: string): Promise<DirectoryDto
  * The annotation is the whole point of it: it is what makes the SQL side prove,
  * at compile time, that it still answers for every operation those modules ask
  * for. Callers take the one interface they need, never this bundle.
+ *
+ * `bucket` is fixed here rather than threaded through every call: this is the
+ * row writer the domain talks about when it says the column is filled by
+ * "whoever writes the row", not by the scenario that asked for the insert.
  */
-export const sqlFileRows: FileRows = {
-  insertFile,
-  findFileById,
-  markFileReady,
-  markFileFailed,
-  countActiveMultipart,
-  claimExpiredMultipart,
-  softDeleteFile,
-  listFiles,
-  findKnownUploadIds,
-  listExpiredPending,
-  listChildDirectories,
-};
+export function createSqlFileRows(bucket: string): FileRows {
+  async function insertFile(input: InsertFileInput): Promise<StoredFile> {
+    const { rows } = await query<FileRow>(
+      `insert into files (
+         id, bucket, object_key, directory, original_name, extension,
+         content_type, size_bytes, etag, status, upload_source,
+         upload_id, part_size, part_count
+       )
+       values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+       returning *`,
+      [
+        input.id,
+        bucket,
+        input.objectKey,
+        input.directory,
+        input.originalName,
+        input.extension,
+        input.contentType,
+        input.sizeBytes,
+        input.etag,
+        input.status,
+        input.uploadSource,
+        input.uploadId ?? null,
+        input.partSize ?? null,
+        input.partCount ?? null,
+      ],
+    );
+
+    return toStoredFile(rows[0]!);
+  }
+
+  return {
+    insertFile,
+    findFileById,
+    markFileReady,
+    markFileFailed,
+    countActiveMultipart,
+    claimExpiredMultipart,
+    softDeleteFile,
+    listFiles,
+    findKnownUploadIds,
+    listExpiredPending,
+    listChildDirectories,
+  };
+}
