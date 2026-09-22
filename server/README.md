@@ -285,7 +285,9 @@ src/
   middleware/ api-key.ts, upload.ts, validate.ts, error-handler.ts
   modules/files/  routes → module → rows: фабрики, принимающие зависимости, плюс
                   file-rows.ts (узкие интерфейсы) и memory-file-rows.ts, files.repo.ts
-                  (SQL), upload-plan.ts, upload-policy.ts, schemas/types/mapper
-  scripts/   s3-cors.ts, cleanup-pending.ts (вторая, самостоятельная сборка)
+                  (SQL), cleanup.service.ts (уборка), upload-plan.ts, upload-policy.ts,
+                  schemas/types/mapper
+  scripts/   s3-cors.ts, cleanup-pending.ts (вторая сборка: собирает модуль уборки)
+  testing/   clock.ts и failure-switch.ts — ручки вторых реализаций
   **/*.test.ts  тесты рядом с модулями, которые они проверяют
 ```

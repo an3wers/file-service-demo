@@ -1,4 +1,6 @@
 import { ERROR_CODES, conflict } from "../../errors.js";
+import { createTestClock } from "../../testing/clock.js";
+import type { TestClock } from "../../testing/clock.js";
 import { createFailureSwitch } from "../../testing/failure-switch.js";
 import type {
   FileRows,
@@ -28,38 +30,28 @@ import type { DirectoryDto, FileRow, InsertFileInput, ListFilesParams } from "./
  * - listing sorts by the requested column, then by id, and pages the result.
  *
  * Time is a knob here. TTL is the one rule that cannot be exercised without
- * moving the clock, so the store owns one and `advance` turns it.
+ * moving the clock, so the rows read one — shared with storage when a harness
+ * hands the same one to both — and `advance` turns it.
  *
  * Failure is the other knob: `failNext` makes one call reject, which is how the
  * paths that have to undo a storage side effect when the table refuses a row
  * get exercised at all.
  */
 
-/** A clock the test drives, standing in for the database's `now()`. */
-interface MemoryClock {
-  now(): Date;
-  advance(hours: number): void;
-}
-
 export interface MemoryFileRows extends FileRows {
   /** Moves the clock forward, which is how a reserved row becomes expired. */
   advance(hours: number): void;
   /** Makes the next call to this method fail, for the error paths. */
   failNext(method: keyof FileRows, error: unknown): void;
+  /**
+   * Lets somebody else settle the row in the instant before the next claim runs
+   * — a client confirming the upload the sweep is about to cancel. The claim
+   * exists to arbitrate exactly that race, and this is the only way to lose it.
+   */
+  beforeNextClaim(run: () => Promise<void>): void;
 }
 
 const HOUR_MS = 60 * 60 * 1000;
-
-function createClock(start: Date): MemoryClock {
-  let current = start.getTime();
-
-  return {
-    now: () => new Date(current),
-    advance: (hours) => {
-      current += hours * HOUR_MS;
-    },
-  };
-}
 
 /**
  * `size_bytes` is the one sortable column that can be null, and where a null
@@ -88,10 +80,11 @@ function compareText(a: string, b: string): number {
   return a < b ? -1 : 1;
 }
 
-export function createMemoryFileRows(options: { now?: Date } = {}): MemoryFileRows {
+export function createMemoryFileRows(options: { clock?: TestClock } = {}): MemoryFileRows {
   const rows = new Map<string, FileRow>();
-  const clock = createClock(options.now ?? new Date());
+  const clock = options.clock ?? createTestClock();
   const failures = createFailureSwitch<keyof FileRows>();
+  let interleaved: (() => Promise<void>) | null = null;
 
   /** Rows leave by value: a caller mutating one must not rewrite the table. */
   const copy = (row: FileRow): FileRow => ({ ...row });
@@ -199,6 +192,13 @@ export function createMemoryFileRows(options: { now?: Date } = {}): MemoryFileRo
 
     async claimExpiredMultipart(id: string, ttlHours: number): Promise<string | null> {
       failures.check("claimExpiredMultipart");
+
+      if (interleaved) {
+        const run = interleaved;
+
+        interleaved = null;
+        await run();
+      }
 
       const row = rows.get(id);
 
@@ -377,6 +377,10 @@ export function createMemoryFileRows(options: { now?: Date } = {}): MemoryFileRo
 
     failNext(method, error): void {
       failures.failNext(method, error);
+    },
+
+    beforeNextClaim(run): void {
+      interleaved = run;
     },
   };
 }

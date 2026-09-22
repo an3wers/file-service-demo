@@ -1,3 +1,4 @@
+import { createTestClock } from "../../testing/clock.js";
 import { createMemoryObjectStore } from "../../storage/memory-object-store.js";
 import type { MemoryObjectStore } from "../../storage/memory-object-store.js";
 import { createMemoryFileRows } from "./memory-file-rows.js";
@@ -6,6 +7,8 @@ import { createFilesModule } from "./files.service.js";
 import type { FilesModule } from "./files.service.js";
 import { createMultipartModule } from "./multipart.service.js";
 import type { MultipartModule } from "./multipart.service.js";
+import { createCleanupModule } from "./cleanup.service.js";
+import type { CleanupModule } from "./cleanup.service.js";
 import type { AppError } from "../../errors.js";
 import type { UploadPolicy } from "./upload-policy.js";
 import type { FileRow } from "./files.types.js";
@@ -19,6 +22,12 @@ import type { FileRow } from "./files.types.js";
  * That is what lets a test assert an observable result — what came back to the
  * caller, and what state the metadata row and storage ended in — rather than a
  * list of calls.
+ *
+ * The cleanup module is assembled here too, on the same two second
+ * implementations and the same clock, because what it settles is what the other
+ * two modules left behind: a reservation nobody confirmed, an upload nobody
+ * finished. `advance` is the only way past a TTL, and it moves the one clock
+ * the rows, storage and the cleanup's age filter all read.
  */
 
 export const MIB = 1024 * 1024;
@@ -27,6 +36,9 @@ const BUCKET = "test-bucket";
 
 /** A 12 MiB file: three parts by the plan — 5 MiB, 5 MiB and 2 MiB. */
 export const THREE_PART_SIZE = 12 * MIB;
+
+/** How long a reservation stays untouched here; `advance` past it to expire one. */
+export const PENDING_TTL_HOURS = 24;
 
 /**
  * The policy is stated here rather than read from the environment: a test picks
@@ -44,6 +56,7 @@ function testPolicy(overrides: Partial<UploadPolicy> = {}): UploadPolicy {
     presignUploadTtlSeconds: 900,
     presignDownloadTtlSeconds: 900,
     presignPartTtlSeconds: 900,
+    pendingTtlHours: PENDING_TTL_HOURS,
     ...overrides,
   };
 }
@@ -53,9 +66,17 @@ export interface Harness {
   files: FilesModule;
   /** The same multipart module the files module drives. */
   multipart: MultipartModule;
+  /** The real cleanup module, on the same storage and rows. */
+  cleanup: CleanupModule;
   objectStore: MemoryObjectStore;
   fileRows: MemoryFileRows;
   policy: UploadPolicy;
+  /**
+   * Moves the shared clock forward: how a fresh reservation becomes expired.
+   * It is the same clock `fileRows.advance` turns — one of the two doors, not
+   * two clocks.
+   */
+  advance(hours: number): void;
   /** The metadata row as a router would see it: by id. */
   rowOf(id: string): Promise<FileRow>;
   /** How many rows were written at all, deleted and failed ones included. */
@@ -63,17 +84,22 @@ export interface Harness {
 }
 
 export function buildHarness(policyOverrides: Partial<UploadPolicy> = {}): Harness {
-  const objectStore = createMemoryObjectStore();
-  const fileRows = createMemoryFileRows();
+  const clock = createTestClock();
+  const objectStore = createMemoryObjectStore({ clock });
+  const fileRows = createMemoryFileRows({ clock });
   const policy = testPolicy(policyOverrides);
   const multipart = createMultipartModule({ objectStore, fileRows, policy, bucket: BUCKET });
 
   return {
     multipart,
     files: createFilesModule({ objectStore, fileRows, policy, multipart, bucket: BUCKET }),
+    cleanup: createCleanupModule({ objectStore, fileRows, policy, now: clock.now }),
     objectStore,
     fileRows,
     policy,
+    advance(hours) {
+      clock.advance(hours);
+    },
     async rowCount() {
       // A row with no live upload is invisible to the active-upload count, so
       // "no row was written" is checked by listing rather than by that count.

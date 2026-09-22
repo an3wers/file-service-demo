@@ -5,14 +5,16 @@
 ```
 composition.ts → routes (createFilesRouter) → module (createFilesModule, createMultipartModule)
                  → объектное хранилище (ObjectStore) и строки метаданных (FileRows*)
+cleanup-pending.ts → module (createCleanupModule) → те же два шва
 ```
 
 - **Зависимости передаются, а не импортируются.** Модули и роутеры — фабрики: принимают
-  `objectStore`, узкий интерфейс репозитория, `UploadPolicy` и `bucket`. Внутри `src/modules`,
+  `objectStore`, узкий интерфейс репозитория, `UploadPolicy` и — те, кто пишет строки, — `bucket`.
+  Внутри `src/modules`,
   `src/routes` и `src/app.ts` нельзя импортировать `config.ts`, `files.repo.ts` и адаптеры.
 - **Сборка** — `src/composition.ts`: единственное место, где называются конкретные адаптеры
-  (`createS3ObjectStore`, `sqlFileRows`) и читается `config`. Скрипт уборки собирает свою пару
-  зависимостей из тех же частей и не зависит от сборки приложения.
+  (`createS3ObjectStore`, `sqlFileRows`) и читается `config`. Скрипт уборки — тонкая оболочка: он
+  собирает зависимости модуля уборки из тех же частей и не зависит от сборки приложения.
 - **Routes** — только валидация и HTTP: статус, `res.json(await files.x(...))`. Express 5 сам
   ловит отклонённые промисы, поэтому `try/catch` и `next(err)` в async-хендлерах не нужны — просто
   `throw`.

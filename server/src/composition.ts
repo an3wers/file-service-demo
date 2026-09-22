@@ -19,8 +19,8 @@ import type { UploadPolicy } from "./modules/files/upload-policy.js";
  * environment. Everything below it takes what it needs as an argument, so the
  * choice of vendor and the choice of limits are made here and nowhere else.
  *
- * The cleanup script is a second, independent assembly and builds only the two
- * pieces it needs out of the same parts.
+ * The cleanup script is a second, independent assembly and builds only the
+ * pieces its module needs out of the same parts.
  */
 
 export function createObjectStore(): ObjectStore {
@@ -54,6 +54,7 @@ export function uploadPolicy(): UploadPolicy {
     presignUploadTtlSeconds: config.uploads.presignUploadTtlSeconds,
     presignDownloadTtlSeconds: config.uploads.presignDownloadTtlSeconds,
     presignPartTtlSeconds: config.uploads.presignPartTtlSeconds,
+    pendingTtlHours: config.uploads.pendingTtlHours,
   };
 }
 

@@ -1,4 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
+import { createTestClock } from "../testing/clock.js";
+import type { TestClock } from "../testing/clock.js";
 import { createFailureSwitch } from "../testing/failure-switch.js";
 import type {
   CompleteOutcome,
@@ -20,7 +22,13 @@ import type {
  * - an upload disappears once it is completed or aborted, and every later call
  *   for it answers "no such upload";
  * - no object exists at the key until the upload is assembled;
- * - ETags are quoted, and echoing them back verbatim is what completion needs.
+ * - ETags are quoted, and echoing them back verbatim is what completion needs;
+ * - an upload carries the moment it was opened, which is the only thing the
+ *   orphan sweep has to judge its age by.
+ *
+ * The clock comes from outside so that storage and the metadata table can share
+ * one: an upload opened before the sweep's cutoff and the row reserved with it
+ * have to age together.
  *
  * Signed URLs are fabricated. They are inspectable, but nothing can be uploaded
  * through them — a test moves bytes with `uploadObject` and `uploadPart`, which
@@ -57,9 +65,12 @@ export interface MemoryObjectStore extends ObjectStore {
   failNext(method: keyof ObjectStore, error: unknown): void;
 }
 
-export function createMemoryObjectStore(): MemoryObjectStore {
+export function createMemoryObjectStore(
+  options: { clock?: TestClock } = {},
+): MemoryObjectStore {
   const objects = new Map<string, StoredBytes>();
   const uploads = new Map<string, OpenUpload>();
+  const clock = options.clock ?? createTestClock();
   const failures = createFailureSwitch<keyof ObjectStore>();
 
   /** Storage is reached by id, not by key: a stale key would still find it. */
@@ -136,7 +147,7 @@ export function createMemoryObjectStore(): MemoryObjectStore {
       uploads.set(uploadId, {
         key,
         contentType: options.contentType,
-        initiatedAt: new Date(),
+        initiatedAt: clock.now(),
         parts: new Map(),
       });
 
