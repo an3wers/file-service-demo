@@ -1,12 +1,15 @@
 #!/bin/bash
-# Read JSON data that Claude Code sends to stdin
-input=$(cat)
+# Read JSON data that Claude Code sends to stdin and format the status line
+python3 -c '
+import json, sys
 
-# Extract fields using jq
-MODEL=$(echo "$input" | jq -r '.model.display_name')
-DIR=$(echo "$input" | jq -r '.workspace.current_dir')
-# The "// 0" provides a fallback if the field is null
-PCT=$(echo "$input" | jq -r '.context_window.used_percentage // 0' | cut -d. -f1)
+data = json.load(sys.stdin)
+model = data.get("model", {}).get("display_name", "")
+current_dir = data.get("workspace", {}).get("current_dir", "")
+ctx = data.get("context_window", {})
+pct = int(ctx.get("used_percentage") or 0)
+tokens = int(ctx.get("total_input_tokens") or 0) + int(ctx.get("total_output_tokens") or 0)
+folder = current_dir.rstrip("/").rsplit("/", 1)[-1]
 
-# Output the status line - ${DIR##*/} extracts just the folder name
-echo "[$MODEL] 📁 ${DIR##*/} | ${PCT}% context"
+print(f"[{model}] \U0001F4C1 {folder} | {pct}% context | {tokens:,} tokens")
+'
