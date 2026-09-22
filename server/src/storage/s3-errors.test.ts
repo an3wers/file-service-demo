@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { AppError, ERROR_CODES, notFound } from "../errors.js";
-import { isS3NoSuchUpload, isS3NotFound, storageError } from "./errors.js";
+import { isS3NoSuchUpload, isS3NotFound, storageError } from "./s3-errors.js";
 
 const context = { operation: "getObject", bucket: "test-bucket", key: "docs/a.pdf" };
 

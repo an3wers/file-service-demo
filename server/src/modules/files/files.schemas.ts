@@ -1,5 +1,4 @@
 import { z } from "zod";
-import { config } from "../../config.js";
 
 const flag = (defaultValue: boolean) =>
   z
@@ -23,13 +22,10 @@ export const presignUploadSchema = z.object({
 });
 
 export const partUrlsSchema = z.object({
-  // The upper bound is the same knob that caps the first batch: it bounds the
-  // response and the signing burst alike. The `1..partCount` range needs the
-  // stored plan, so it is checked in the service.
-  partNumbers: z
-    .array(z.coerce.number().int().positive())
-    .min(1)
-    .max(config.uploads.multipartUrlBatch),
+  // Shape only: a non-empty list of positive integers. How many may be asked
+  // for at once is this deployment's policy, and which numbers exist needs the
+  // stored plan, so both are checked in the multipart module.
+  partNumbers: z.array(z.coerce.number().int().positive()).min(1),
 });
 
 export const listFilesQuerySchema = z.object({

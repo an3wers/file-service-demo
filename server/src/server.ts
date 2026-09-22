@@ -1,4 +1,4 @@
-import { app } from "./app.js";
+import { buildApp } from "./composition.js";
 import { config } from "./config.js";
 import { checkDatabase, pool } from "./db/pool.js";
 import { logger } from "./logger.js";
@@ -11,6 +11,8 @@ try {
   logger.error({ err: error }, "Cannot reach PostgreSQL; aborting startup");
   process.exit(1);
 }
+
+const app = buildApp();
 
 const server = app.listen(config.port, () => {
   logger.info(`API listening on http://localhost:${config.port}`);

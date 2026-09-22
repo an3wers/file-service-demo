@@ -1,26 +1,13 @@
-import {
-  DeleteObjectCommand,
-  GetObjectCommand,
-  HeadObjectCommand,
-  PutObjectCommand,
-} from "@aws-sdk/client-s3";
-import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
-import { config } from "../../config.js";
 import { ERROR_CODES, conflict, notFound } from "../../errors.js";
 import { logger } from "../../logger.js";
-import { bucket, s3 } from "../../s3/client.js";
-import { isS3NotFound, storageError } from "../../s3/errors.js";
-import {
-  buildObjectKey,
-  contentDisposition,
-  decodeOriginalName,
-  normalizeDirectory,
-  sanitizeFileName,
-} from "../../s3/keys.js";
-import { needsMultipart } from "../../s3/multipart.js";
+import type { ObjectStore } from "../../storage/object-store.js";
+import { decodeOriginalName, normalizeDirectory } from "../../storage/keys.js";
 import { toFileDto } from "./files.mapper.js";
-import * as multipart from "./multipart.service.js";
-import * as repo from "./files.repo.js";
+import type { FileRowsForFiles } from "./file-rows.js";
+import type { MultipartModule, MultipartStatus } from "./multipart.service.js";
+import { expiresAt, reserveKey } from "./reservation.js";
+import { needsMultipart } from "./upload-plan.js";
+import type { UploadPolicy } from "./upload-policy.js";
 import type {
   DirectoryDto,
   FileDto,
@@ -36,316 +23,17 @@ import type {
   PresignUploadBody,
 } from "./files.schemas.js";
 
-const DEFAULT_CONTENT_TYPE = "application/octet-stream";
-
-function fileNotFound(id: string) {
-  return notFound(ERROR_CODES.FILE_NOT_FOUND, `File ${id} was not found`);
+export interface FilesModuleDeps {
+  objectStore: ObjectStore;
+  fileRows: FileRowsForFiles;
+  policy: UploadPolicy;
+  /** Multipart is a separate module this one drives, not a branch inside it. */
+  multipart: MultipartModule;
+  /** Recorded on every row as provenance; see `MultipartModuleDeps.bucket`. */
+  bucket: string;
 }
 
-async function requireFile(id: string): Promise<FileRow> {
-  const file = await repo.findFileById(id);
-
-  if (!file) {
-    throw fileNotFound(id);
-  }
-
-  return file;
-}
-
-function expiresAt(seconds: number): string {
-  return new Date(Date.now() + seconds * 1000).toISOString();
-}
-
-async function presignDownload(
-  file: FileRow,
-  options: { disposition: "attachment" | "inline"; expiresIn: number },
-): Promise<string> {
-  try {
-    return await getSignedUrl(
-      s3,
-      new GetObjectCommand({
-        Bucket: file.bucket,
-        Key: file.object_key,
-        ResponseContentType: file.content_type,
-        ResponseContentDisposition: contentDisposition(
-          file.original_name,
-          options.disposition,
-        ),
-      }),
-      { expiresIn: options.expiresIn },
-    );
-  } catch (error) {
-    throw storageError(error, {
-      operation: "GetObject(presign)",
-      id: file.id,
-      bucket: file.bucket,
-      key: file.object_key,
-    });
-  }
-}
-
-/** Upload proxied through the server: the request body is already in memory. */
-export async function uploadThroughServer(
-  file: Express.Multer.File,
-  rawDirectory: string | undefined,
-): Promise<FileDto> {
-  const directory = normalizeDirectory(rawDirectory);
-  const originalName = sanitizeFileName(decodeOriginalName(file.originalname));
-  const { id, key, extension } = buildObjectKey(directory, originalName);
-  const contentType = file.mimetype || DEFAULT_CONTENT_TYPE;
-
-  let result;
-
-  try {
-    result = await s3.send(
-      new PutObjectCommand({
-        Bucket: bucket,
-        Key: key,
-        Body: file.buffer,
-        ContentType: contentType,
-        ContentLength: file.size,
-      }),
-    );
-  } catch (error) {
-    throw storageError(error, {
-      operation: "PutObject",
-      id,
-      bucket,
-      key,
-      size: file.size,
-    });
-  }
-
-  try {
-    const row = await repo.insertFile({
-      id,
-      bucket,
-      objectKey: key,
-      directory,
-      originalName,
-      extension,
-      contentType,
-      sizeBytes: file.size,
-      etag: result.ETag ?? null,
-      status: "ready",
-      uploadSource: "server",
-    });
-
-    return toFileDto(row);
-  } catch (error) {
-    // The object is already in S3 but has no metadata row, so nothing can ever
-    // reach it again. Roll the storage side back rather than leak an orphan.
-    // (If the insert actually committed and only the response was lost, this
-    // deletes the object under a live row — rare enough to leave to a future
-    // reconciliation pass rather than a transaction here.)
-    await s3
-      .send(new DeleteObjectCommand({ Bucket: bucket, Key: key }))
-      .catch((cleanupError: unknown) => {
-        logger.error(
-          { err: cleanupError, id, bucket, key },
-          "Failed to remove orphaned object after metadata insert failed",
-        );
-      });
-
-    throw error;
-  }
-}
-
-/**
- * Reserves an id, key and metadata row, then hands back a URL the client can
- * PUT to directly. The row stays `pending` until `completeUpload` confirms the
- * object actually landed.
- *
- * Past `MULTIPART_THRESHOLD_MB` the same call answers with a multipart plan
- * instead, discriminated by `strategy`. A request that sends no `size` cannot be
- * planned and stays on the single-PUT path, which is also what keeps callers
- * that predate multipart working unchanged.
- */
-export async function createPresignedUpload(
-  body: PresignUploadBody,
-): Promise<PresignUploadResult> {
-  if (needsMultipart(body.size, config.uploads.multipartThresholdBytes)) {
-    return await multipart.createMultipartUpload({
-      filename: body.filename,
-      directory: body.directory,
-      contentType: body.contentType,
-      size: body.size!,
-    });
-  }
-
-  const directory = normalizeDirectory(body.directory);
-  const originalName = sanitizeFileName(body.filename);
-  const { id, key, extension } = buildObjectKey(directory, originalName);
-  const contentType = body.contentType ?? DEFAULT_CONTENT_TYPE;
-  const ttl = config.uploads.presignUploadTtlSeconds;
-
-  // Sign before recording anything: the key is already fixed, and a signing
-  // failure this way leaves no `pending` row that no client will ever confirm.
-  let uploadUrl: string;
-
-  try {
-    uploadUrl = await getSignedUrl(
-      s3,
-      new PutObjectCommand({
-        Bucket: bucket,
-        Key: key,
-        ContentType: contentType,
-      }),
-      { expiresIn: ttl },
-    );
-  } catch (error) {
-    throw storageError(error, { operation: "PutObject(presign)", id, bucket, key });
-  }
-
-  await repo.insertFile({
-    id,
-    bucket,
-    objectKey: key,
-    directory,
-    originalName,
-    extension,
-    contentType,
-    sizeBytes: body.size ?? null,
-    etag: null,
-    status: "pending",
-    uploadSource: "presigned",
-  });
-
-  return {
-    strategy: "single",
-    id,
-    key,
-    directory,
-    uploadUrl,
-    expiresAt: expiresAt(ttl),
-    // The signature covers Content-Type, so the client must send it verbatim.
-    requiredHeaders: { "Content-Type": contentType },
-  };
-}
-
-/** A further batch of part URLs for an upload already in flight. */
-export async function getPartUrls(
-  id: string,
-  body: PartUrlsBody,
-): Promise<{ expiresAt: string; parts: MultipartPartDto[] }> {
-  return await multipart.createPartUrls(await requireFile(id), body);
-}
-
-/** Which parts S3 already holds, so an interrupted upload can be resumed. */
-export async function getMultipartStatus(id: string) {
-  return await multipart.getMultipartStatus(await requireFile(id));
-}
-
-/**
- * Confirms a presigned upload against S3 itself. Size and ETag come from
- * HeadObject rather than from the client, so the metadata reflects the bytes
- * that were actually stored.
- */
-export async function completeUpload(id: string): Promise<FileDto> {
-  const file = await requireFile(id);
-
-  if (file.status === "ready") {
-    return toFileDto(file); // Idempotent: a retried confirmation is not an error.
-  }
-
-  if (file.status === "failed") {
-    // `db:cleanup` gave up on this row earlier. If the object is there after
-    // all, the upload did work and only the confirmation was lost, so let the
-    // check below revive it — but say so, because it means cleanup ran early.
-    logger.info(
-      { id, key: file.object_key },
-      "Confirming an upload that was previously marked failed",
-    );
-  }
-
-  if (file.upload_id) {
-    // Assembles the object out of its parts first; everything below then reads
-    // the finished object exactly as it does for a single-PUT upload.
-    await multipart.completeMultipartUpload(file);
-  }
-
-  let head;
-
-  try {
-    head = await s3.send(
-      new HeadObjectCommand({ Bucket: file.bucket, Key: file.object_key }),
-    );
-  } catch (error) {
-    if (isS3NotFound(error)) {
-      throw conflict(
-        file.upload_id ? ERROR_CODES.MULTIPART_NOT_FOUND : ERROR_CODES.UPLOAD_NOT_COMPLETED,
-        "No object was found at the reserved key; upload the file before confirming",
-        { key: file.object_key },
-      );
-    }
-
-    throw storageError(error, {
-      operation: "HeadObject",
-      id,
-      bucket: file.bucket,
-      key: file.object_key,
-    });
-  }
-
-  const row = await repo.markFileReady(id, {
-    sizeBytes: head.ContentLength ?? null,
-    etag: head.ETag ?? null,
-    contentType: head.ContentType ?? file.content_type,
-  });
-
-  if (!row) {
-    throw fileNotFound(id); // Deleted between the lookup and the update.
-  }
-
-  return toFileDto(row);
-}
-
-export async function getDownloadUrl(
-  id: string,
-  query: DownloadUrlQuery,
-): Promise<{ url: string; expiresAt: string; name: string }> {
-  const file = await requireFile(id);
-
-  if (file.status !== "ready") {
-    throw conflict(
-      ERROR_CODES.FILE_NOT_READY,
-      `File ${id} is in status "${file.status}" and cannot be downloaded yet`,
-    );
-  }
-
-  const expiresIn = query.expiresIn ?? config.uploads.presignDownloadTtlSeconds;
-
-  return {
-    url: await presignDownload(file, {
-      disposition: query.disposition,
-      expiresIn,
-    }),
-    expiresAt: expiresAt(expiresIn),
-    name: file.original_name,
-  };
-}
-
-export async function getFileCard(
-  id: string,
-  withUrl: boolean,
-): Promise<FileDto> {
-  const file = await requireFile(id);
-
-  if (!withUrl || file.status !== "ready") {
-    return toFileDto(file);
-  }
-
-  // The caller asked for a link, so a signing failure is the whole answer
-  // failing rather than a card quietly served without one.
-  const url = await presignDownload(file, {
-    disposition: "attachment",
-    expiresIn: config.uploads.presignDownloadTtlSeconds,
-  });
-
-  return toFileDto(file, url);
-}
-
-export async function listFiles(query: ListFilesQuery): Promise<{
+export interface ListFilesResult {
   items: FileDto[];
   pagination: {
     page: number;
@@ -353,64 +41,332 @@ export async function listFiles(query: ListFilesQuery): Promise<{
     total: number;
     totalPages: number;
   };
-}> {
-  const params: ListFilesParams = {
-    recursive: query.recursive,
-    page: query.page,
-    limit: query.limit,
-    sort: query.sort,
-    order: query.order,
-    ...(query.directory !== undefined
-      ? { directory: normalizeDirectory(query.directory) }
-      : {}),
-    ...(query.search ? { search: query.search } : {}),
-    ...(query.status !== "any" ? { status: query.status } : {}),
-  };
+}
 
-  const { items, total } = await repo.listFiles(params);
+export interface FilesModule {
+  uploadThroughServer(
+    file: Express.Multer.File,
+    rawDirectory: string | undefined,
+  ): Promise<FileDto>;
+  createPresignedUpload(body: PresignUploadBody): Promise<PresignUploadResult>;
+  getPartUrls(
+    id: string,
+    body: PartUrlsBody,
+  ): Promise<{ expiresAt: string; parts: MultipartPartDto[] }>;
+  getMultipartStatus(id: string): Promise<MultipartStatus>;
+  completeUpload(id: string): Promise<FileDto>;
+  getDownloadUrl(
+    id: string,
+    query: DownloadUrlQuery,
+  ): Promise<{ url: string; expiresAt: string; name: string }>;
+  getFileCard(id: string, withUrl: boolean): Promise<FileDto>;
+  listFiles(query: ListFilesQuery): Promise<ListFilesResult>;
+  deleteFile(id: string): Promise<void>;
+  listDirectories(rawParent: string | undefined): Promise<{
+    parent: string;
+    items: DirectoryDto[];
+  }>;
+}
 
-  return {
-    items: items.map((row) => toFileDto(row)),
-    pagination: {
-      page: query.page,
-      limit: query.limit,
-      total,
-      totalPages: Math.ceil(total / query.limit),
+function fileNotFound(id: string) {
+  return notFound(ERROR_CODES.FILE_NOT_FOUND, `File ${id} was not found`);
+}
+
+export function createFilesModule({
+  objectStore,
+  fileRows,
+  policy,
+  multipart,
+  bucket,
+}: FilesModuleDeps): FilesModule {
+  async function requireFile(id: string): Promise<FileRow> {
+    const file = await fileRows.findFileById(id);
+
+    if (!file) {
+      throw fileNotFound(id);
+    }
+
+    return file;
+  }
+
+  async function presignDownload(
+    file: FileRow,
+    options: { disposition: "attachment" | "inline"; expiresIn: number },
+  ): Promise<string> {
+    return await objectStore.signDownload(file.object_key, {
+      name: file.original_name,
+      contentType: file.content_type,
+      disposition: options.disposition,
+      expiresIn: options.expiresIn,
+    });
+  }
+
+  const files: FilesModule = {
+    /** Upload proxied through the server: the request body is already in memory. */
+    async uploadThroughServer(file, rawDirectory): Promise<FileDto> {
+      const { id, key, directory, originalName, extension, contentType } = reserveKey({
+        filename: decodeOriginalName(file.originalname),
+        directory: rawDirectory,
+        contentType: file.mimetype,
+      });
+
+      const { etag } = await objectStore.put(key, file.buffer, {
+        contentType,
+        contentLength: file.size,
+      });
+
+      try {
+        const row = await fileRows.insertFile({
+          id,
+          bucket,
+          objectKey: key,
+          directory,
+          originalName,
+          extension,
+          contentType,
+          sizeBytes: file.size,
+          etag,
+          status: "ready",
+          uploadSource: "server",
+        });
+
+        return toFileDto(row);
+      } catch (error) {
+        // The object is already stored but has no metadata row, so nothing can
+        // ever reach it again. Roll the storage side back rather than leak an
+        // orphan. (If the insert actually committed and only the response was
+        // lost, this deletes the object under a live row — rare enough to leave
+        // to a future reconciliation pass rather than a transaction here.)
+        await objectStore.remove(key).catch((cleanupError: unknown) => {
+          logger.error(
+            { err: cleanupError, id, key },
+            "Failed to remove orphaned object after metadata insert failed",
+          );
+        });
+
+        throw error;
+      }
+    },
+
+    /**
+     * Reserves an id, key and metadata row, then hands back a URL the client can
+     * PUT to directly. The row stays `pending` until `completeUpload` confirms
+     * the object actually landed.
+     *
+     * Past the multipart threshold the same call answers with a plan instead,
+     * discriminated by `strategy`. A request that sends no `size` cannot be
+     * planned and stays on the single-PUT path, which is also what keeps callers
+     * that predate multipart working unchanged.
+     */
+    async createPresignedUpload(body): Promise<PresignUploadResult> {
+      if (needsMultipart(body.size, policy.multipartThresholdBytes)) {
+        return await multipart.createMultipartUpload({
+          filename: body.filename,
+          directory: body.directory,
+          contentType: body.contentType,
+          size: body.size!,
+        });
+      }
+
+      const { id, key, directory, originalName, extension, contentType } = reserveKey(body);
+      const ttl = policy.presignUploadTtlSeconds;
+
+      // Sign before recording anything: the key is already fixed, and a signing
+      // failure this way leaves no `pending` row that no client will confirm.
+      const uploadUrl = await objectStore.signUpload(key, {
+        contentType,
+        expiresIn: ttl,
+      });
+
+      await fileRows.insertFile({
+        id,
+        bucket,
+        objectKey: key,
+        directory,
+        originalName,
+        extension,
+        contentType,
+        sizeBytes: body.size ?? null,
+        etag: null,
+        status: "pending",
+        uploadSource: "presigned",
+      });
+
+      return {
+        strategy: "single",
+        id,
+        key,
+        directory,
+        uploadUrl,
+        expiresAt: expiresAt(ttl),
+        // The signature covers Content-Type, so the client must send it verbatim.
+        requiredHeaders: { "Content-Type": contentType },
+      };
+    },
+
+    /** A further batch of part URLs for an upload already in flight. */
+    async getPartUrls(id, body) {
+      return await multipart.createPartUrls(await requireFile(id), body);
+    },
+
+    /** Which parts storage already holds, so an interrupted upload can resume. */
+    async getMultipartStatus(id) {
+      return await multipart.getMultipartStatus(await requireFile(id));
+    },
+
+    /**
+     * Confirms an upload against storage itself. Size and ETag are read off the
+     * object rather than taken from the client, so the metadata reflects the
+     * bytes that were actually stored.
+     */
+    async completeUpload(id): Promise<FileDto> {
+      const file = await requireFile(id);
+
+      if (file.status === "ready") {
+        return toFileDto(file); // Idempotent: a retried confirmation is not an error.
+      }
+
+      if (file.status === "failed") {
+        // `db:cleanup` gave up on this row earlier. If the object is there after
+        // all, the upload did work and only the confirmation was lost, so let
+        // the check below revive it — but say so, because it means cleanup ran
+        // early.
+        logger.info(
+          { id, key: file.object_key },
+          "Confirming an upload that was previously marked failed",
+        );
+      }
+
+      if (file.upload_id) {
+        // Assembles the object out of its parts first; everything below then
+        // reads the finished object exactly as for a single-PUT upload.
+        const outcome = await multipart.completeMultipartUpload(file);
+
+        if (outcome === "gone") {
+          logger.info(
+            { id, key: file.object_key },
+            "Multipart upload had already been settled elsewhere",
+          );
+        }
+      }
+
+      const stored = await objectStore.head(file.object_key);
+
+      if (!stored) {
+        throw conflict(
+          file.upload_id ? ERROR_CODES.MULTIPART_NOT_FOUND : ERROR_CODES.UPLOAD_NOT_COMPLETED,
+          "No object was found at the reserved key; upload the file before confirming",
+          { key: file.object_key },
+        );
+      }
+
+      const row = await fileRows.markFileReady(id, {
+        sizeBytes: stored.size,
+        etag: stored.etag,
+        contentType: stored.contentType ?? file.content_type,
+      });
+
+      if (!row) {
+        throw fileNotFound(id); // Deleted between the lookup and the update.
+      }
+
+      return toFileDto(row);
+    },
+
+    async getDownloadUrl(id, query) {
+      const file = await requireFile(id);
+
+      if (file.status !== "ready") {
+        throw conflict(
+          ERROR_CODES.FILE_NOT_READY,
+          `File ${id} is in status "${file.status}" and cannot be downloaded yet`,
+        );
+      }
+
+      const expiresIn = query.expiresIn ?? policy.presignDownloadTtlSeconds;
+
+      return {
+        url: await presignDownload(file, { disposition: query.disposition, expiresIn }),
+        expiresAt: expiresAt(expiresIn),
+        name: file.original_name,
+      };
+    },
+
+    async getFileCard(id, withUrl): Promise<FileDto> {
+      const file = await requireFile(id);
+
+      if (!withUrl || file.status !== "ready") {
+        return toFileDto(file);
+      }
+
+      // The caller asked for a link, so a signing failure is the whole answer
+      // failing rather than a card quietly served without one.
+      const url = await presignDownload(file, {
+        disposition: "attachment",
+        expiresIn: policy.presignDownloadTtlSeconds,
+      });
+
+      return toFileDto(file, url);
+    },
+
+    async listFiles(query): Promise<ListFilesResult> {
+      const params: ListFilesParams = {
+        recursive: query.recursive,
+        page: query.page,
+        limit: query.limit,
+        sort: query.sort,
+        order: query.order,
+        ...(query.directory !== undefined
+          ? { directory: normalizeDirectory(query.directory) }
+          : {}),
+        ...(query.search ? { search: query.search } : {}),
+        ...(query.status !== "any" ? { status: query.status } : {}),
+      };
+
+      const { items, total } = await fileRows.listFiles(params);
+
+      return {
+        items: items.map((row) => toFileDto(row)),
+        pagination: {
+          page: query.page,
+          limit: query.limit,
+          total,
+          totalPages: Math.ceil(total / query.limit),
+        },
+      };
+    },
+
+    async deleteFile(id): Promise<void> {
+      // The metadata row is the source of truth, so retire it first; a failed
+      // storage delete then only leaves an unreferenced object behind.
+      const file = await fileRows.softDeleteFile(id);
+
+      if (!file) {
+        throw fileNotFound(id);
+      }
+
+      try {
+        if (file.upload_id && file.status === "pending") {
+          // No object exists under this key yet — the uploaded parts are what
+          // has to go, and only an abort removes those.
+          await objectStore.abortMultipart(file.object_key, file.upload_id);
+        } else {
+          await objectStore.remove(file.object_key);
+        }
+      } catch (error) {
+        logger.error(
+          { err: error, id, key: file.object_key },
+          "File marked deleted but the stored object could not be removed",
+        );
+      }
+    },
+
+    async listDirectories(rawParent) {
+      const parent = normalizeDirectory(rawParent);
+
+      return { parent, items: await fileRows.listChildDirectories(parent) };
     },
   };
-}
 
-export async function deleteFile(id: string): Promise<void> {
-  // The metadata row is the source of truth, so retire it first; a failed
-  // storage delete then only leaves an unreferenced object behind.
-  const file = await repo.softDeleteFile(id);
-
-  if (!file) {
-    throw fileNotFound(id);
-  }
-
-  try {
-    if (file.upload_id && file.status === "pending") {
-      // No object exists under this key yet — the uploaded parts are what has to
-      // go, and only Abort removes those.
-      await multipart.abortMultipartUpload(file, file.upload_id);
-    } else {
-      await s3.send(
-        new DeleteObjectCommand({ Bucket: file.bucket, Key: file.object_key }),
-      );
-    }
-  } catch (error) {
-    logger.error(
-      { err: error, id, bucket: file.bucket, key: file.object_key },
-      "File marked deleted but the S3 object could not be removed",
-    );
-  }
-}
-
-export async function listDirectories(
-  rawParent: string | undefined,
-): Promise<{ parent: string; items: DirectoryDto[] }> {
-  const parent = normalizeDirectory(rawParent);
-
-  return { parent, items: await repo.listChildDirectories(parent) };
+  return files;
 }
