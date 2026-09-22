@@ -4,7 +4,11 @@ import { config } from "./config.js";
 export const logger = pino({
   level: config.logLevel,
   redact: {
-    paths: ["req.headers['x-api-key']", "req.headers.authorization"],
+    paths: [
+      "req.headers['x-api-key']",
+      "req.headers.authorization",
+      "req.headers.cookie",
+    ],
     censor: "[redacted]",
   },
 });
