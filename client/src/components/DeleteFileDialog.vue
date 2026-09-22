@@ -51,7 +51,10 @@ async function confirm(event: Event): Promise<void> {
 </script>
 
 <template>
-  <AlertDialog :open="open" @update:open="emit('update:open', $event)">
+  <AlertDialog
+    :open="open"
+    @update:open="emit('update:open', $event)"
+  >
     <AlertDialogContent>
       <AlertDialogHeader>
         <AlertDialogTitle>Удалить файл?</AlertDialogTitle>
@@ -60,13 +63,18 @@ async function confirm(event: Event): Promise<void> {
         </AlertDialogDescription>
       </AlertDialogHeader>
       <AlertDialogFooter>
-        <AlertDialogCancel :disabled="pending">Отмена</AlertDialogCancel>
+        <AlertDialogCancel :disabled="pending">
+          Отмена
+        </AlertDialogCancel>
         <AlertDialogAction
           :class="cn(buttonVariants({ variant: 'destructive' }))"
           :disabled="pending"
           @click="confirm"
         >
-          <Spinner v-if="pending" data-icon="inline-start" />
+          <Spinner
+            v-if="pending"
+            data-icon="inline-start"
+          />
           Удалить
         </AlertDialogAction>
       </AlertDialogFooter>

@@ -11,6 +11,7 @@ const MAX_SEGMENT_LENGTH = 100
 const MAX_DIRECTORY_BYTES = 700 // именно БАЙТ: кириллица — 2 байта на символ
 
 // Ровно тот диапазон, что режет сервер: C0-управляющие плюс DEL.
+// eslint-disable-next-line no-control-regex -- намеренно вырезаем управляющие символы из ключа
 const CONTROL_CHARS = new RegExp("[\\u0000-\\u001f\\u007f]")
 
 export type DirectoryCheck =

@@ -16,7 +16,10 @@ const browser = useFileBrowser()
 <template>
   <Breadcrumb>
     <BreadcrumbList>
-      <template v-for="(crumb, index) in browser.breadcrumbs.value" :key="crumb.path">
+      <template
+        v-for="(crumb, index) in browser.breadcrumbs.value"
+        :key="crumb.path"
+      >
         <BreadcrumbItem>
           <BreadcrumbPage v-if="index === browser.breadcrumbs.value.length - 1">
             {{ crumb.label }}

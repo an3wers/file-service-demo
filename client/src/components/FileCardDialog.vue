@@ -74,10 +74,15 @@ function download(): void {
 </script>
 
 <template>
-  <Dialog :open="open" @update:open="emit('update:open', $event)">
+  <Dialog
+    :open="open"
+    @update:open="emit('update:open', $event)"
+  >
     <DialogContent class="sm:max-w-lg">
       <DialogHeader>
-        <DialogTitle class="break-all">{{ file?.name ?? "Файл" }}</DialogTitle>
+        <DialogTitle class="break-all">
+          {{ file?.name ?? "Файл" }}
+        </DialogTitle>
         <DialogDescription>
           {{
             file?.directory
@@ -87,63 +92,116 @@ function download(): void {
         </DialogDescription>
       </DialogHeader>
 
-      <div v-if="loading" class="flex flex-col gap-2">
-        <Skeleton v-for="row in 6" :key="row" class="h-5 w-full" />
+      <div
+        v-if="loading"
+        class="flex flex-col gap-2"
+      >
+        <Skeleton
+          v-for="row in 6"
+          :key="row"
+          class="h-5 w-full"
+        />
       </div>
 
-      <p v-else-if="error" class="text-destructive text-sm">{{ error }}</p>
+      <p
+        v-else-if="error"
+        class="text-destructive text-sm"
+      >
+        {{ error }}
+      </p>
 
       <dl
         v-else-if="fresh"
         class="grid grid-cols-[auto_1fr] gap-x-4 gap-y-2 text-sm"
       >
-        <dt class="text-muted-foreground">ID</dt>
-        <dd class="font-mono text-xs break-all">{{ fresh.id }}</dd>
+        <dt class="text-muted-foreground">
+          ID
+        </dt>
+        <dd class="font-mono text-xs break-all">
+          {{ fresh.id }}
+        </dd>
 
-        <dt class="text-muted-foreground">Директория</dt>
-        <dd class="break-all">{{ fresh.directory || "Корень" }}</dd>
+        <dt class="text-muted-foreground">
+          Директория
+        </dt>
+        <dd class="break-all">
+          {{ fresh.directory || "Корень" }}
+        </dd>
 
-        <dt class="text-muted-foreground">Расширение</dt>
+        <dt class="text-muted-foreground">
+          Расширение
+        </dt>
         <dd>{{ fresh.extension || "—" }}</dd>
 
-        <dt class="text-muted-foreground">Тип содержимого</dt>
-        <dd class="break-all">{{ fresh.contentType }}</dd>
+        <dt class="text-muted-foreground">
+          Тип содержимого
+        </dt>
+        <dd class="break-all">
+          {{ fresh.contentType }}
+        </dd>
 
-        <dt class="text-muted-foreground">Размер</dt>
+        <dt class="text-muted-foreground">
+          Размер
+        </dt>
         <dd>{{ formatBytes(fresh.size) }}</dd>
 
-        <dt class="text-muted-foreground">ETag</dt>
-        <dd class="font-mono text-xs break-all">{{ fresh.etag ?? "—" }}</dd>
+        <dt class="text-muted-foreground">
+          ETag
+        </dt>
+        <dd class="font-mono text-xs break-all">
+          {{ fresh.etag ?? "—" }}
+        </dd>
 
-        <dt class="text-muted-foreground">Статус</dt>
+        <dt class="text-muted-foreground">
+          Статус
+        </dt>
         <dd>
           <Badge :variant="fresh.status === 'ready' ? 'secondary' : 'outline'">
             {{ fresh.status }}
           </Badge>
         </dd>
 
-        <dt class="text-muted-foreground">Источник</dt>
+        <dt class="text-muted-foreground">
+          Источник
+        </dt>
         <dd>
-          <Badge variant="outline">{{ fresh.uploadSource }}</Badge>
+          <Badge variant="outline">
+            {{ fresh.uploadSource }}
+          </Badge>
         </dd>
 
-        <dt class="text-muted-foreground">Бакет</dt>
-        <dd class="break-all">{{ fresh.bucket }}</dd>
+        <dt class="text-muted-foreground">
+          Бакет
+        </dt>
+        <dd class="break-all">
+          {{ fresh.bucket }}
+        </dd>
 
-        <dt class="text-muted-foreground">Ключ объекта</dt>
-        <dd class="font-mono text-xs break-all">{{ fresh.key }}</dd>
-
-        <dt class="text-muted-foreground">Статичный url</dt>
+        <dt class="text-muted-foreground">
+          Ключ объекта
+        </dt>
         <dd class="font-mono text-xs break-all">
-          <a target="_blank" :href="`${s3Host}/${fresh.key}`"
-            >{{ s3Host }}/{{ fresh.key }}</a
-          >
+          {{ fresh.key }}
         </dd>
 
-        <dt class="text-muted-foreground">Создан</dt>
+        <dt class="text-muted-foreground">
+          Статичный url
+        </dt>
+        <dd class="font-mono text-xs break-all">
+          <a
+            target="_blank"
+            :href="`${s3Host}/${fresh.key}`"
+          >{{ s3Host }}/{{ fresh.key }}</a>
+        </dd>
+
+        <dt class="text-muted-foreground">
+          Создан
+        </dt>
         <dd>{{ formatDate(fresh.createdAt) }}</dd>
 
-        <dt class="text-muted-foreground">Обновлён</dt>
+        <dt class="text-muted-foreground">
+          Обновлён
+        </dt>
         <dd>{{ formatDate(fresh.updatedAt) }}</dd>
       </dl>
 

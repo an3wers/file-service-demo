@@ -49,10 +49,19 @@ const features: Feature[] = [
 
 <template>
   <section class="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-    <Card v-for="feature in features" :key="feature.title" class="gap-3 py-5">
+    <Card
+      v-for="feature in features"
+      :key="feature.title"
+      class="gap-3 py-5"
+    >
       <CardHeader class="gap-2 px-5">
-        <component :is="feature.icon" class="size-5 text-muted-foreground" />
-        <CardTitle class="text-base">{{ feature.title }}</CardTitle>
+        <component
+          :is="feature.icon"
+          class="size-5 text-muted-foreground"
+        />
+        <CardTitle class="text-base">
+          {{ feature.title }}
+        </CardTitle>
         <CardDescription>{{ feature.description }}</CardDescription>
       </CardHeader>
     </Card>

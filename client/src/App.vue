@@ -11,7 +11,9 @@ import FileBrowser from "@/components/FileBrowser.vue";
       <div class="mx-auto flex max-w-6xl items-center gap-3 p-6">
         <HardDriveIcon class="size-6 text-muted-foreground" />
         <div>
-          <h1 class="text-lg font-semibold">Файловое хранилище</h1>
+          <h1 class="text-lg font-semibold">
+            Файловое хранилище
+          </h1>
           <p class="text-muted-foreground text-sm">
             Загрузка, просмотр и скачивание файлов в объектном хранилище
           </p>
@@ -24,6 +26,10 @@ import FileBrowser from "@/components/FileBrowser.vue";
       <FileBrowser />
     </main>
 
-    <Toaster rich-colors close-button position="bottom-right" />
+    <Toaster
+      rich-colors
+      close-button
+      position="bottom-right"
+    />
   </div>
 </template>

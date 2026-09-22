@@ -279,7 +279,7 @@ export function createMemoryFileRows(options: { clock?: TestClock } = {}): Memor
       const direction = params.order === "asc" ? 1 : -1;
 
       matched.sort((a, b) => {
-        let ordered = 0;
+        let ordered: number;
 
         if (params.sort === "created_at") {
           const ages = a.created_at.getTime() - b.created_at.getTime();
