@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ERROR_CODES } from "../../errors.js";
+import { ERROR_CODES } from "../../../errors.js";
 import { FileTooLargeError, InvalidPlanLimitsError } from "./errors.js";
 import { needsMultipart, partRange, planMultipart } from "./upload-plan.js";
 import type { PlanLimits } from "./upload-plan.js";

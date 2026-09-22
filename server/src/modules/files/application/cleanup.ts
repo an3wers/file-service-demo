@@ -1,9 +1,9 @@
-import { logger } from "../../logger.js";
-import type { Clock } from "./clock.js";
-import type { FileRowsForCleanup } from "./file-rows.js";
-import type { ObjectStoreForCleanup } from "./object-storage.js";
-import type { StoredFile } from "./stored-file.js";
-import type { UploadPolicy } from "./upload-policy.js";
+import { logger } from "../../../logger.js";
+import type { Clock } from "../domain/ports/clock.js";
+import type { FileRowsForCleanup } from "../domain/ports/file-rows.js";
+import type { ObjectStoreForCleanup } from "../domain/ports/object-storage.js";
+import type { StoredFile } from "../domain/stored-file.js";
+import type { UploadPolicy } from "../domain/upload-policy.js";
 
 export interface CleanupModuleDeps {
   objectStore: ObjectStoreForCleanup;

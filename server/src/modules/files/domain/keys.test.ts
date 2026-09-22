@@ -1,9 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { InvalidDirectoryError, InvalidFileNameError } from "../modules/files/errors.js";
+import { InvalidDirectoryError, InvalidFileNameError } from "./errors.js";
 import {
   buildObjectKey,
-  contentDisposition,
-  decodeOriginalName,
   fileExtension,
   normalizeDirectory,
   sanitizeFileName,
@@ -79,28 +77,6 @@ describe("sanitizeFileName", () => {
   });
 });
 
-describe("decodeOriginalName", () => {
-  it("leaves ASCII names alone", () => {
-    expect(decodeOriginalName("report.pdf")).toBe("report.pdf");
-  });
-
-  it("leaves already-decoded names alone", () => {
-    expect(decodeOriginalName("Отчёт.pdf")).toBe("Отчёт.pdf");
-  });
-
-  it("repairs a UTF-8 name that arrived as latin1 bytes", () => {
-    const original = "Отчёт за 2026.pdf";
-    const mojibake = Buffer.from(original, "utf8").toString("latin1");
-
-    expect(mojibake).not.toBe(original);
-    expect(decodeOriginalName(mojibake)).toBe(original);
-  });
-
-  it("keeps a latin1 name that is not valid UTF-8", () => {
-    expect(decodeOriginalName("café.txt")).toBe("café.txt");
-  });
-});
-
 describe("fileExtension", () => {
   it("lowercases and drops the dot", () => {
     expect(fileExtension("Report.PDF")).toBe("pdf");
@@ -134,22 +110,5 @@ describe("buildObjectKey", () => {
     const second = buildObjectKey("docs", "a.txt");
 
     expect(first.key).not.toBe(second.key);
-  });
-});
-
-describe("contentDisposition", () => {
-  it("carries both an ASCII fallback and the UTF-8 name", () => {
-    const name = 'Отчёт "v2".pdf';
-    const header = contentDisposition(name, "attachment");
-
-    expect(header).toBe(
-      `attachment; filename="_____ _v2_.pdf"; filename*=UTF-8''${encodeURIComponent(name)}`,
-    );
-  });
-
-  it("honours the inline disposition", () => {
-    expect(contentDisposition("a.png", "inline")).toBe(
-      "inline; filename=\"a.png\"; filename*=UTF-8''a.png",
-    );
   });
 });

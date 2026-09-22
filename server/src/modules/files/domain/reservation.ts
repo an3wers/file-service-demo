@@ -1,5 +1,5 @@
-import { buildObjectKey, normalizeDirectory, sanitizeFileName } from "../../storage/keys.js";
-import type { Clock } from "./clock.js";
+import { buildObjectKey, normalizeDirectory, sanitizeFileName } from "./keys.js";
+import type { Clock } from "./ports/clock.js";
 
 export const DEFAULT_CONTENT_TYPE = "application/octet-stream";
 

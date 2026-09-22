@@ -1,23 +1,15 @@
-import { logger } from "../../logger.js";
-import { normalizeDirectory } from "../../storage/keys.js";
-import type { Clock } from "./clock.js";
-import { FileNotFoundError, FileNotReadyError, MultipartNotFoundError, UploadNotCompletedError } from "./errors.js";
-import type { FileRowsForFiles } from "./file-rows.js";
-import type { ObjectStoreForFiles } from "./object-storage.js";
-import type { MultipartModule, MultipartStatus, PartUrlsInput, PartUrlsResult } from "./multipart.service.js";
-import { expiresAt, reserveKey } from "./reservation.js";
-import { needsMultipart } from "./upload-plan.js";
-import { statusOf } from "./stored-file.js";
-import type { StoredFile } from "./stored-file.js";
-import type { UploadPolicy } from "./upload-policy.js";
-import type {
-  DirectoryDto,
-  FileStatus,
-  ListFilesParams,
-  PresignUploadResult,
-} from "./files.types.js";
+import { logger } from "../../../logger.js";
+import type { Clock } from "../domain/ports/clock.js";
+import { FileNotFoundError, MultipartNotFoundError, UploadNotCompletedError } from "../domain/errors.js";
+import type { FileRowsForFiles } from "../domain/ports/file-rows.js";
+import type { ObjectStoreForFiles } from "../domain/ports/object-storage.js";
+import type { MultipartModule, MultipartStatus, PartUrlsInput, PartUrlsResult, PresignMultipartResult } from "./multipart.js";
+import { expiresAt, reserveKey } from "../domain/reservation.js";
+import { needsMultipart } from "../domain/upload-plan.js";
+import type { StoredFile } from "../domain/stored-file.js";
+import type { UploadPolicy } from "../domain/upload-policy.js";
 
-export interface FilesModuleDeps {
+export interface UploadsModuleDeps {
   objectStore: ObjectStoreForFiles;
   fileRows: FileRowsForFiles;
   policy: UploadPolicy;
@@ -42,65 +34,37 @@ export interface CreatePresignedUploadInput {
   size?: number | undefined;
 }
 
-export interface GetDownloadUrlInput {
-  disposition: "attachment" | "inline";
-  expiresIn?: number | undefined;
-}
-
-export interface GetDownloadUrlResult {
-  url: string;
+export interface PresignSingleResult {
+  strategy: "single";
+  id: string;
+  key: string;
+  directory: string;
+  uploadUrl: string;
   expiresAt: Date;
-  name: string;
+  requiredHeaders: Record<string, string>;
 }
 
-export interface FileCardResult {
-  file: StoredFile;
-  downloadUrl?: string | undefined;
-}
+export type PresignUploadResult = PresignSingleResult | PresignMultipartResult;
 
-export interface ListFilesInput {
-  directory?: string | undefined;
-  recursive: boolean;
-  search?: string | undefined;
-  status: FileStatus | "any";
-  page: number;
-  limit: number;
-  sort: "created_at" | "original_name" | "size_bytes";
-  order: "asc" | "desc";
-}
-
-export interface ListFilesResult {
-  items: StoredFile[];
-  total: number;
-}
-
-export interface FilesModule {
+export interface UploadsModule {
   uploadThroughServer(input: UploadThroughServerInput): Promise<StoredFile>;
   createPresignedUpload(input: CreatePresignedUploadInput): Promise<PresignUploadResult>;
   getPartUrls(id: string, input: PartUrlsInput): Promise<PartUrlsResult>;
   getMultipartStatus(id: string): Promise<MultipartStatus>;
   completeUpload(id: string): Promise<StoredFile>;
-  getDownloadUrl(id: string, input: GetDownloadUrlInput): Promise<GetDownloadUrlResult>;
-  getFileCard(id: string, withUrl: boolean): Promise<FileCardResult>;
-  listFiles(input: ListFilesInput): Promise<ListFilesResult>;
-  deleteFile(id: string): Promise<void>;
-  listDirectories(rawParent: string | undefined): Promise<{
-    parent: string;
-    items: DirectoryDto[];
-  }>;
 }
 
 function fileNotFound(id: string) {
   return new FileNotFoundError(`File ${id} was not found`);
 }
 
-export function createFilesModule({
+export function createUploadsModule({
   objectStore,
   fileRows,
   policy,
   multipart,
   clock,
-}: FilesModuleDeps): FilesModule {
+}: UploadsModuleDeps): UploadsModule {
   async function requireFile(id: string): Promise<StoredFile> {
     const file = await fileRows.findFileById(id);
 
@@ -111,19 +75,7 @@ export function createFilesModule({
     return file;
   }
 
-  async function presignDownload(
-    file: StoredFile,
-    options: { disposition: "attachment" | "inline"; expiresIn: number },
-  ): Promise<string> {
-    return await objectStore.signDownload(file.key, {
-      name: file.originalName,
-      contentType: file.contentType,
-      disposition: options.disposition,
-      expiresIn: options.expiresIn,
-    });
-  }
-
-  const files: FilesModule = {
+  return {
     /** Upload proxied through the server: the request body is already in memory. */
     async uploadThroughServer(input): Promise<StoredFile> {
       const { id, key, directory, originalName, extension, contentType } = reserveKey({
@@ -291,90 +243,5 @@ export function createFilesModule({
 
       return row;
     },
-
-    async getDownloadUrl(id, input) {
-      const file = await requireFile(id);
-
-      if (file.kind !== "ready") {
-        throw new FileNotReadyError(
-          `File ${id} is in status "${statusOf(file)}" and cannot be downloaded yet`,
-        );
-      }
-
-      const expiresIn = input.expiresIn ?? policy.presignDownloadTtlSeconds;
-
-      return {
-        url: await presignDownload(file, { disposition: input.disposition, expiresIn }),
-        expiresAt: expiresAt(clock, expiresIn),
-        name: file.originalName,
-      };
-    },
-
-    async getFileCard(id, withUrl): Promise<FileCardResult> {
-      const file = await requireFile(id);
-
-      if (!withUrl || file.kind !== "ready") {
-        return { file };
-      }
-
-      // The caller asked for a link, so a signing failure is the whole answer
-      // failing rather than a card quietly served without one.
-      const downloadUrl = await presignDownload(file, {
-        disposition: "attachment",
-        expiresIn: policy.presignDownloadTtlSeconds,
-      });
-
-      return { file, downloadUrl };
-    },
-
-    async listFiles(input): Promise<ListFilesResult> {
-      const params: ListFilesParams = {
-        recursive: input.recursive,
-        page: input.page,
-        limit: input.limit,
-        sort: input.sort,
-        order: input.order,
-        ...(input.directory !== undefined
-          ? { directory: normalizeDirectory(input.directory) }
-          : {}),
-        ...(input.search ? { search: input.search } : {}),
-        ...(input.status !== "any" ? { status: input.status } : {}),
-      };
-
-      return await fileRows.listFiles(params);
-    },
-
-    async deleteFile(id): Promise<void> {
-      // The metadata row is the source of truth, so retire it first; a failed
-      // storage delete then only leaves an unreferenced object behind.
-      const file = await fileRows.softDeleteFile(id);
-
-      if (!file) {
-        throw fileNotFound(id);
-      }
-
-      try {
-        if (file.kind === "multipart") {
-          // No object exists under this key yet — the uploaded parts are what
-          // has to go, and only an abort removes those.
-          await objectStore.abortMultipart(file.key, file.uploadId);
-        } else {
-          await objectStore.remove(file.key);
-        }
-      } catch (error) {
-        logger.error(
-          { err: error, id, key: file.key },
-          "File marked deleted but the stored object could not be removed",
-        );
-      }
-    },
-
-    async listDirectories(rawParent) {
-      const parent = normalizeDirectory(rawParent);
-
-      return { parent, items: await fileRows.listChildDirectories(parent) };
-    },
   };
-
-  return files;
 }

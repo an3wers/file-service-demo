@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { AppError } from "../../errors.js";
-import type { FileRow } from "./files.types.js";
-import { toStoredFile } from "./stored-file.js";
+import { AppError } from "../../../../errors.js";
+import type { FileRow } from "./row-mapper.js";
+import { toStoredFile } from "./row-mapper.js";
 
 function row(overrides: Partial<FileRow> = {}): FileRow {
   return {

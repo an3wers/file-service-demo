@@ -4,7 +4,7 @@ import { ZodError, z } from "zod";
 import { AppError, ERROR_CODES, badRequest, payloadTooLarge } from "../errors.js";
 import { config } from "../config.js";
 import { logger } from "../logger.js";
-import { mapFilesError } from "../modules/files/files.error-map.js";
+import { mapFilesError } from "../modules/files/index.js";
 
 export const notFoundHandler: RequestHandler = (req, _res, next) => {
   next(

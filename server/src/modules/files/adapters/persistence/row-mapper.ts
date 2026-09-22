@@ -1,53 +1,25 @@
-import { AppError, ERROR_CODES } from "../../errors.js";
-import type { UploadPlan } from "./upload-plan.js";
-import type { FileRow, FileStatus, UploadSource } from "./files.types.js";
+import { AppError, ERROR_CODES } from "../../../../errors.js";
+import type { StoredFile, FileStatus, UploadSource } from "../../domain/stored-file.js";
 
-interface StoredFileBase {
+export interface FileRow {
   id: string;
   bucket: string;
-  key: string;
+  object_key: string;
   directory: string;
-  originalName: string;
+  original_name: string;
   extension: string;
-  contentType: string;
-  uploadSource: UploadSource;
-  createdAt: Date;
-  updatedAt: Date;
-}
-
-export interface ReservedFile extends StoredFileBase {
-  kind: "reserved";
-  size: number | null;
-}
-
-export interface LiveMultipartUpload extends StoredFileBase {
-  kind: "multipart";
-  uploadId: string;
-  plan: UploadPlan;
-}
-
-export interface ReadyFile extends StoredFileBase {
-  kind: "ready";
-  size: number | null;
+  content_type: string;
+  size_bytes: number | null;
   etag: string | null;
-}
-
-export interface FailedFile extends StoredFileBase {
-  kind: "failed";
-}
-
-export type StoredFile = ReservedFile | LiveMultipartUpload | ReadyFile | FailedFile;
-
-export function statusOf(file: StoredFile): FileStatus {
-  switch (file.kind) {
-    case "reserved":
-    case "multipart":
-      return "pending";
-    case "ready":
-      return "ready";
-    case "failed":
-      return "failed";
-  }
+  status: FileStatus;
+  upload_source: UploadSource;
+  /** Set only while a multipart upload is in flight; cleared once it settles. */
+  upload_id: string | null;
+  part_size: number | null;
+  part_count: number | null;
+  created_at: Date;
+  updated_at: Date;
+  deleted_at: Date | null;
 }
 
 function impossibleRow(row: FileRow, reason: string): AppError {
@@ -71,7 +43,7 @@ function impossibleRow(row: FileRow, reason: string): AppError {
   );
 }
 
-function base(row: FileRow): StoredFileBase {
+function base(row: FileRow) {
   return {
     id: row.id,
     bucket: row.bucket,

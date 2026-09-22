@@ -48,7 +48,6 @@ export default defineConfig({
       include: ["src/**/*.ts"],
       exclude: [
         "src/**/*.test.ts",
-        "src/**/*.types.ts",
         "src/server.ts",
         "src/db/migrate.ts",
         "src/scripts/**",

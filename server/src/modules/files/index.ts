@@ -1,22 +1,24 @@
 import type { Router } from "express";
 import type { RequestHandler } from "express";
-import { createSqlFileRows } from "./files.repo.js";
-import { createFilesModule } from "./files.service.js";
-import { createMultipartModule } from "./multipart.service.js";
-import { createCleanupModule } from "./cleanup.service.js";
-import type { CleanupModule } from "./cleanup.service.js";
-import { createFilesRouter, createDirectoriesRouter } from "./files.routes.js";
-import { systemClock } from "./clock.js";
-import type { Clock } from "./clock.js";
+import { createSqlFileRows } from "./adapters/persistence/sql-file-rows.js";
+import { createUploadsModule } from "./application/uploads.js";
+import { createCatalogModule } from "./application/catalog.js";
+import { createMultipartModule } from "./application/multipart.js";
+import { createCleanupModule } from "./application/cleanup.js";
+import type { CleanupModule } from "./application/cleanup.js";
+import { createFilesRouter, createDirectoriesRouter } from "./adapters/http/routes.js";
+import { systemClock } from "./domain/ports/clock.js";
+import type { Clock } from "./domain/ports/clock.js";
 import type {
   ObjectStoreForCleanup,
   ObjectStoreForFiles,
   ObjectStoreForMultipart,
-} from "./object-storage.js";
-import { assertValidPlanLimits } from "./upload-plan.js";
-import type { UploadPolicy } from "./upload-policy.js";
+} from "./domain/ports/object-storage.js";
+import { assertValidPlanLimits } from "./domain/upload-plan.js";
+import type { UploadPolicy } from "./domain/upload-policy.js";
 
-export type { UploadPolicy } from "./upload-policy.js";
+export type { UploadPolicy } from "./domain/upload-policy.js";
+export { mapFilesError } from "./adapters/http/error-map.js";
 
 /**
  * The whole surface the rest of the app is allowed to know about this module:
@@ -39,7 +41,7 @@ export interface FilesHttpAssembly {
   directoriesRouter: Router;
 }
 
-/** The app's assembly: routers over the files and multipart scenarios. */
+/** The app's assembly: routers over the uploads and catalog scenarios. */
 export function createFilesHttp(
   deps: FilesModuleDependencies & { uploadSingleFile: RequestHandler },
 ): FilesHttpAssembly {
@@ -55,17 +57,23 @@ export function createFilesHttp(
     policy: deps.policy,
     clock,
   });
-  const files = createFilesModule({
+  const uploads = createUploadsModule({
     objectStore: deps.objectStore,
     fileRows,
     policy: deps.policy,
     multipart,
     clock,
   });
+  const catalog = createCatalogModule({
+    objectStore: deps.objectStore,
+    fileRows,
+    policy: deps.policy,
+    clock,
+  });
 
   return {
-    filesRouter: createFilesRouter({ files, uploadSingleFile: deps.uploadSingleFile }),
-    directoriesRouter: createDirectoriesRouter(files),
+    filesRouter: createFilesRouter({ uploads, catalog, uploadSingleFile: deps.uploadSingleFile }),
+    directoriesRouter: createDirectoriesRouter(catalog),
   };
 }
 

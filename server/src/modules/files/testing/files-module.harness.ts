@@ -1,22 +1,24 @@
-import { createTestClock } from "../../testing/clock.js";
-import { createMemoryObjectStore } from "../../storage/memory-object-store.js";
-import type { MemoryObjectStore } from "../../storage/memory-object-store.js";
+import { createTestClock } from "../../../testing/clock.js";
+import { createMemoryObjectStore } from "../../../storage/memory-object-store.js";
+import type { MemoryObjectStore } from "../../../storage/memory-object-store.js";
 import { createMemoryFileRows } from "./memory-file-rows.js";
 import type { MemoryFileRows } from "./memory-file-rows.js";
-import { createFilesModule } from "./files.service.js";
-import type { FilesModule } from "./files.service.js";
-import { createMultipartModule } from "./multipart.service.js";
-import type { MultipartModule } from "./multipart.service.js";
-import { createCleanupModule } from "./cleanup.service.js";
-import type { CleanupModule } from "./cleanup.service.js";
-import type { UploadPolicy } from "./upload-policy.js";
-import type { StoredFile } from "./stored-file.js";
+import { createUploadsModule } from "../application/uploads.js";
+import type { UploadsModule } from "../application/uploads.js";
+import { createCatalogModule } from "../application/catalog.js";
+import type { CatalogModule } from "../application/catalog.js";
+import { createMultipartModule } from "../application/multipart.js";
+import type { MultipartModule } from "../application/multipart.js";
+import { createCleanupModule } from "../application/cleanup.js";
+import type { CleanupModule } from "../application/cleanup.js";
+import type { UploadPolicy } from "../domain/upload-policy.js";
+import type { StoredFile } from "../domain/stored-file.js";
 
 /**
  * The files module as a test drives it: the real modules, assembled the way
- * `composition.ts` assembles them, on the two second implementations.
+ * `index.ts` assembles them, on the two second implementations.
  *
- * The multipart module is the real one and the files module drives it through
+ * The multipart module is the real one and the uploads module drives it through
  * the same interface; only the storage seam and the rows seam are substituted.
  * That is what lets a test assert an observable result — what came back to the
  * caller, and what state the metadata row and storage ended in — rather than a
@@ -67,9 +69,9 @@ function testPolicy(overrides: Partial<UploadPolicy> = {}): UploadPolicy {
 }
 
 export interface Harness {
-  /** The real files module: confirmation, links and deletion live in it. */
-  files: FilesModule;
-  /** The same multipart module the files module drives. */
+  /** The uploads and catalog scenarios merged behind one facade, as routes see it. */
+  files: UploadsModule & CatalogModule;
+  /** The same multipart module the uploads module drives. */
   multipart: MultipartModule;
   /** The real cleanup module, on the same storage and rows. */
   cleanup: CleanupModule;
@@ -94,10 +96,12 @@ export function buildHarness(policyOverrides: Partial<UploadPolicy> = {}): Harne
   const fileRows = createMemoryFileRows({ clock, bucket: BUCKET });
   const policy = testPolicy(policyOverrides);
   const multipart = createMultipartModule({ objectStore, fileRows, policy, clock });
+  const uploads = createUploadsModule({ objectStore, fileRows, policy, multipart, clock });
+  const catalog = createCatalogModule({ objectStore, fileRows, policy, clock });
 
   return {
     multipart,
-    files: createFilesModule({ objectStore, fileRows, policy, multipart, clock }),
+    files: { ...uploads, ...catalog },
     cleanup: createCleanupModule({ objectStore, fileRows, policy, clock }),
     objectStore,
     fileRows,

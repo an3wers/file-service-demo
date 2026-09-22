@@ -6,7 +6,7 @@ import type {
   SignUploadOptions,
   StoredObject,
   UploadedPart,
-} from "../../storage/object-store.js";
+} from "../../../../storage/object-store.js";
 
 /**
  * The seam between the modules that reason about files and object storage,

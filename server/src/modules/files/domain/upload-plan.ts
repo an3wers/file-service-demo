@@ -1,4 +1,4 @@
-import { ERROR_CODES, badRequest } from "../../errors.js";
+import { ERROR_CODES, badRequest } from "../../../errors.js";
 import { FileTooLargeError, InvalidPlanLimitsError } from "./errors.js";
 
 const MIB = 1024 * 1024;

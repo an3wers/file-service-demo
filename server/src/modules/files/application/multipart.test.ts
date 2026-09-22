@@ -1,12 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { ERROR_CODES } from "../../errors.js";
-import { MultipartNotFoundError, TooManyActiveUploadsError } from "./errors.js";
+import { ERROR_CODES } from "../../../errors.js";
+import { MultipartNotFoundError, TooManyActiveUploadsError } from "../domain/errors.js";
 import {
   MIB,
   THREE_PART_SIZE,
   buildHarness,
   thrownBy,
-} from "./files-module.harness.js";
+} from "../testing/files-module.harness.js";
 
 /**
  * Правила составных загрузок через интерфейс фабрики модуля: хранилище и

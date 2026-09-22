@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { AppError } from "../../errors.js";
+import { AppError } from "../../../errors.js";
 import { createMemoryFileRows } from "./memory-file-rows.js";
 import type { MemoryFileRows } from "./memory-file-rows.js";
-import type { InsertFileInput, ListFilesParams } from "./files.types.js";
+import type { InsertFileInput, ListFilesParams } from "../domain/ports/file-rows.js";
 
 /**
  * Every later test believes whatever this implementation says about a row, so

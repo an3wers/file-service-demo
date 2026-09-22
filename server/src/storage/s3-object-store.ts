@@ -13,7 +13,7 @@ import {
 } from "@aws-sdk/client-s3";
 import type { S3Client } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
-import { contentDisposition } from "./keys.js";
+import { contentDisposition } from "./content-disposition.js";
 import { isS3NoSuchUpload, isS3NotFound, storageError } from "./s3-errors.js";
 import type {
   CompleteOutcome,

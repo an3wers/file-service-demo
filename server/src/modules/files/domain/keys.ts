@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { extname } from "node:path";
-import { InvalidDirectoryError, InvalidFileNameError } from "../modules/files/errors.js";
+import { InvalidDirectoryError, InvalidFileNameError } from "./errors.js";
 
 const MAX_SEGMENT_LENGTH = 100;
 const MAX_DIRECTORY_BYTES = 700;
@@ -67,37 +67,6 @@ export function sanitizeFileName(input: string): string {
   return name.slice(0, MAX_NAME_LENGTH);
 }
 
-/**
- * busboy (inside multer) decodes non-extended `filename` parameters as latin1,
- * so a UTF-8 name arrives as mojibake. Re-reading those latin1 bytes as UTF-8
- * recovers the original, but only when the string really does look like raw
- * bytes — otherwise an already-correct name would be destroyed.
- */
-export function decodeOriginalName(name: string): string {
-  let hasHighByte = false;
-
-  for (const char of name) {
-    const code = char.codePointAt(0) ?? 0;
-
-    if (code > 0xff) {
-      return name; // Contains real multi-byte characters: already decoded.
-    }
-
-    if (code > 0x7f) {
-      hasHighByte = true;
-    }
-  }
-
-  if (!hasHighByte) {
-    return name; // Pure ASCII: nothing to repair.
-  }
-
-  const bytes = Buffer.from(name, "latin1");
-  const decoded = bytes.toString("utf8");
-
-  return Buffer.from(decoded, "utf8").equals(bytes) ? decoded : name;
-}
-
 export function fileExtension(name: string): string {
   const extension = extname(name).toLowerCase();
 
@@ -121,14 +90,4 @@ export function buildObjectKey(
     key: directory ? `${directory}/${fileName}` : fileName,
     extension,
   };
-}
-
-/** RFC 5987 header so browsers save the file under its original name. */
-export function contentDisposition(
-  name: string,
-  type: "attachment" | "inline",
-): string {
-  const asciiFallback = name.replaceAll(/[^\x20-\x7e]/g, "_").replaceAll(/["\\]/g, "_");
-
-  return `${type}; filename="${asciiFallback}"; filename*=UTF-8''${encodeURIComponent(name)}`;
 }

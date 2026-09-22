@@ -1,17 +1,20 @@
-import { ERROR_CODES, conflict } from "../../errors.js";
-import { createTestClock } from "../../testing/clock.js";
-import type { TestClock } from "../../testing/clock.js";
-import { createFailureSwitch } from "../../testing/failure-switch.js";
+import { ERROR_CODES, conflict } from "../../../errors.js";
+import { createTestClock } from "../../../testing/clock.js";
+import type { TestClock } from "../../../testing/clock.js";
+import { createFailureSwitch } from "../../../testing/failure-switch.js";
 import type {
   FileRows,
   FileRowsForCleanup,
   FileRowsForFiles,
   FileRowsForMultipart,
+  DirectoryDto,
+  InsertFileInput,
+  ListFilesParams,
   ReadyValues,
-} from "./file-rows.js";
-import type { DirectoryDto, FileRow, InsertFileInput, ListFilesParams } from "./files.types.js";
-import { toStoredFile } from "./stored-file.js";
-import type { StoredFile } from "./stored-file.js";
+} from "../domain/ports/file-rows.js";
+import { toStoredFile } from "../adapters/persistence/row-mapper.js";
+import type { FileRow } from "../adapters/persistence/row-mapper.js";
+import type { StoredFile } from "../domain/stored-file.js";
 
 /**
  * The second implementation of the row interfaces: the metadata table as a Map.

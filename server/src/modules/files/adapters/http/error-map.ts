@@ -1,4 +1,4 @@
-import { AppError, ERROR_CODES, badRequest, conflict, notFound, payloadTooLarge, tooManyRequests } from "../../errors.js";
+import { AppError, ERROR_CODES, badRequest, conflict, notFound, payloadTooLarge, tooManyRequests } from "../../../../errors.js";
 import {
   FileNotFoundError,
   FileNotReadyError,
@@ -9,7 +9,7 @@ import {
   MultipartNotFoundError,
   TooManyActiveUploadsError,
   UploadNotCompletedError,
-} from "./errors.js";
+} from "../../domain/errors.js";
 
 export function mapFilesError(error: unknown): AppError | undefined {
   if (!(error instanceof FilesDomainError)) {

@@ -1,5 +1,4 @@
-import type { DirectoryDto, InsertFileInput, ListFilesParams } from "./files.types.js";
-import type { StoredFile } from "./stored-file.js";
+import type { StoredFile, FileStatus, UploadSource } from "../stored-file.js";
 
 /**
  * The seam between the modules that reason about files and the table the
@@ -19,6 +18,40 @@ import type { StoredFile } from "./stored-file.js";
  * `hardDeleteFile` is deliberately absent: nothing calls it, and a narrow
  * interface is the wrong place to keep an operation alive for later.
  */
+
+/** No `bucket` field: the row writer fills that column from its own construction, not per call. */
+export interface InsertFileInput {
+  id: string;
+  objectKey: string;
+  directory: string;
+  originalName: string;
+  extension: string;
+  contentType: string;
+  sizeBytes: number | null;
+  etag: string | null;
+  status: FileStatus;
+  uploadSource: UploadSource;
+  uploadId?: string | null;
+  partSize?: number | null;
+  partCount?: number | null;
+}
+
+export interface ListFilesParams {
+  directory?: string;
+  recursive: boolean;
+  search?: string;
+  status?: FileStatus;
+  page: number;
+  limit: number;
+  sort: "created_at" | "original_name" | "size_bytes";
+  order: "asc" | "desc";
+}
+
+export interface DirectoryDto {
+  name: string;
+  path: string;
+  fileCount: number;
+}
 
 /** What confirmation knows about an upload that finished. */
 export interface ReadyValues {

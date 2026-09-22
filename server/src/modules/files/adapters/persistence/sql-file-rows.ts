@@ -1,13 +1,8 @@
-import { query } from "../../db/pool.js";
-import type { FileRows, ReadyValues } from "./file-rows.js";
-import type {
-  DirectoryDto,
-  FileRow,
-  InsertFileInput,
-  ListFilesParams,
-} from "./files.types.js";
-import { toStoredFile } from "./stored-file.js";
-import type { StoredFile } from "./stored-file.js";
+import { query } from "../../../../db/pool.js";
+import type { FileRows, ReadyValues, DirectoryDto, InsertFileInput, ListFilesParams } from "../../domain/ports/file-rows.js";
+import { toStoredFile } from "./row-mapper.js";
+import type { FileRow } from "./row-mapper.js";
+import type { StoredFile } from "../../domain/stored-file.js";
 
 const SORT_COLUMNS = {
   created_at: "created_at",

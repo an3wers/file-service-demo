@@ -1,17 +1,16 @@
-import { ERROR_CODES, badRequest, conflict } from "../../errors.js";
-import { logger } from "../../logger.js";
-import type { CompleteOutcome } from "../../storage/object-store.js";
-import type { Clock } from "./clock.js";
-import type { FileRowsForMultipart } from "./file-rows.js";
-import type { ObjectStoreForMultipart } from "./object-storage.js";
-import { expiresAt, reserveKey } from "./reservation.js";
-import { partRange, planMultipart } from "./upload-plan.js";
-import type { UploadPlan } from "./upload-plan.js";
-import type { UploadPolicy } from "./upload-policy.js";
-import { MultipartNotFoundError, TooManyActiveUploadsError } from "./errors.js";
-import type { MultipartPartDto, PresignMultipartResult } from "./files.types.js";
-import { statusOf } from "./stored-file.js";
-import type { LiveMultipartUpload, StoredFile } from "./stored-file.js";
+import { ERROR_CODES, badRequest, conflict } from "../../../errors.js";
+import { logger } from "../../../logger.js";
+import type { CompleteOutcome } from "../../../storage/object-store.js";
+import type { Clock } from "../domain/ports/clock.js";
+import type { FileRowsForMultipart } from "../domain/ports/file-rows.js";
+import type { ObjectStoreForMultipart } from "../domain/ports/object-storage.js";
+import { expiresAt, reserveKey } from "../domain/reservation.js";
+import { partRange, planMultipart } from "../domain/upload-plan.js";
+import type { UploadPlan } from "../domain/upload-plan.js";
+import type { UploadPolicy } from "../domain/upload-policy.js";
+import { MultipartNotFoundError, TooManyActiveUploadsError } from "../domain/errors.js";
+import { statusOf } from "../domain/stored-file.js";
+import type { LiveMultipartUpload, StoredFile } from "../domain/stored-file.js";
 
 export interface MultipartModuleDeps {
   objectStore: ObjectStoreForMultipart;
@@ -19,6 +18,29 @@ export interface MultipartModuleDeps {
   policy: UploadPolicy;
   /** The wall clock a part URL's `expiresAt` reads, shared with every other scenario. */
   clock: Clock;
+}
+
+export interface MultipartPartDto {
+  partNumber: number;
+  /** Byte range in the source file: the client slices exactly this. */
+  offset: number;
+  size: number;
+  url: string;
+}
+
+export interface PresignMultipartResult {
+  strategy: "multipart";
+  id: string;
+  key: string;
+  directory: string;
+  uploadId: string;
+  size: number;
+  partSize: number;
+  partCount: number;
+  /** How many parts the client may keep in flight; the server owns this number. */
+  maxConcurrency: number;
+  expiresAt: Date;
+  parts: MultipartPartDto[];
 }
 
 export interface PartUrlsInput {

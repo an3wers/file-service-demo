@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { ERROR_CODES } from "../../errors.js";
-import { mapFilesError } from "./files.error-map.js";
+import { ERROR_CODES } from "../../../../errors.js";
+import { mapFilesError } from "./error-map.js";
 import {
   FileNotFoundError,
   FileNotReadyError,
@@ -10,7 +10,7 @@ import {
   MultipartNotFoundError,
   TooManyActiveUploadsError,
   UploadNotCompletedError,
-} from "./errors.js";
+} from "../../domain/errors.js";
 
 describe("mapFilesError", () => {
   it("переводит «файл не найден» в 404 с исходным сообщением", () => {

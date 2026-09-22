@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
-import type { MemoryObjectStore } from "../../storage/memory-object-store.js";
-import type { UploadedPart } from "../../storage/object-store.js";
-import { MIB, PENDING_TTL_HOURS, THREE_PART_SIZE, buildHarness } from "./files-module.harness.js";
+import type { MemoryObjectStore } from "../../../storage/memory-object-store.js";
+import type { UploadedPart } from "../../../storage/object-store.js";
+import { MIB, PENDING_TTL_HOURS, THREE_PART_SIZE, buildHarness } from "../testing/files-module.harness.js";
 
 /**
  * Правила уборки через интерфейс фабрики модуля: объектное хранилище и
