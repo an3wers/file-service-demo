@@ -1,4 +1,5 @@
 import { query } from "../../db/pool.js";
+import type { FileRows, ReadyValues } from "./file-rows.js";
 import type {
   DirectoryDto,
   FileRow,
@@ -58,7 +59,7 @@ export async function findFileById(id: string): Promise<FileRow | null> {
 
 export async function markFileReady(
   id: string,
-  values: { sizeBytes: number | null; etag: string | null; contentType: string },
+  values: ReadyValues,
 ): Promise<FileRow | null> {
   const { rows } = await query<FileRow>(
     `update files
@@ -253,3 +254,23 @@ export async function listChildDirectories(parent: string): Promise<DirectoryDto
     fileCount: row.file_count,
   }));
 }
+
+/**
+ * The same functions seen through the narrow interfaces the modules declare.
+ * The annotation is the whole point of it: it is what makes the SQL side prove,
+ * at compile time, that it still answers for every operation those modules ask
+ * for. Callers take the one interface they need, never this bundle.
+ */
+export const sqlFileRows: FileRows = {
+  insertFile,
+  findFileById,
+  markFileReady,
+  markFileFailed,
+  countActiveMultipart,
+  claimExpiredMultipart,
+  softDeleteFile,
+  listFiles,
+  findKnownUploadIds,
+  listExpiredPending,
+  listChildDirectories,
+};
