@@ -8,7 +8,7 @@ const MAX_NAME_LENGTH = 255;
 const CONTROL_CHARS = /[\u0000-\u001f\u007f]/;
 
 /**
- * Turns a client-supplied directory into a safe S3 key prefix.
+ * Turns a client-supplied directory into a safe object key prefix.
  *
  * The result never has leading, trailing or repeated slashes; the empty string
  * means "bucket root". This is the only place untrusted input becomes part of

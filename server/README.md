@@ -89,9 +89,9 @@ npm run dev
 | `FILE_NOT_READY` | 409 | файл ещё не `ready`, скачивать нечего |
 | `UPLOAD_NOT_COMPLETED` | 409 | по зарезервированному ключу так и не появился объект |
 | `INVALID_UPLOAD_SIZE` | 400 | `size` не положительное число |
-| `INVALID_PART_NUMBER` | 400 | номер части вне `1..partCount` |
+| `INVALID_PART_NUMBER` | 400 | номер части вне `1..partCount` либо в запросе больше `MULTIPART_URL_BATCH` номеров |
 | `MULTIPART_NOT_FOUND` | 409 | у записи нет незавершённой multipart-загрузки |
-| `MULTIPART_INCOMPLETE` | 409 | при завершении в S3 лежат не все части |
+| `MULTIPART_INCOMPLETE` | 409 | при завершении в хранилище лежат не все части |
 | `TOO_MANY_ACTIVE_UPLOADS` | 429 | исчерпан `MULTIPART_MAX_ACTIVE_UPLOADS` |
 | `DUPLICATE_RESOURCE` | 409 | нарушен уникальный индекс |
 | `STORAGE_MISCONFIGURED` | 502 | S3 отверг запрос: не тот бакет или ключи |
@@ -159,8 +159,8 @@ POST /api/files/:id/complete     → 200 FileDto
 DELETE /api/files/:id            → 204 (отменяет незавершённую загрузку)
 ```
 
-**На сколько частей резать, решает сервер.** `src/s3/multipart.ts` берёт желаемый `partSize` из
-конфига и, если частей выходит больше `MULTIPART_MAX_PARTS`, увеличивает часть до
+**На сколько частей резать, решает сервер.** `src/modules/files/upload-plan.ts` получает желаемый
+`partSize` из политики загрузки и, если частей выходит больше `MULTIPART_MAX_PARTS`, увеличивает часть до
 `ceil(size / maxParts)`, округлённого вверх до мегабайта. Клиент получает готовые `offset`/`size` и
 ничего не пересчитывает.
 
@@ -233,7 +233,7 @@ GET /api/directories?parent=docs         → { parent, items: [{ name, path, fil
   могут ни столкнуться друг с другом, ни споткнуться о символы, неудобные в URL. Отображаемое имя
   живёт в базе и возвращается через `Content-Disposition`.
 - **Строка директории — единственный недоверенный ввод, попадающий в ключ,** поэтому
-  `normalizeDirectory` в `src/s3/keys.ts` прямо отвергает `..`, управляющие символы и слишком длинные
+  `normalizeDirectory` в `src/storage/keys.ts` прямо отвергает `..`, управляющие символы и слишком длинные
   сегменты, а не пытается их переписать.
 - **Удаление мягкое в базе и best-effort в S3.** Источник истины — запись с метаданными, поэтому её
   выводят из обращения первой; неудачное удаление в хранилище оставит лишь объект, на который никто
@@ -277,12 +277,15 @@ npm run test:coverage  # покрытие; требует npm i -D @vitest/cover
 ```
 src/
   config.ts logger.ts errors.ts app.ts server.ts
+  composition.ts  сборка: единственное место, где называются конкретные адаптеры
   db/        pool.ts, errors.ts (трансляция ошибок pg), migrate.ts, migrations/
-  s3/        client.ts (специфика Cloud.ru), keys.ts (именование и санитизация),
-             errors.ts (трансляция ошибок AWS SDK), multipart.ts (разбиение на части)
+  storage/   object-store.ts (шов), s3-object-store.ts и s3-client.ts (специфика
+             Cloud.ru), s3-errors.ts (трансляция ошибок SDK), memory-object-store.ts
+             (реализация для тестов), keys.ts (именование и санитизация)
   middleware/ api-key.ts, upload.ts, validate.ts, error-handler.ts
-  modules/files/  routes → service → repo, плюс schemas/types/mapper
-                  и multipart.service.ts (работа с multipart-загрузкой в S3)
-  scripts/   s3-cors.ts, cleanup-pending.ts
+  modules/files/  routes → module → rows: фабрики, принимающие зависимости, плюс
+                  file-rows.ts (узкие интерфейсы) и memory-file-rows.ts, files.repo.ts
+                  (SQL), upload-plan.ts, upload-policy.ts, schemas/types/mapper
+  scripts/   s3-cors.ts, cleanup-pending.ts (вторая, самостоятельная сборка)
   **/*.test.ts  тесты рядом с модулями, которые они проверяют
 ```

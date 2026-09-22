@@ -1,16 +1,18 @@
 import multer from "multer";
-import { config } from "../config.js";
+import type { RequestHandler } from "express";
 
 /**
  * Server-side uploads buffer the whole file in memory, so the size limit is
  * load-bearing rather than cosmetic. Anything larger belongs in the presigned
- * flow, which streams straight from the client to S3.
+ * flow, which streams straight from the client to storage.
  */
-export const upload = multer({
-  storage: multer.memoryStorage(),
-  limits: {
-    fileSize: config.uploads.maxSizeBytes,
-    files: 1,
-    fields: 10,
-  },
-});
+export function createUploadMiddleware(maxSizeBytes: number): RequestHandler {
+  return multer({
+    storage: multer.memoryStorage(),
+    limits: {
+      fileSize: maxSizeBytes,
+      files: 1,
+      fields: 10,
+    },
+  }).single("file");
+}

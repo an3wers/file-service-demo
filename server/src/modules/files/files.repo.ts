@@ -98,7 +98,7 @@ export async function countActiveMultipart(): Promise<number> {
 
 /**
  * Takes an abandoned multipart upload out of circulation and hands back the
- * `upload_id` that has to be aborted in S3, in one statement. Claiming first is
+ * `upload_id` that has to be aborted in storage, in one statement. Claiming first is
  * what keeps the cleanup pass from cancelling an upload a client is finishing
  * right now: whoever updates the row wins, and the loser gets no rows back.
  *
@@ -223,7 +223,7 @@ export async function listExpiredPending(ttlHours: number): Promise<FileRow[]> {
 
 /**
  * Immediate child folders of `parent`, derived from the stored directory paths
- * (S3 has no real folders). `fileCount` covers the whole subtree, which is what
+ * (object storage has no real folders). `fileCount` covers the whole subtree, which is what
  * a folder listing wants to show.
  */
 export async function listChildDirectories(parent: string): Promise<DirectoryDto[]> {

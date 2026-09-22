@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { AppError, ERROR_CODES } from "../errors.js";
-import { S3_LIMITS, needsMultipart, partRange, planMultipart } from "./multipart.js";
-import type { PlanLimits } from "./multipart.js";
+import { AppError, ERROR_CODES } from "../../errors.js";
+import { PROTOCOL_LIMITS, needsMultipart, partRange, planMultipart } from "./upload-plan.js";
+import type { PlanLimits } from "./upload-plan.js";
 
 const MIB = 1024 * 1024;
 const GIB = 1024 * MIB;
@@ -72,10 +72,10 @@ describe("planMultipart", () => {
     expect(plan.partSize % MIB).toBe(0);
   });
 
-  it("never drops below the S3 minimum part size", () => {
-    const plan = planMultipart(6 * MIB, { ...limits, partSize: S3_LIMITS.minPartSize });
+  it("never drops below the protocol minimum part size", () => {
+    const plan = planMultipart(6 * MIB, { ...limits, partSize: PROTOCOL_LIMITS.minPartSize });
 
-    expect(plan.partSize).toBeGreaterThanOrEqual(S3_LIMITS.minPartSize);
+    expect(plan.partSize).toBeGreaterThanOrEqual(PROTOCOL_LIMITS.minPartSize);
   });
 
   it("keeps partCount within maxParts across a range of sizes", () => {

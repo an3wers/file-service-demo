@@ -13,8 +13,8 @@ import {
 } from "@aws-sdk/client-s3";
 import type { S3Client } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
-import { contentDisposition } from "../s3/keys.js";
-import { isS3NoSuchUpload, isS3NotFound, storageError } from "../s3/errors.js";
+import { contentDisposition } from "./keys.js";
+import { isS3NoSuchUpload, isS3NotFound, storageError } from "./s3-errors.js";
 import type {
   CompleteOutcome,
   MultipartUpload,
@@ -50,7 +50,11 @@ export function createS3ObjectStore(client: S3Client, bucket: string): ObjectSto
 
   return {
     async checkAvailable(): Promise<void> {
-      await client.send(new HeadBucketCommand({ Bucket: bucket }));
+      try {
+        await client.send(new HeadBucketCommand({ Bucket: bucket }));
+      } catch (error) {
+        throw fail(error, "HeadBucket");
+      }
     },
 
     async put(key, body, options: PutOptions) {

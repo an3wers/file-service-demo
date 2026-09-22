@@ -48,8 +48,8 @@ describe("toFileDto", () => {
 
   it("omits downloadUrl unless one was built", () => {
     expect(toFileDto(row)).not.toHaveProperty("downloadUrl");
-    expect(toFileDto(row, "https://s3.test.local/signed")).toMatchObject({
-      downloadUrl: "https://s3.test.local/signed",
+    expect(toFileDto(row, "https://storage.test.local/signed")).toMatchObject({
+      downloadUrl: "https://storage.test.local/signed",
     });
   });
 
