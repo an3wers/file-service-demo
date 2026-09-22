@@ -1,4 +1,4 @@
-import { ERROR_CODES, badRequest, conflict, tooManyRequests } from "../../errors.js";
+import { ERROR_CODES, badRequest, conflict } from "../../errors.js";
 import { logger } from "../../logger.js";
 import type { CompleteOutcome, ObjectStore } from "../../storage/object-store.js";
 import type { FileRowsForMultipart } from "./file-rows.js";
@@ -6,6 +6,7 @@ import { expiresAt, reserveKey } from "./reservation.js";
 import { partRange, planMultipart } from "./upload-plan.js";
 import type { UploadPlan } from "./upload-plan.js";
 import type { UploadPolicy } from "./upload-policy.js";
+import { MultipartNotFoundError, TooManyActiveUploadsError } from "./errors.js";
 import type { MultipartPartDto, PresignMultipartResult } from "./files.types.js";
 import type { PartUrlsBody } from "./files.schemas.js";
 import { statusOf } from "./stored-file.js";
@@ -61,11 +62,9 @@ export interface MultipartModule {
 /** A file is only a live multipart upload while it is in that state. */
 function requireLiveUpload(file: StoredFile): LiveMultipartUpload {
   if (file.kind !== "multipart") {
-    throw conflict(
-      ERROR_CODES.MULTIPART_NOT_FOUND,
-      `File ${file.id} has no multipart upload in progress`,
-      { status: statusOf(file) },
-    );
+    throw new MultipartNotFoundError(`File ${file.id} has no multipart upload in progress`, {
+      status: statusOf(file),
+    });
   }
 
   return file;
@@ -105,8 +104,7 @@ export function createMultipartModule({
       const active = await fileRows.countActiveMultipart();
 
       if (active >= policy.maxActiveUploads) {
-        throw tooManyRequests(
-          ERROR_CODES.TOO_MANY_ACTIVE_UPLOADS,
+        throw new TooManyActiveUploadsError(
           "Too many multipart uploads are already in progress; finish or cancel one first",
           { active, limit: policy.maxActiveUploads },
         );
@@ -206,8 +204,7 @@ export function createMultipartModule({
       const parts = await objectStore.listParts(key, uploadId);
 
       if (!parts) {
-        throw conflict(
-          ERROR_CODES.MULTIPART_NOT_FOUND,
+        throw new MultipartNotFoundError(
           `Object storage has no multipart upload for file ${file.id}`,
         );
       }

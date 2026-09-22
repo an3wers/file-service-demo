@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { AppError, ERROR_CODES } from "../errors.js";
+import { InvalidDirectoryError, InvalidFileNameError } from "../modules/files/errors.js";
 import {
   buildObjectKey,
   contentDisposition,
@@ -10,11 +10,11 @@ import {
 } from "./keys.js";
 
 /** Возвращает выброшенную ошибку, чтобы проверить её код, а не только факт броска. */
-function thrownBy(run: () => unknown): AppError {
+function thrownBy(run: () => unknown): Error {
   try {
     run();
   } catch (error) {
-    return error as AppError;
+    return error as Error;
   }
 
   throw new Error("Expected the call to throw, but it returned");
@@ -38,29 +38,26 @@ describe("normalizeDirectory", () => {
 
   it("rejects traversal segments", () => {
     for (const input of ["..", "docs/../etc", "./docs"]) {
-      expect(thrownBy(() => normalizeDirectory(input))).toMatchObject({
-        statusCode: 400,
-        code: ERROR_CODES.INVALID_DIRECTORY,
-      });
+      expect(thrownBy(() => normalizeDirectory(input))).toBeInstanceOf(InvalidDirectoryError);
     }
   });
 
   it("rejects control characters", () => {
-    expect(thrownBy(() => normalizeDirectory("docs/a\u0007b")).code).toBe(
-      ERROR_CODES.INVALID_DIRECTORY,
+    expect(thrownBy(() => normalizeDirectory("docs/a\u0007b"))).toBeInstanceOf(
+      InvalidDirectoryError,
     );
   });
 
   it("rejects an over-long segment", () => {
-    expect(thrownBy(() => normalizeDirectory("a".repeat(101))).code).toBe(
-      ERROR_CODES.INVALID_DIRECTORY,
+    expect(thrownBy(() => normalizeDirectory("a".repeat(101)))).toBeInstanceOf(
+      InvalidDirectoryError,
     );
   });
 
   it("rejects a path over the byte budget", () => {
     const path = Array.from({ length: 8 }, () => "a".repeat(100)).join("/");
 
-    expect(thrownBy(() => normalizeDirectory(path)).code).toBe(ERROR_CODES.INVALID_DIRECTORY);
+    expect(thrownBy(() => normalizeDirectory(path))).toBeInstanceOf(InvalidDirectoryError);
   });
 });
 
@@ -77,7 +74,7 @@ describe("sanitizeFileName", () => {
 
   it("rejects names that carry no usable file name", () => {
     for (const input of ["", "   ", "docs/", "..", "bad\u0000name"]) {
-      expect(thrownBy(() => sanitizeFileName(input)).code).toBe(ERROR_CODES.INVALID_FILE_NAME);
+      expect(thrownBy(() => sanitizeFileName(input))).toBeInstanceOf(InvalidFileNameError);
     }
   });
 });

@@ -1,8 +1,8 @@
-import { ERROR_CODES, conflict, notFound } from "../../errors.js";
 import { logger } from "../../logger.js";
 import type { ObjectStore } from "../../storage/object-store.js";
 import { decodeOriginalName, normalizeDirectory } from "../../storage/keys.js";
 import { toFileDto } from "./files.mapper.js";
+import { FileNotFoundError, FileNotReadyError, MultipartNotFoundError, UploadNotCompletedError } from "./errors.js";
 import type { FileRowsForFiles } from "./file-rows.js";
 import type { MultipartModule, MultipartStatus } from "./multipart.service.js";
 import { expiresAt, reserveKey } from "./reservation.js";
@@ -70,7 +70,7 @@ export interface FilesModule {
 }
 
 function fileNotFound(id: string) {
-  return notFound(ERROR_CODES.FILE_NOT_FOUND, `File ${id} was not found`);
+  return new FileNotFoundError(`File ${id} was not found`);
 }
 
 export function createFilesModule({
@@ -254,11 +254,12 @@ export function createFilesModule({
       const stored = await objectStore.head(file.key);
 
       if (!stored) {
-        throw conflict(
-          file.kind === "multipart" ? ERROR_CODES.MULTIPART_NOT_FOUND : ERROR_CODES.UPLOAD_NOT_COMPLETED,
-          "No object was found at the reserved key; upload the file before confirming",
-          { key: file.key },
-        );
+        const message = "No object was found at the reserved key; upload the file before confirming";
+        const details = { key: file.key };
+
+        throw file.kind === "multipart"
+          ? new MultipartNotFoundError(message, details)
+          : new UploadNotCompletedError(message, details);
       }
 
       const row = await fileRows.markFileReady(id, {
@@ -278,8 +279,7 @@ export function createFilesModule({
       const file = await requireFile(id);
 
       if (file.kind !== "ready") {
-        throw conflict(
-          ERROR_CODES.FILE_NOT_READY,
+        throw new FileNotReadyError(
           `File ${id} is in status "${statusOf(file)}" and cannot be downloaded yet`,
         );
       }

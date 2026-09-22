@@ -4,6 +4,7 @@ import { ZodError, z } from "zod";
 import { AppError, ERROR_CODES, badRequest, payloadTooLarge } from "../errors.js";
 import { config } from "../config.js";
 import { logger } from "../logger.js";
+import { mapFilesError } from "../modules/files/files.error-map.js";
 
 export const notFoundHandler: RequestHandler = (req, _res, next) => {
   next(
@@ -23,6 +24,12 @@ export const notFoundHandler: RequestHandler = (req, _res, next) => {
 function toAppError(error: unknown): AppError {
   if (error instanceof AppError) {
     return error;
+  }
+
+  const filesError = mapFilesError(error);
+
+  if (filesError) {
+    return filesError;
   }
 
   if (error instanceof ZodError) {

@@ -1,4 +1,5 @@
-import { ERROR_CODES, badRequest, payloadTooLarge } from "../../errors.js";
+import { ERROR_CODES, badRequest } from "../../errors.js";
+import { FileTooLargeError } from "./errors.js";
 
 const MIB = 1024 * 1024;
 
@@ -60,7 +61,7 @@ export function planMultipart(size: number, limits: PlanLimits): UploadPlan {
   }
 
   if (size > limits.maxObjectSize) {
-    throw payloadTooLarge(
+    throw new FileTooLargeError(
       `File exceeds the ${Math.floor(limits.maxObjectSize / (1024 * MIB))} GB limit for a single object`,
       { maxObjectSize: limits.maxObjectSize },
     );
@@ -81,7 +82,7 @@ export function planMultipart(size: number, limits: PlanLimits): UploadPlan {
   if (partCount > limits.maxParts) {
     // Unreachable while `maxObjectSize` stays at or below 5 TiB (10 000 parts of
     // 5 GiB is 50 TiB); kept in case that ceiling is ever raised.
-    throw payloadTooLarge("File cannot be split into parts within the protocol limits", {
+    throw new FileTooLargeError("File cannot be split into parts within the protocol limits", {
       maxParts: limits.maxParts,
     });
   }

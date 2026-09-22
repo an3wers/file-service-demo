@@ -9,7 +9,6 @@ import { createMultipartModule } from "./multipart.service.js";
 import type { MultipartModule } from "./multipart.service.js";
 import { createCleanupModule } from "./cleanup.service.js";
 import type { CleanupModule } from "./cleanup.service.js";
-import type { AppError } from "../../errors.js";
 import type { UploadPolicy } from "./upload-policy.js";
 import type { StoredFile } from "./stored-file.js";
 
@@ -127,11 +126,11 @@ export function buildHarness(policyOverrides: Partial<UploadPolicy> = {}): Harne
 }
 
 /** Hands back the thrown error, so a test can check its code and not just the throw. */
-export async function thrownBy(run: () => Promise<unknown>): Promise<AppError> {
+export async function thrownBy(run: () => Promise<unknown>): Promise<Error> {
   try {
     await run();
   } catch (error) {
-    return error as AppError;
+    return error as Error;
   }
 
   throw new Error("Expected the call to reject, but it resolved");

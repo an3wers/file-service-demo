@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
-import { ERROR_CODES } from "../../errors.js";
+import { FileNotReadyError, MultipartNotFoundError, UploadNotCompletedError } from "./errors.js";
 import { THREE_PART_SIZE, buildHarness, thrownBy } from "./files-module.harness.js";
 import type { FilesModule } from "./files.service.js";
 import type { PresignMultipartResult, PresignSingleResult } from "./files.types.js";
@@ -105,11 +105,8 @@ describe("confirming an upload", () => {
       const reserved = await reserveSingle(files, 4);
       const error = await thrownBy(() => files.completeUpload(reserved.id));
 
-      expect(error).toMatchObject({
-        statusCode: 409,
-        code: ERROR_CODES.UPLOAD_NOT_COMPLETED,
-        details: { key: reserved.key },
-      });
+      expect(error).toBeInstanceOf(UploadNotCompletedError);
+      expect(error).toMatchObject({ details: { key: reserved.key } });
       // Строка осталась зарезервированной: клиент ещё может дослать байты.
       expect(await rowOf(reserved.id)).toMatchObject({ kind: "reserved" });
     });
@@ -174,11 +171,8 @@ describe("confirming an upload", () => {
 
       const error = await thrownBy(() => files.completeUpload(reserved.id));
 
-      expect(error).toMatchObject({
-        statusCode: 409,
-        code: ERROR_CODES.MULTIPART_NOT_FOUND,
-        details: { key: reserved.key },
-      });
+      expect(error).toBeInstanceOf(MultipartNotFoundError);
+      expect(error).toMatchObject({ details: { key: reserved.key } });
       expect(await rowOf(reserved.id)).toMatchObject({ kind: "multipart" });
     });
   });
@@ -252,7 +246,7 @@ describe("handing out a signed download link", () => {
       files.getDownloadUrl(reserved.id, { disposition: "attachment" }),
     );
 
-    expect(error).toMatchObject({ statusCode: 409, code: ERROR_CODES.FILE_NOT_READY });
+    expect(error).toBeInstanceOf(FileNotReadyError);
   });
 
   it("serves the card of an unconfirmed file without a link rather than failing", async () => {

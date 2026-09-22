@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { AppError, ERROR_CODES } from "../../errors.js";
+import { ERROR_CODES } from "../../errors.js";
+import { FileTooLargeError } from "./errors.js";
 import { PROTOCOL_LIMITS, needsMultipart, partRange, planMultipart } from "./upload-plan.js";
 import type { PlanLimits } from "./upload-plan.js";
 
@@ -7,11 +8,11 @@ const MIB = 1024 * 1024;
 const GIB = 1024 * MIB;
 
 /** Возвращает выброшенную ошибку, чтобы проверить её код, а не только факт броска. */
-function thrownBy(run: () => unknown): AppError {
+function thrownBy(run: () => unknown): Error {
   try {
     run();
   } catch (error) {
-    return error as AppError;
+    return error as Error;
   }
 
   throw new Error("Expected the call to throw, but it returned");
@@ -85,10 +86,7 @@ describe("planMultipart", () => {
   });
 
   it("rejects a size past the object ceiling", () => {
-    expect(thrownBy(() => planMultipart(201 * GIB, limits))).toMatchObject({
-      statusCode: 413,
-      code: ERROR_CODES.PAYLOAD_TOO_LARGE,
-    });
+    expect(thrownBy(() => planMultipart(201 * GIB, limits))).toBeInstanceOf(FileTooLargeError);
   });
 
   it("rejects a size that is not a positive number", () => {
