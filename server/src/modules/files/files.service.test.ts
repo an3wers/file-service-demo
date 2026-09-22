@@ -111,7 +111,7 @@ describe("confirming an upload", () => {
         details: { key: reserved.key },
       });
       // Строка осталась зарезервированной: клиент ещё может дослать байты.
-      expect(await rowOf(reserved.id)).toMatchObject({ status: "pending", etag: null });
+      expect(await rowOf(reserved.id)).toMatchObject({ kind: "reserved" });
     });
   });
 
@@ -137,11 +137,7 @@ describe("confirming an upload", () => {
       expect(objectStore.objectAt(reserved.key)?.body).toEqual(assembled);
       expect(objectStore.openUploads()).toEqual([]);
       // Подтверждённая строка больше не несёт плана: загрузка неживая.
-      expect(await rowOf(reserved.id)).toMatchObject({
-        upload_id: null,
-        part_size: null,
-        part_count: null,
-      });
+      expect(await rowOf(reserved.id)).toMatchObject({ kind: "ready" });
       // И повторный вопрос по неживой загрузке отвечается тем же, а не отказом.
       expect(await files.completeUpload(reserved.id)).toEqual(confirmed);
     });
@@ -183,7 +179,7 @@ describe("confirming an upload", () => {
         code: ERROR_CODES.MULTIPART_NOT_FOUND,
         details: { key: reserved.key },
       });
-      expect(await rowOf(reserved.id)).toMatchObject({ status: "pending" });
+      expect(await rowOf(reserved.id)).toMatchObject({ kind: "multipart" });
     });
   });
 });

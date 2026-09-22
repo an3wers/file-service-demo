@@ -1,20 +1,38 @@
-import type { FileDto, FileRow } from "./files.types.js";
+import type { FileDto } from "./files.types.js";
+import type { StoredFile } from "./stored-file.js";
+import { statusOf } from "./stored-file.js";
 
-export function toFileDto(row: FileRow, downloadUrl?: string): FileDto {
+function sizeOf(file: StoredFile): number | null {
+  switch (file.kind) {
+    case "reserved":
+    case "ready":
+      return file.size;
+    case "multipart":
+      return file.plan.size;
+    case "failed":
+      return null;
+  }
+}
+
+function etagOf(file: StoredFile): string | null {
+  return file.kind === "ready" ? file.etag : null;
+}
+
+export function toFileDto(file: StoredFile, downloadUrl?: string): FileDto {
   return {
-    id: row.id,
-    name: row.original_name,
-    directory: row.directory,
-    extension: row.extension,
-    contentType: row.content_type,
-    size: row.size_bytes,
-    etag: row.etag,
-    status: row.status,
-    uploadSource: row.upload_source,
-    bucket: row.bucket,
-    key: row.object_key,
-    createdAt: row.created_at.toISOString(),
-    updatedAt: row.updated_at.toISOString(),
+    id: file.id,
+    name: file.originalName,
+    directory: file.directory,
+    extension: file.extension,
+    contentType: file.contentType,
+    size: sizeOf(file),
+    etag: etagOf(file),
+    status: statusOf(file),
+    uploadSource: file.uploadSource,
+    bucket: file.bucket,
+    key: file.key,
+    createdAt: file.createdAt.toISOString(),
+    updatedAt: file.updatedAt.toISOString(),
     ...(downloadUrl ? { downloadUrl } : {}),
   };
 }

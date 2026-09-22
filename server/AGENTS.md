@@ -24,7 +24,10 @@ cleanup-pending.ts → module (createCleanupModule) → те же два шва
   транслирует ошибки pg в `AppError`). Параметры только через `$1, $2…`, SQL в нижнем регистре.
   Связка `sqlFileRows` доказывает, что он отвечает за все узкие интерфейсы.
 - `files.schemas.ts` — zod-схемы запросов и выведенные из них типы; `files.types.ts` — строки БД
-  (`FileRow`, snake_case) и DTO (camelCase); `files.mapper.ts` — `FileRow → FileDto`.
+  (`FileRow`, snake_case) и DTO (camelCase); `stored-file.ts` — сущность `StoredFile` (сумма
+  состояний) и `toStoredFile: FileRow → StoredFile`, единственное место, где сочетание полей
+  проверяется на законность; `files.mapper.ts` — `StoredFile → FileDto`. `FileRow` не выходит за
+  пределы `files.repo.ts` и `memory-file-rows.ts` — остальной код работает с `StoredFile`.
 
 ## Правила
 

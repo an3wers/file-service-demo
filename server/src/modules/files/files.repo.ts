@@ -6,6 +6,8 @@ import type {
   InsertFileInput,
   ListFilesParams,
 } from "./files.types.js";
+import { toStoredFile } from "./stored-file.js";
+import type { StoredFile } from "./stored-file.js";
 
 const SORT_COLUMNS = {
   created_at: "created_at",
@@ -18,7 +20,7 @@ function escapeLike(value: string): string {
   return value.replaceAll(/[\\%_]/g, String.raw`\$&`);
 }
 
-export async function insertFile(input: InsertFileInput): Promise<FileRow> {
+export async function insertFile(input: InsertFileInput): Promise<StoredFile> {
   const { rows } = await query<FileRow>(
     `insert into files (
        id, bucket, object_key, directory, original_name, extension,
@@ -45,22 +47,22 @@ export async function insertFile(input: InsertFileInput): Promise<FileRow> {
     ],
   );
 
-  return rows[0]!;
+  return toStoredFile(rows[0]!);
 }
 
-export async function findFileById(id: string): Promise<FileRow | null> {
+export async function findFileById(id: string): Promise<StoredFile | null> {
   const { rows } = await query<FileRow>(
     "select * from files where id = $1 and deleted_at is null",
     [id],
   );
 
-  return rows[0] ?? null;
+  return rows[0] ? toStoredFile(rows[0]) : null;
 }
 
 export async function markFileReady(
   id: string,
   values: ReadyValues,
-): Promise<FileRow | null> {
+): Promise<StoredFile | null> {
   const { rows } = await query<FileRow>(
     `update files
         set status = 'ready',
@@ -76,7 +78,7 @@ export async function markFileReady(
     [id, values.sizeBytes, values.etag, values.contentType],
   );
 
-  return rows[0] ?? null;
+  return rows[0] ? toStoredFile(rows[0]) : null;
 }
 
 export async function markFileFailed(id: string): Promise<void> {
@@ -125,7 +127,7 @@ export async function claimExpiredMultipart(
   return rows[0]?.upload_id ?? null;
 }
 
-export async function softDeleteFile(id: string): Promise<FileRow | null> {
+export async function softDeleteFile(id: string): Promise<StoredFile | null> {
   const { rows } = await query<FileRow>(
     `update files
         set deleted_at = now(), updated_at = now()
@@ -134,7 +136,7 @@ export async function softDeleteFile(id: string): Promise<FileRow | null> {
     [id],
   );
 
-  return rows[0] ?? null;
+  return rows[0] ? toStoredFile(rows[0]) : null;
 }
 
 export async function hardDeleteFile(id: string): Promise<void> {
@@ -143,7 +145,7 @@ export async function hardDeleteFile(id: string): Promise<void> {
 
 export async function listFiles(
   params: ListFilesParams,
-): Promise<{ items: FileRow[]; total: number }> {
+): Promise<{ items: StoredFile[]; total: number }> {
   const conditions = ["deleted_at is null"];
   const values: unknown[] = [];
 
@@ -186,7 +188,7 @@ export async function listFiles(
   );
 
   return {
-    items: rows,
+    items: rows.map(toStoredFile),
     total: rows[0]?.total_count ?? 0,
   };
 }
@@ -208,7 +210,7 @@ export async function findKnownUploadIds(ids: string[]): Promise<Set<string>> {
   return new Set(rows.map((row) => row.upload_id));
 }
 
-export async function listExpiredPending(ttlHours: number): Promise<FileRow[]> {
+export async function listExpiredPending(ttlHours: number): Promise<StoredFile[]> {
   const { rows } = await query<FileRow>(
     `select * from files
       where status = 'pending'
@@ -218,7 +220,7 @@ export async function listExpiredPending(ttlHours: number): Promise<FileRow[]> {
     [ttlHours],
   );
 
-  return rows;
+  return rows.map(toStoredFile);
 }
 
 /**

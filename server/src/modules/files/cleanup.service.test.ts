@@ -56,10 +56,10 @@ describe("cleanup", () => {
 
       expect(counters).toMatchObject({ examined: 1, recovered: 1, failed: 0 });
       expect(await rowOf(reserved.id)).toMatchObject({
-        status: "ready",
-        size_bytes: stored?.size,
+        kind: "ready",
+        size: stored?.size,
         etag: stored?.etag,
-        content_type: "text/plain",
+        contentType: "text/plain",
       });
     });
 
@@ -77,11 +77,7 @@ describe("cleanup", () => {
       const counters = await cleanup.settleExpiredRows();
 
       expect(counters).toMatchObject({ examined: 1, recovered: 1, failed: 0 });
-      expect(await rowOf(started.id)).toMatchObject({
-        status: "ready",
-        size_bytes: THREE_PART_SIZE,
-        upload_id: null,
-      });
+      expect(await rowOf(started.id)).toMatchObject({ kind: "ready", size: THREE_PART_SIZE });
     });
 
     it("marks an upload failed when storage has no object at the key", async () => {
@@ -94,9 +90,7 @@ describe("cleanup", () => {
       const counters = await cleanup.settleExpiredRows();
 
       expect(counters).toMatchObject({ examined: 1, recovered: 0, failed: 1 });
-      // Размер на строке — объявленный клиентом при резервировании; ETag так и
-      // не появился, потому что подтверждать было нечего.
-      expect(await rowOf(reserved.id)).toMatchObject({ status: "failed", etag: null });
+      expect(await rowOf(reserved.id)).toMatchObject({ kind: "failed" });
       expect(objectStore.objectKeys()).toEqual([]);
     });
 
@@ -112,7 +106,7 @@ describe("cleanup", () => {
       const counters = await cleanup.settleExpiredRows();
 
       expect(counters).toMatchObject({ examined: 1, failed: 1, recovered: 0, aborted: 0 });
-      expect(await rowOf(started.id)).toMatchObject({ status: "failed", upload_id: null });
+      expect(await rowOf(started.id)).toMatchObject({ kind: "failed" });
       expect(objectStore.objectKeys()).toEqual([]);
     });
 
@@ -131,7 +125,7 @@ describe("cleanup", () => {
       const counters = await cleanup.settleExpiredRows();
 
       expect(counters).toMatchObject({ examined: 1, skipped: 1, aborted: 0, failed: 0 });
-      expect(await rowOf(started.id)).toMatchObject({ status: "ready", upload_id: null });
+      expect(await rowOf(started.id)).toMatchObject({ kind: "ready" });
       // Загрузка не отменена: объект собран и лежит под своим ключом.
       expect(objectStore.objectAt(started.key)?.body.byteLength).toBe(THREE_PART_SIZE);
     });
@@ -147,7 +141,7 @@ describe("cleanup", () => {
       const counters = await cleanup.settleExpiredRows();
 
       expect(counters).toMatchObject({ examined: 1, aborted: 1, failed: 1, recovered: 0 });
-      expect(await rowOf(started.id)).toMatchObject({ status: "failed", upload_id: null });
+      expect(await rowOf(started.id)).toMatchObject({ kind: "failed" });
       expect(objectStore.openUploads()).toEqual([]);
       expect(objectStore.objectKeys()).toEqual([]);
     });

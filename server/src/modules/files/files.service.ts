@@ -7,11 +7,12 @@ import type { FileRowsForFiles } from "./file-rows.js";
 import type { MultipartModule, MultipartStatus } from "./multipart.service.js";
 import { expiresAt, reserveKey } from "./reservation.js";
 import { needsMultipart } from "./upload-plan.js";
+import { statusOf } from "./stored-file.js";
+import type { StoredFile } from "./stored-file.js";
 import type { UploadPolicy } from "./upload-policy.js";
 import type {
   DirectoryDto,
   FileDto,
-  FileRow,
   ListFilesParams,
   MultipartPartDto,
   PresignUploadResult,
@@ -79,7 +80,7 @@ export function createFilesModule({
   multipart,
   bucket,
 }: FilesModuleDeps): FilesModule {
-  async function requireFile(id: string): Promise<FileRow> {
+  async function requireFile(id: string): Promise<StoredFile> {
     const file = await fileRows.findFileById(id);
 
     if (!file) {
@@ -90,12 +91,12 @@ export function createFilesModule({
   }
 
   async function presignDownload(
-    file: FileRow,
+    file: StoredFile,
     options: { disposition: "attachment" | "inline"; expiresIn: number },
   ): Promise<string> {
-    return await objectStore.signDownload(file.object_key, {
-      name: file.original_name,
-      contentType: file.content_type,
+    return await objectStore.signDownload(file.key, {
+      name: file.originalName,
+      contentType: file.contentType,
       disposition: options.disposition,
       expiresIn: options.expiresIn,
     });
@@ -222,48 +223,48 @@ export function createFilesModule({
     async completeUpload(id): Promise<FileDto> {
       const file = await requireFile(id);
 
-      if (file.status === "ready") {
+      if (file.kind === "ready") {
         return toFileDto(file); // Idempotent: a retried confirmation is not an error.
       }
 
-      if (file.status === "failed") {
+      if (file.kind === "failed") {
         // `db:cleanup` gave up on this row earlier. If the object is there after
         // all, the upload did work and only the confirmation was lost, so let
         // the check below revive it — but say so, because it means cleanup ran
         // early.
         logger.info(
-          { id, key: file.object_key },
+          { id, key: file.key },
           "Confirming an upload that was previously marked failed",
         );
       }
 
-      if (file.upload_id) {
+      if (file.kind === "multipart") {
         // Assembles the object out of its parts first; everything below then
         // reads the finished object exactly as for a single-PUT upload.
         const outcome = await multipart.completeMultipartUpload(file);
 
         if (outcome === "gone") {
           logger.info(
-            { id, key: file.object_key },
+            { id, key: file.key },
             "Multipart upload had already been settled elsewhere",
           );
         }
       }
 
-      const stored = await objectStore.head(file.object_key);
+      const stored = await objectStore.head(file.key);
 
       if (!stored) {
         throw conflict(
-          file.upload_id ? ERROR_CODES.MULTIPART_NOT_FOUND : ERROR_CODES.UPLOAD_NOT_COMPLETED,
+          file.kind === "multipart" ? ERROR_CODES.MULTIPART_NOT_FOUND : ERROR_CODES.UPLOAD_NOT_COMPLETED,
           "No object was found at the reserved key; upload the file before confirming",
-          { key: file.object_key },
+          { key: file.key },
         );
       }
 
       const row = await fileRows.markFileReady(id, {
         sizeBytes: stored.size,
         etag: stored.etag,
-        contentType: stored.contentType ?? file.content_type,
+        contentType: stored.contentType ?? file.contentType,
       });
 
       if (!row) {
@@ -276,10 +277,10 @@ export function createFilesModule({
     async getDownloadUrl(id, query) {
       const file = await requireFile(id);
 
-      if (file.status !== "ready") {
+      if (file.kind !== "ready") {
         throw conflict(
           ERROR_CODES.FILE_NOT_READY,
-          `File ${id} is in status "${file.status}" and cannot be downloaded yet`,
+          `File ${id} is in status "${statusOf(file)}" and cannot be downloaded yet`,
         );
       }
 
@@ -288,14 +289,14 @@ export function createFilesModule({
       return {
         url: await presignDownload(file, { disposition: query.disposition, expiresIn }),
         expiresAt: expiresAt(expiresIn),
-        name: file.original_name,
+        name: file.originalName,
       };
     },
 
     async getFileCard(id, withUrl): Promise<FileDto> {
       const file = await requireFile(id);
 
-      if (!withUrl || file.status !== "ready") {
+      if (!withUrl || file.kind !== "ready") {
         return toFileDto(file);
       }
 
@@ -346,16 +347,16 @@ export function createFilesModule({
       }
 
       try {
-        if (file.upload_id && file.status === "pending") {
+        if (file.kind === "multipart") {
           // No object exists under this key yet — the uploaded parts are what
           // has to go, and only an abort removes those.
-          await objectStore.abortMultipart(file.object_key, file.upload_id);
+          await objectStore.abortMultipart(file.key, file.uploadId);
         } else {
-          await objectStore.remove(file.object_key);
+          await objectStore.remove(file.key);
         }
       } catch (error) {
         logger.error(
-          { err: error, id, key: file.object_key },
+          { err: error, id, key: file.key },
           "File marked deleted but the stored object could not be removed",
         );
       }

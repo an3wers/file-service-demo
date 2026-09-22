@@ -11,7 +11,7 @@ import { createCleanupModule } from "./cleanup.service.js";
 import type { CleanupModule } from "./cleanup.service.js";
 import type { AppError } from "../../errors.js";
 import type { UploadPolicy } from "./upload-policy.js";
-import type { FileRow } from "./files.types.js";
+import type { StoredFile } from "./stored-file.js";
 
 /**
  * The files module as a test drives it: the real modules, assembled the way
@@ -78,7 +78,7 @@ export interface Harness {
    */
   advance(hours: number): void;
   /** The metadata row as a router would see it: by id. */
-  rowOf(id: string): Promise<FileRow>;
+  rowOf(id: string): Promise<StoredFile>;
   /** How many rows were written at all, deleted and failed ones included. */
   rowCount(): Promise<number>;
 }

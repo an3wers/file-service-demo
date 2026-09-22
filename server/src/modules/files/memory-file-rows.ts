@@ -10,6 +10,8 @@ import type {
   ReadyValues,
 } from "./file-rows.js";
 import type { DirectoryDto, FileRow, InsertFileInput, ListFilesParams } from "./files.types.js";
+import { toStoredFile } from "./stored-file.js";
+import type { StoredFile } from "./stored-file.js";
 
 /**
  * The second implementation of the row interfaces: the metadata table as a Map.
@@ -95,7 +97,7 @@ export function createMemoryFileRows(options: { clock?: TestClock } = {}): Memor
     row.created_at.getTime() < clock.now().getTime() - ttlHours * HOUR_MS;
 
   const files: FileRowsForFiles & FileRowsForMultipart & FileRowsForCleanup = {
-    async insertFile(input: InsertFileInput): Promise<FileRow> {
+    async insertFile(input: InsertFileInput): Promise<StoredFile> {
       failures.check("insertFile");
 
       if (rows.has(input.id)) {
@@ -136,18 +138,18 @@ export function createMemoryFileRows(options: { clock?: TestClock } = {}): Memor
 
       rows.set(row.id, row);
 
-      return copy(row);
+      return toStoredFile(copy(row));
     },
 
-    async findFileById(id: string): Promise<FileRow | null> {
+    async findFileById(id: string): Promise<StoredFile | null> {
       failures.check("findFileById");
 
       const row = rows.get(id);
 
-      return row && live(row) ? copy(row) : null;
+      return row && live(row) ? toStoredFile(copy(row)) : null;
     },
 
-    async markFileReady(id: string, values: ReadyValues): Promise<FileRow | null> {
+    async markFileReady(id: string, values: ReadyValues): Promise<StoredFile | null> {
       failures.check("markFileReady");
 
       const row = rows.get(id);
@@ -165,7 +167,7 @@ export function createMemoryFileRows(options: { clock?: TestClock } = {}): Memor
       row.part_count = null;
       row.updated_at = clock.now();
 
-      return copy(row);
+      return toStoredFile(copy(row));
     },
 
     /** Unlike the rest, the SQL statement carries no `deleted_at` check. */
@@ -222,7 +224,7 @@ export function createMemoryFileRows(options: { clock?: TestClock } = {}): Memor
       return claimed;
     },
 
-    async softDeleteFile(id: string): Promise<FileRow | null> {
+    async softDeleteFile(id: string): Promise<StoredFile | null> {
       failures.check("softDeleteFile");
 
       const row = rows.get(id);
@@ -234,10 +236,10 @@ export function createMemoryFileRows(options: { clock?: TestClock } = {}): Memor
       row.deleted_at = clock.now();
       row.updated_at = row.deleted_at;
 
-      return copy(row);
+      return toStoredFile(copy(row));
     },
 
-    async listFiles(params: ListFilesParams): Promise<{ items: FileRow[]; total: number }> {
+    async listFiles(params: ListFilesParams): Promise<{ items: StoredFile[]; total: number }> {
       failures.check("listFiles");
 
       const matched = [...rows.values()].filter((row) => {
@@ -300,7 +302,7 @@ export function createMemoryFileRows(options: { clock?: TestClock } = {}): Memor
 
       // The total rides along with the page in SQL, so a page past the end
       // reports no total at all. Callers see the same number here.
-      return { items, total: items.length > 0 ? matched.length : 0 };
+      return { items: items.map(toStoredFile), total: items.length > 0 ? matched.length : 0 };
     },
 
     async findKnownUploadIds(ids: string[]): Promise<Set<string>> {
@@ -320,13 +322,14 @@ export function createMemoryFileRows(options: { clock?: TestClock } = {}): Memor
       );
     },
 
-    async listExpiredPending(ttlHours: number): Promise<FileRow[]> {
+    async listExpiredPending(ttlHours: number): Promise<StoredFile[]> {
       failures.check("listExpiredPending");
 
       return [...rows.values()]
         .filter((row) => row.status === "pending" && live(row) && expired(row, ttlHours))
         .sort((a, b) => a.created_at.getTime() - b.created_at.getTime())
-        .map(copy);
+        .map(copy)
+        .map(toStoredFile);
     },
 
     async listChildDirectories(parent: string): Promise<DirectoryDto[]> {
