@@ -1,13 +1,14 @@
 import { Router } from "express";
 import type { RequestHandler } from "express";
-import { ERROR_CODES, badRequest } from "../../errors.js";
+import { ERROR_CODES, badRequest } from "../../../../errors.js";
+import { decodeOriginalName } from "./decode-original-name.js";
 import {
   validateBody,
   validateParams,
   validateQuery,
   validatedParams,
   validatedQuery,
-} from "../../middleware/validate.js";
+} from "../../../../middleware/validate.js";
 import {
   directoriesQuerySchema,
   downloadUrlQuerySchema,
@@ -17,18 +18,21 @@ import {
   partUrlsSchema,
   presignUploadSchema,
   uploadBodySchema,
-} from "./files.schemas.js";
+} from "./schemas.js";
 import type {
   DirectoriesQuery,
   DownloadUrlQuery,
   FileCardQuery,
   IdParams,
   ListFilesQuery,
-} from "./files.schemas.js";
-import type { FilesModule } from "./files.service.js";
+} from "./schemas.js";
+import { toFileDto } from "./dto.js";
+import type { UploadsModule } from "../../application/uploads.js";
+import type { CatalogModule } from "../../application/catalog.js";
 
 export interface FilesRouterDeps {
-  files: FilesModule;
+  uploads: UploadsModule;
+  catalog: CatalogModule;
   /**
    * The multipart/form-data parser for the one uploaded field, already carrying
    * this deployment's size limit.
@@ -37,11 +41,11 @@ export interface FilesRouterDeps {
 }
 
 /**
- * The routes get a module that is already built. Nothing here knows which
- * object store or which database is behind it, which is what keeps a route
+ * The routes get modules that are already built. Nothing here knows which
+ * object store or which database is behind them, which is what keeps a route
  * about HTTP: validate, call one method, choose a status.
  */
-export function createFilesRouter({ files, uploadSingleFile }: FilesRouterDeps): Router {
+export function createFilesRouter({ uploads, catalog, uploadSingleFile }: FilesRouterDeps): Router {
   const filesRouter = Router();
 
   // Upload proxied through the server (multipart/form-data).
@@ -57,14 +61,29 @@ export function createFilesRouter({ files, uploadSingleFile }: FilesRouterDeps):
         );
       }
 
-      res.status(201).json(await files.uploadThroughServer(req.file, req.body.directory));
+      const file = await uploads.uploadThroughServer({
+        filename: decodeOriginalName(req.file.originalname),
+        directory: req.body.directory,
+        contentType: req.file.mimetype,
+        bytes: req.file.buffer,
+        size: req.file.size,
+      });
+
+      res.status(201).json(toFileDto(file));
     },
   );
 
   // Step 1 of the direct-to-storage flow: reserve the key and hand out a signed URL —
   // or, past the multipart threshold, a split plan with the first batch of them.
   filesRouter.post("/presign-upload", validateBody(presignUploadSchema), async (req, res) => {
-    res.status(201).json(await files.createPresignedUpload(req.body));
+    res.status(201).json(
+      await uploads.createPresignedUpload({
+        filename: req.body.filename,
+        directory: req.body.directory,
+        contentType: req.body.contentType,
+        size: req.body.size,
+      }),
+    );
   });
 
   // A further batch of part URLs, and the way an expired one gets reissued.
@@ -75,7 +94,7 @@ export function createFilesRouter({ files, uploadSingleFile }: FilesRouterDeps):
     async (req, res) => {
       const { id } = validatedParams<IdParams>(res);
 
-      res.json(await files.getPartUrls(id, req.body));
+      res.json(await uploads.getPartUrls(id, { partNumbers: req.body.partNumbers }));
     },
   );
 
@@ -84,11 +103,22 @@ export function createFilesRouter({ files, uploadSingleFile }: FilesRouterDeps):
   filesRouter.get("/:id/multipart", validateParams(idParamsSchema), async (_req, res) => {
     const { id } = validatedParams<IdParams>(res);
 
-    res.json(await files.getMultipartStatus(id));
+    res.json(await uploads.getMultipartStatus(id));
   });
 
   filesRouter.get("/", validateQuery(listFilesQuerySchema), async (_req, res) => {
-    res.json(await files.listFiles(validatedQuery<ListFilesQuery>(res)));
+    const query = validatedQuery<ListFilesQuery>(res);
+    const { items, total } = await catalog.listFiles(query);
+
+    res.json({
+      items: items.map((file) => toFileDto(file)),
+      pagination: {
+        page: query.page,
+        limit: query.limit,
+        total,
+        totalPages: Math.ceil(total / query.limit),
+      },
+    });
   });
 
   filesRouter.get(
@@ -98,8 +128,9 @@ export function createFilesRouter({ files, uploadSingleFile }: FilesRouterDeps):
     async (_req, res) => {
       const { id } = validatedParams<IdParams>(res);
       const { withUrl } = validatedQuery<FileCardQuery>(res);
+      const { file, downloadUrl } = await catalog.getFileCard(id, withUrl);
 
-      res.json(await files.getFileCard(id, withUrl));
+      res.json(toFileDto(file, downloadUrl));
     },
   );
 
@@ -110,7 +141,7 @@ export function createFilesRouter({ files, uploadSingleFile }: FilesRouterDeps):
   filesRouter.post("/:id/complete", validateParams(idParamsSchema), async (_req, res) => {
     const { id } = validatedParams<IdParams>(res);
 
-    res.json(await files.completeUpload(id));
+    res.json(toFileDto(await uploads.completeUpload(id)));
   });
 
   filesRouter.get(
@@ -119,28 +150,29 @@ export function createFilesRouter({ files, uploadSingleFile }: FilesRouterDeps):
     validateQuery(downloadUrlQuerySchema),
     async (_req, res) => {
       const { id } = validatedParams<IdParams>(res);
+      const { disposition, expiresIn } = validatedQuery<DownloadUrlQuery>(res);
 
-      res.json(await files.getDownloadUrl(id, validatedQuery<DownloadUrlQuery>(res)));
+      res.json(await catalog.getDownloadUrl(id, { disposition, expiresIn }));
     },
   );
 
   filesRouter.delete("/:id", validateParams(idParamsSchema), async (_req, res) => {
     const { id } = validatedParams<IdParams>(res);
 
-    await files.deleteFile(id);
+    await catalog.deleteFile(id);
     res.status(204).end();
   });
 
   return filesRouter;
 }
 
-export function createDirectoriesRouter(files: FilesModule): Router {
+export function createDirectoriesRouter(catalog: CatalogModule): Router {
   const directoriesRouter = Router();
 
   directoriesRouter.get("/", validateQuery(directoriesQuerySchema), async (_req, res) => {
     const { parent } = validatedQuery<DirectoriesQuery>(res);
 
-    res.json(await files.listDirectories(parent));
+    res.json(await catalog.listDirectories(parent));
   });
 
   return directoriesRouter;

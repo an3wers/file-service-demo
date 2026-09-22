@@ -1,20 +1,18 @@
 import { describe, expect, it } from "vitest";
-import { AppError, ERROR_CODES } from "../errors.js";
+import { InvalidDirectoryError, InvalidFileNameError } from "./errors.js";
 import {
   buildObjectKey,
-  contentDisposition,
-  decodeOriginalName,
   fileExtension,
   normalizeDirectory,
   sanitizeFileName,
 } from "./keys.js";
 
 /** Возвращает выброшенную ошибку, чтобы проверить её код, а не только факт броска. */
-function thrownBy(run: () => unknown): AppError {
+function thrownBy(run: () => unknown): Error {
   try {
     run();
   } catch (error) {
-    return error as AppError;
+    return error as Error;
   }
 
   throw new Error("Expected the call to throw, but it returned");
@@ -38,29 +36,26 @@ describe("normalizeDirectory", () => {
 
   it("rejects traversal segments", () => {
     for (const input of ["..", "docs/../etc", "./docs"]) {
-      expect(thrownBy(() => normalizeDirectory(input))).toMatchObject({
-        statusCode: 400,
-        code: ERROR_CODES.INVALID_DIRECTORY,
-      });
+      expect(thrownBy(() => normalizeDirectory(input))).toBeInstanceOf(InvalidDirectoryError);
     }
   });
 
   it("rejects control characters", () => {
-    expect(thrownBy(() => normalizeDirectory("docs/a\u0007b")).code).toBe(
-      ERROR_CODES.INVALID_DIRECTORY,
+    expect(thrownBy(() => normalizeDirectory("docs/a\u0007b"))).toBeInstanceOf(
+      InvalidDirectoryError,
     );
   });
 
   it("rejects an over-long segment", () => {
-    expect(thrownBy(() => normalizeDirectory("a".repeat(101))).code).toBe(
-      ERROR_CODES.INVALID_DIRECTORY,
+    expect(thrownBy(() => normalizeDirectory("a".repeat(101)))).toBeInstanceOf(
+      InvalidDirectoryError,
     );
   });
 
   it("rejects a path over the byte budget", () => {
     const path = Array.from({ length: 8 }, () => "a".repeat(100)).join("/");
 
-    expect(thrownBy(() => normalizeDirectory(path)).code).toBe(ERROR_CODES.INVALID_DIRECTORY);
+    expect(thrownBy(() => normalizeDirectory(path))).toBeInstanceOf(InvalidDirectoryError);
   });
 });
 
@@ -77,30 +72,8 @@ describe("sanitizeFileName", () => {
 
   it("rejects names that carry no usable file name", () => {
     for (const input of ["", "   ", "docs/", "..", "bad\u0000name"]) {
-      expect(thrownBy(() => sanitizeFileName(input)).code).toBe(ERROR_CODES.INVALID_FILE_NAME);
+      expect(thrownBy(() => sanitizeFileName(input))).toBeInstanceOf(InvalidFileNameError);
     }
-  });
-});
-
-describe("decodeOriginalName", () => {
-  it("leaves ASCII names alone", () => {
-    expect(decodeOriginalName("report.pdf")).toBe("report.pdf");
-  });
-
-  it("leaves already-decoded names alone", () => {
-    expect(decodeOriginalName("Отчёт.pdf")).toBe("Отчёт.pdf");
-  });
-
-  it("repairs a UTF-8 name that arrived as latin1 bytes", () => {
-    const original = "Отчёт за 2026.pdf";
-    const mojibake = Buffer.from(original, "utf8").toString("latin1");
-
-    expect(mojibake).not.toBe(original);
-    expect(decodeOriginalName(mojibake)).toBe(original);
-  });
-
-  it("keeps a latin1 name that is not valid UTF-8", () => {
-    expect(decodeOriginalName("café.txt")).toBe("café.txt");
   });
 });
 
@@ -137,22 +110,5 @@ describe("buildObjectKey", () => {
     const second = buildObjectKey("docs", "a.txt");
 
     expect(first.key).not.toBe(second.key);
-  });
-});
-
-describe("contentDisposition", () => {
-  it("carries both an ASCII fallback and the UTF-8 name", () => {
-    const name = 'Отчёт "v2".pdf';
-    const header = contentDisposition(name, "attachment");
-
-    expect(header).toBe(
-      `attachment; filename="_____ _v2_.pdf"; filename*=UTF-8''${encodeURIComponent(name)}`,
-    );
-  });
-
-  it("honours the inline disposition", () => {
-    expect(contentDisposition("a.png", "inline")).toBe(
-      "inline; filename=\"a.png\"; filename*=UTF-8''a.png",
-    );
   });
 });

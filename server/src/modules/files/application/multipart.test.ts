@@ -1,11 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { ERROR_CODES } from "../../errors.js";
+import { ERROR_CODES } from "../../../errors.js";
+import { MultipartNotFoundError, TooManyActiveUploadsError } from "../domain/errors.js";
 import {
   MIB,
   THREE_PART_SIZE,
   buildHarness,
   thrownBy,
-} from "./files-module.harness.js";
+} from "../testing/files-module.harness.js";
 
 /**
  * Правила составных загрузок через интерфейс фабрики модуля: хранилище и
@@ -90,11 +91,8 @@ describe("multipart uploads", () => {
 
       const error = await thrownBy(() => multipart.createMultipartUpload(uploadRequest()));
 
-      expect(error).toMatchObject({
-        statusCode: 429,
-        code: ERROR_CODES.TOO_MANY_ACTIVE_UPLOADS,
-        details: { active: 1, limit: 1 },
-      });
+      expect(error).toBeInstanceOf(TooManyActiveUploadsError);
+      expect(error).toMatchObject({ details: { active: 1, limit: 1 } });
       expect(objectStore.openUploads()).toHaveLength(1);
       expect(await fileRows.countActiveMultipart()).toBe(1);
     });
@@ -157,10 +155,7 @@ describe("multipart uploads", () => {
         multipart.getMultipartStatus(await rowOf(started.id)),
       );
 
-      expect(error).toMatchObject({
-        statusCode: 409,
-        code: ERROR_CODES.MULTIPART_NOT_FOUND,
-      });
+      expect(error).toBeInstanceOf(MultipartNotFoundError);
     });
   });
 

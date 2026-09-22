@@ -1,9 +1,11 @@
-import { buildObjectKey, normalizeDirectory, sanitizeFileName } from "../../storage/keys.js";
+import { buildObjectKey, normalizeDirectory, sanitizeFileName } from "./keys.js";
+import type { Clock } from "./ports/clock.js";
 
 export const DEFAULT_CONTENT_TYPE = "application/octet-stream";
 
-export function expiresAt(seconds: number): string {
-  return new Date(Date.now() + seconds * 1000).toISOString();
+/** Reads the clock every scenario shares, rather than `Date.now()` on its own. */
+export function expiresAt(clock: Clock, seconds: number): Date {
+  return new Date(clock.now().getTime() + seconds * 1000);
 }
 
 /** An id, a key and the names that go on the row, fixed before any bytes exist. */

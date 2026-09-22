@@ -1,15 +1,20 @@
-import { ERROR_CODES, conflict } from "../../errors.js";
-import { createTestClock } from "../../testing/clock.js";
-import type { TestClock } from "../../testing/clock.js";
-import { createFailureSwitch } from "../../testing/failure-switch.js";
+import { ERROR_CODES, conflict } from "../../../errors.js";
+import { createTestClock } from "../../../testing/clock.js";
+import type { TestClock } from "../../../testing/clock.js";
+import { createFailureSwitch } from "../../../testing/failure-switch.js";
 import type {
   FileRows,
   FileRowsForCleanup,
   FileRowsForFiles,
   FileRowsForMultipart,
+  DirectoryDto,
+  InsertFileInput,
+  ListFilesParams,
   ReadyValues,
-} from "./file-rows.js";
-import type { DirectoryDto, FileRow, InsertFileInput, ListFilesParams } from "./files.types.js";
+} from "../domain/ports/file-rows.js";
+import { toStoredFile } from "../adapters/persistence/row-mapper.js";
+import type { FileRow } from "../adapters/persistence/row-mapper.js";
+import type { StoredFile } from "../domain/stored-file.js";
 
 /**
  * The second implementation of the row interfaces: the metadata table as a Map.
@@ -80,9 +85,12 @@ function compareText(a: string, b: string): number {
   return a < b ? -1 : 1;
 }
 
-export function createMemoryFileRows(options: { clock?: TestClock } = {}): MemoryFileRows {
+export function createMemoryFileRows(
+  options: { clock?: TestClock; bucket?: string } = {},
+): MemoryFileRows {
   const rows = new Map<string, FileRow>();
   const clock = options.clock ?? createTestClock();
+  const bucket = options.bucket ?? "test-bucket";
   const failures = createFailureSwitch<keyof FileRows>();
   let interleaved: (() => Promise<void>) | null = null;
 
@@ -95,7 +103,7 @@ export function createMemoryFileRows(options: { clock?: TestClock } = {}): Memor
     row.created_at.getTime() < clock.now().getTime() - ttlHours * HOUR_MS;
 
   const files: FileRowsForFiles & FileRowsForMultipart & FileRowsForCleanup = {
-    async insertFile(input: InsertFileInput): Promise<FileRow> {
+    async insertFile(input: InsertFileInput): Promise<StoredFile> {
       failures.check("insertFile");
 
       if (rows.has(input.id)) {
@@ -103,7 +111,7 @@ export function createMemoryFileRows(options: { clock?: TestClock } = {}): Memor
       }
 
       const takenKey = [...rows.values()].some(
-        (row) => row.bucket === input.bucket && row.object_key === input.objectKey,
+        (row) => row.bucket === bucket && row.object_key === input.objectKey,
       );
 
       if (takenKey) {
@@ -116,7 +124,7 @@ export function createMemoryFileRows(options: { clock?: TestClock } = {}): Memor
       const now = clock.now();
       const row: FileRow = {
         id: input.id,
-        bucket: input.bucket,
+        bucket,
         object_key: input.objectKey,
         directory: input.directory,
         original_name: input.originalName,
@@ -136,18 +144,18 @@ export function createMemoryFileRows(options: { clock?: TestClock } = {}): Memor
 
       rows.set(row.id, row);
 
-      return copy(row);
+      return toStoredFile(copy(row));
     },
 
-    async findFileById(id: string): Promise<FileRow | null> {
+    async findFileById(id: string): Promise<StoredFile | null> {
       failures.check("findFileById");
 
       const row = rows.get(id);
 
-      return row && live(row) ? copy(row) : null;
+      return row && live(row) ? toStoredFile(copy(row)) : null;
     },
 
-    async markFileReady(id: string, values: ReadyValues): Promise<FileRow | null> {
+    async markFileReady(id: string, values: ReadyValues): Promise<StoredFile | null> {
       failures.check("markFileReady");
 
       const row = rows.get(id);
@@ -165,7 +173,7 @@ export function createMemoryFileRows(options: { clock?: TestClock } = {}): Memor
       row.part_count = null;
       row.updated_at = clock.now();
 
-      return copy(row);
+      return toStoredFile(copy(row));
     },
 
     /** Unlike the rest, the SQL statement carries no `deleted_at` check. */
@@ -222,7 +230,7 @@ export function createMemoryFileRows(options: { clock?: TestClock } = {}): Memor
       return claimed;
     },
 
-    async softDeleteFile(id: string): Promise<FileRow | null> {
+    async softDeleteFile(id: string): Promise<StoredFile | null> {
       failures.check("softDeleteFile");
 
       const row = rows.get(id);
@@ -234,10 +242,10 @@ export function createMemoryFileRows(options: { clock?: TestClock } = {}): Memor
       row.deleted_at = clock.now();
       row.updated_at = row.deleted_at;
 
-      return copy(row);
+      return toStoredFile(copy(row));
     },
 
-    async listFiles(params: ListFilesParams): Promise<{ items: FileRow[]; total: number }> {
+    async listFiles(params: ListFilesParams): Promise<{ items: StoredFile[]; total: number }> {
       failures.check("listFiles");
 
       const matched = [...rows.values()].filter((row) => {
@@ -279,7 +287,7 @@ export function createMemoryFileRows(options: { clock?: TestClock } = {}): Memor
       const direction = params.order === "asc" ? 1 : -1;
 
       matched.sort((a, b) => {
-        let ordered = 0;
+        let ordered: number;
 
         if (params.sort === "created_at") {
           const ages = a.created_at.getTime() - b.created_at.getTime();
@@ -300,7 +308,7 @@ export function createMemoryFileRows(options: { clock?: TestClock } = {}): Memor
 
       // The total rides along with the page in SQL, so a page past the end
       // reports no total at all. Callers see the same number here.
-      return { items, total: items.length > 0 ? matched.length : 0 };
+      return { items: items.map(toStoredFile), total: items.length > 0 ? matched.length : 0 };
     },
 
     async findKnownUploadIds(ids: string[]): Promise<Set<string>> {
@@ -320,13 +328,14 @@ export function createMemoryFileRows(options: { clock?: TestClock } = {}): Memor
       );
     },
 
-    async listExpiredPending(ttlHours: number): Promise<FileRow[]> {
+    async listExpiredPending(ttlHours: number): Promise<StoredFile[]> {
       failures.check("listExpiredPending");
 
       return [...rows.values()]
         .filter((row) => row.status === "pending" && live(row) && expired(row, ttlHours))
         .sort((a, b) => a.created_at.getTime() - b.created_at.getTime())
-        .map(copy);
+        .map(copy)
+        .map(toStoredFile);
     },
 
     async listChildDirectories(parent: string): Promise<DirectoryDto[]> {

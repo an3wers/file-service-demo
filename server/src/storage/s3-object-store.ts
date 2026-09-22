@@ -13,7 +13,7 @@ import {
 } from "@aws-sdk/client-s3";
 import type { S3Client } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
-import { contentDisposition } from "./keys.js";
+import { contentDisposition } from "./content-disposition.js";
 import { isS3NoSuchUpload, isS3NotFound, storageError } from "./s3-errors.js";
 import type {
   CompleteOutcome,
@@ -25,6 +25,24 @@ import type {
   StoredObject,
   UploadedPart,
 } from "./object-store.js";
+
+const MIB = 1024 * 1024;
+
+/**
+ * Hard limits of the multipart protocol itself, the same in every S3-compatible
+ * store that speaks it. Not configurable, and not a deployment's policy: a plan
+ * that breaks these is rejected by storage rather than by us. Vendor knowledge,
+ * so it lives here rather than in the domain — the assembly clamps a
+ * deployment's config with it before handing the result to the domain as
+ * `PlanLimits`.
+ */
+export const PROTOCOL_LIMITS = {
+  /** Every part except the last one. The last may be any size at all. */
+  minPartSize: 5 * MIB,
+  maxPartSize: 5 * 1024 * MIB,
+  maxParts: 10_000,
+  maxObjectSize: 5 * 1024 * 1024 * MIB,
+} as const;
 
 /**
  * The adapter that talks to S3. The bucket is fixed at construction: it is the

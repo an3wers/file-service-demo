@@ -1,25 +1,49 @@
-import { ERROR_CODES, badRequest, payloadTooLarge } from "../../errors.js";
+import { ERROR_CODES, badRequest } from "../../../errors.js";
+import { FileTooLargeError, InvalidPlanLimitsError } from "./errors.js";
 
 const MIB = 1024 * 1024;
 
 /**
- * Hard limits of the multipart protocol itself, the same in every store that
- * speaks it. Not configurable, and not a deployment's policy: a plan that
- * breaks these is rejected by storage rather than by us.
+ * What a deployment's policy hands the plan builder. `minPartSize` and
+ * `maxPartSize` are the multipart protocol's own bounds — vendor knowledge the
+ * domain does not own, declared next to the adapter that speaks the protocol
+ * (`storage/s3-object-store.ts`'s `PROTOCOL_LIMITS`) and clamped into a
+ * deployment's config at the assembly. The domain only knows it was handed
+ * *some* bounds, and checks that they are sane before building a plan on them.
  */
-export const PROTOCOL_LIMITS = {
-  /** Every part except the last one. The last may be any size at all. */
-  minPartSize: 5 * MIB,
-  maxPartSize: 5 * 1024 * MIB,
-  maxParts: 10_000,
-  maxObjectSize: 5 * 1024 * 1024 * MIB,
-} as const;
-
 export interface PlanLimits {
   /** Desired part size; grows if the file would not fit in `maxParts`. */
   partSize: number;
+  /** Every part except the last one. The last may be any size at all. */
+  minPartSize: number;
+  maxPartSize: number;
   maxParts: number;
   maxObjectSize: number;
+}
+
+/**
+ * The domain no longer owns these numbers, so it cannot trust they arrived
+ * sane — a deployment that mis-clamps its config would otherwise build plans
+ * storage silently rejects, or worse, plans that lie about what they cover.
+ * Exported so the assembly can run it once at startup, on top of the check
+ * every call to `planMultipart` repeats anyway.
+ */
+export function assertValidPlanLimits(limits: PlanLimits): void {
+  const sane =
+    Number.isFinite(limits.minPartSize) &&
+    limits.minPartSize > 0 &&
+    Number.isFinite(limits.maxPartSize) &&
+    limits.maxPartSize >= limits.minPartSize &&
+    Number.isFinite(limits.partSize) &&
+    limits.partSize > 0 &&
+    Number.isFinite(limits.maxParts) &&
+    limits.maxParts > 0 &&
+    Number.isFinite(limits.maxObjectSize) &&
+    limits.maxObjectSize > 0;
+
+  if (!sane) {
+    throw new InvalidPlanLimitsError("Upload plan limits are not sane", { limits });
+  }
 }
 
 export interface UploadPlan {
@@ -52,6 +76,8 @@ export function needsMultipart(size: number | undefined, threshold: number): boo
  * be a builder no test can pin down.
  */
 export function planMultipart(size: number, limits: PlanLimits): UploadPlan {
+  assertValidPlanLimits(limits);
+
   if (!Number.isFinite(size) || size <= 0) {
     throw badRequest(
       ERROR_CODES.INVALID_UPLOAD_SIZE,
@@ -60,7 +86,7 @@ export function planMultipart(size: number, limits: PlanLimits): UploadPlan {
   }
 
   if (size > limits.maxObjectSize) {
-    throw payloadTooLarge(
+    throw new FileTooLargeError(
       `File exceeds the ${Math.floor(limits.maxObjectSize / (1024 * MIB))} GB limit for a single object`,
       { maxObjectSize: limits.maxObjectSize },
     );
@@ -74,14 +100,14 @@ export function planMultipart(size: number, limits: PlanLimits): UploadPlan {
     partSize = ceilTo(Math.ceil(size / limits.maxParts), MIB);
   }
 
-  partSize = Math.min(Math.max(partSize, PROTOCOL_LIMITS.minPartSize), PROTOCOL_LIMITS.maxPartSize);
+  partSize = Math.min(Math.max(partSize, limits.minPartSize), limits.maxPartSize);
 
   const partCount = Math.ceil(size / partSize);
 
   if (partCount > limits.maxParts) {
     // Unreachable while `maxObjectSize` stays at or below 5 TiB (10 000 parts of
     // 5 GiB is 50 TiB); kept in case that ceiling is ever raised.
-    throw payloadTooLarge("File cannot be split into parts within the protocol limits", {
+    throw new FileTooLargeError("File cannot be split into parts within the protocol limits", {
       maxParts: limits.maxParts,
     });
   }

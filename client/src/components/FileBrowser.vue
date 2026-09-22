@@ -106,14 +106,23 @@ function onDeleted(file: FileDto): void {
         </InputGroup>
 
         <Select v-model="limitValue">
-          <SelectTrigger class="w-36" aria-label="Файлов на странице">
+          <SelectTrigger
+            class="w-36"
+            aria-label="Файлов на странице"
+          >
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
             <SelectGroup>
-              <SelectItem value="10">10 на странице</SelectItem>
-              <SelectItem value="20">20 на странице</SelectItem>
-              <SelectItem value="50">50 на странице</SelectItem>
+              <SelectItem value="10">
+                10 на странице
+              </SelectItem>
+              <SelectItem value="20">
+                20 на странице
+              </SelectItem>
+              <SelectItem value="50">
+                50 на странице
+              </SelectItem>
             </SelectGroup>
           </SelectContent>
         </Select>

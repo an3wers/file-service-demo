@@ -1,9 +1,4 @@
-import type {
-  DirectoryDto,
-  FileRow,
-  InsertFileInput,
-  ListFilesParams,
-} from "./files.types.js";
+import type { StoredFile, FileStatus, UploadSource } from "../stored-file.js";
 
 /**
  * The seam between the modules that reason about files and the table the
@@ -24,6 +19,40 @@ import type {
  * interface is the wrong place to keep an operation alive for later.
  */
 
+/** No `bucket` field: the row writer fills that column from its own construction, not per call. */
+export interface InsertFileInput {
+  id: string;
+  objectKey: string;
+  directory: string;
+  originalName: string;
+  extension: string;
+  contentType: string;
+  sizeBytes: number | null;
+  etag: string | null;
+  status: FileStatus;
+  uploadSource: UploadSource;
+  uploadId?: string | null;
+  partSize?: number | null;
+  partCount?: number | null;
+}
+
+export interface ListFilesParams {
+  directory?: string;
+  recursive: boolean;
+  search?: string;
+  status?: FileStatus;
+  page: number;
+  limit: number;
+  sort: "created_at" | "original_name" | "size_bytes";
+  order: "asc" | "desc";
+}
+
+export interface DirectoryDto {
+  name: string;
+  path: string;
+  fileCount: number;
+}
+
 /** What confirmation knows about an upload that finished. */
 export interface ReadyValues {
   sizeBytes: number | null;
@@ -33,23 +62,23 @@ export interface ReadyValues {
 
 /** Rows as the files module handles them: reserve, confirm, list, delete. */
 export interface FileRowsForFiles {
-  insertFile(input: InsertFileInput): Promise<FileRow>;
+  insertFile(input: InsertFileInput): Promise<StoredFile>;
 
   /** `null` for a row that never existed or has been soft-deleted. */
-  findFileById(id: string): Promise<FileRow | null>;
+  findFileById(id: string): Promise<StoredFile | null>;
 
   /**
    * Moves a reserved row to `ready` and clears the multipart plan with it.
    * `null` when the row is gone, which is what makes a repeated confirmation
    * distinguishable from a first one.
    */
-  markFileReady(id: string, values: ReadyValues): Promise<FileRow | null>;
+  markFileReady(id: string, values: ReadyValues): Promise<StoredFile | null>;
 
   /** `null` when the row was already deleted; deleting twice is not an error. */
-  softDeleteFile(id: string): Promise<FileRow | null>;
+  softDeleteFile(id: string): Promise<StoredFile | null>;
 
   /** One page plus the total the page was cut from. */
-  listFiles(params: ListFilesParams): Promise<{ items: FileRow[]; total: number }>;
+  listFiles(params: ListFilesParams): Promise<{ items: StoredFile[]; total: number }>;
 
   /** Immediate child folders of `parent`, derived from the stored directories. */
   listChildDirectories(parent: string): Promise<DirectoryDto[]>;
@@ -60,16 +89,16 @@ export interface FileRowsForMultipart {
   /** Slots taken by uploads that have neither completed nor been abandoned. */
   countActiveMultipart(): Promise<number>;
 
-  insertFile(input: InsertFileInput): Promise<FileRow>;
+  insertFile(input: InsertFileInput): Promise<StoredFile>;
 }
 
 /** Rows as the cleanup pass handles them: find what went stale, then settle it. */
 export interface FileRowsForCleanup {
   /** Reserved rows past their TTL, oldest first. */
-  listExpiredPending(ttlHours: number): Promise<FileRow[]>;
+  listExpiredPending(ttlHours: number): Promise<StoredFile[]>;
 
   /** The upload turned out to have succeeded; the confirmation was just lost. */
-  markFileReady(id: string, values: ReadyValues): Promise<FileRow | null>;
+  markFileReady(id: string, values: ReadyValues): Promise<StoredFile | null>;
 
   markFileFailed(id: string): Promise<void>;
 

@@ -1,17 +1,18 @@
 import { describe, expect, it } from "vitest";
-import { AppError, ERROR_CODES } from "../../errors.js";
-import { PROTOCOL_LIMITS, needsMultipart, partRange, planMultipart } from "./upload-plan.js";
+import { ERROR_CODES } from "../../../errors.js";
+import { FileTooLargeError, InvalidPlanLimitsError } from "./errors.js";
+import { needsMultipart, partRange, planMultipart } from "./upload-plan.js";
 import type { PlanLimits } from "./upload-plan.js";
 
 const MIB = 1024 * 1024;
 const GIB = 1024 * MIB;
 
 /** Возвращает выброшенную ошибку, чтобы проверить её код, а не только факт броска. */
-function thrownBy(run: () => unknown): AppError {
+function thrownBy(run: () => unknown): Error {
   try {
     run();
   } catch (error) {
-    return error as AppError;
+    return error as Error;
   }
 
   throw new Error("Expected the call to throw, but it returned");
@@ -20,6 +21,8 @@ function thrownBy(run: () => unknown): AppError {
 /** Значения по умолчанию из config; продублированы, чтобы тест не зависел от .env. */
 const limits: PlanLimits = {
   partSize: 16 * MIB,
+  minPartSize: 5 * MIB,
+  maxPartSize: 5 * 1024 * MIB,
   maxParts: 10_000,
   maxObjectSize: 200 * GIB,
 };
@@ -73,9 +76,9 @@ describe("planMultipart", () => {
   });
 
   it("never drops below the protocol minimum part size", () => {
-    const plan = planMultipart(6 * MIB, { ...limits, partSize: PROTOCOL_LIMITS.minPartSize });
+    const plan = planMultipart(6 * MIB, { ...limits, partSize: limits.minPartSize });
 
-    expect(plan.partSize).toBeGreaterThanOrEqual(PROTOCOL_LIMITS.minPartSize);
+    expect(plan.partSize).toBeGreaterThanOrEqual(limits.minPartSize);
   });
 
   it("keeps partCount within maxParts across a range of sizes", () => {
@@ -85,10 +88,7 @@ describe("planMultipart", () => {
   });
 
   it("rejects a size past the object ceiling", () => {
-    expect(thrownBy(() => planMultipart(201 * GIB, limits))).toMatchObject({
-      statusCode: 413,
-      code: ERROR_CODES.PAYLOAD_TOO_LARGE,
-    });
+    expect(thrownBy(() => planMultipart(201 * GIB, limits))).toBeInstanceOf(FileTooLargeError);
   });
 
   it("rejects a size that is not a positive number", () => {
@@ -98,6 +98,28 @@ describe("planMultipart", () => {
         code: ERROR_CODES.INVALID_UPLOAD_SIZE,
       });
     }
+  });
+
+  describe("пределы, которые домену передала сборка", () => {
+    it("бросает доменную ошибку, когда предел частей не положителен", () => {
+      expect(
+        thrownBy(() => planMultipart(100 * MIB, { ...limits, maxParts: 0 })),
+      ).toBeInstanceOf(InvalidPlanLimitsError);
+    });
+
+    it("бросает доменную ошибку, когда верхняя граница части меньше нижней", () => {
+      expect(
+        thrownBy(() =>
+          planMultipart(100 * MIB, { ...limits, minPartSize: 10 * MIB, maxPartSize: 5 * MIB }),
+        ),
+      ).toBeInstanceOf(InvalidPlanLimitsError);
+    });
+
+    it("бросает доменную ошибку, когда потолок объекта не положителен", () => {
+      expect(
+        thrownBy(() => planMultipart(100 * MIB, { ...limits, maxObjectSize: 0 })),
+      ).toBeInstanceOf(InvalidPlanLimitsError);
+    });
   });
 });
 

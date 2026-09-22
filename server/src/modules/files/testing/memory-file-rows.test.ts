@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { AppError } from "../../errors.js";
+import { AppError } from "../../../errors.js";
 import { createMemoryFileRows } from "./memory-file-rows.js";
 import type { MemoryFileRows } from "./memory-file-rows.js";
-import type { InsertFileInput, ListFilesParams } from "./files.types.js";
+import type { InsertFileInput, ListFilesParams } from "../domain/ports/file-rows.js";
 
 /**
  * Every later test believes whatever this implementation says about a row, so
@@ -18,7 +18,6 @@ describe("memory file rows", () => {
 
     return {
       id,
-      bucket: "test-bucket",
       objectKey: `docs/${id}.bin`,
       directory: "docs",
       originalName: "report.bin",
@@ -34,7 +33,14 @@ describe("memory file rows", () => {
 
   async function multipartRow(store: MemoryFileRows, overrides: Partial<InsertFileInput> = {}) {
     return store.insertFile(
-      reserve({ uploadSource: "multipart", uploadId: "upload-1", partSize: 8, partCount: 2, ...overrides }),
+      reserve({
+        uploadSource: "multipart",
+        sizeBytes: 16,
+        uploadId: "upload-1",
+        partSize: 8,
+        partCount: 2,
+        ...overrides,
+      }),
     );
   }
 
@@ -56,11 +62,9 @@ describe("memory file rows", () => {
 
       expect(await store.findFileById(input.id)).toMatchObject({
         id: input.id,
-        object_key: input.objectKey,
-        original_name: input.originalName,
-        status: "pending",
-        upload_id: null,
-        deleted_at: null,
+        key: input.objectKey,
+        originalName: input.originalName,
+        kind: "reserved",
       });
     });
 
@@ -114,13 +118,10 @@ describe("memory file rows", () => {
       });
 
       expect(confirmed).toMatchObject({
-        status: "ready",
-        size_bytes: 16,
+        kind: "ready",
+        size: 16,
         etag: '"abc"',
-        content_type: "text/plain",
-        upload_id: null,
-        part_size: null,
-        part_count: null,
+        contentType: "text/plain",
       });
     });
 
@@ -132,8 +133,8 @@ describe("memory file rows", () => {
       await store.markFileReady(row.id, values);
       const again = await store.markFileReady(row.id, values);
 
-      expect(again).toMatchObject({ status: "ready", size_bytes: 16 });
-      expect(await store.findFileById(row.id)).toMatchObject({ status: "ready" });
+      expect(again).toMatchObject({ kind: "ready", size: 16 });
+      expect(await store.findFileById(row.id)).toMatchObject({ kind: "ready" });
     });
 
     it("confirms nothing for a row that is gone", async () => {
@@ -149,11 +150,11 @@ describe("memory file rows", () => {
 
     it("marks a row failed", async () => {
       const store = createMemoryFileRows();
-      const row = await multipartRow(store);
+      const row = await store.insertFile(reserve());
 
       await store.markFileFailed(row.id);
 
-      expect(await store.findFileById(row.id)).toMatchObject({ status: "failed" });
+      expect(await store.findFileById(row.id)).toMatchObject({ kind: "failed" });
     });
   });
 
@@ -173,7 +174,10 @@ describe("memory file rows", () => {
       await store.insertFile(reserve());
 
       expect(await store.countActiveMultipart()).toBe(1);
-      expect(await store.findFileById(live.id)).toMatchObject({ upload_id: "upload-1" });
+      expect(await store.findFileById(live.id)).toMatchObject({
+        kind: "multipart",
+        uploadId: "upload-1",
+      });
     });
 
     it("tells which upload ids the table still knows about", async () => {
@@ -204,7 +208,7 @@ describe("memory file rows", () => {
       const expired = await store.listExpiredPending(3);
 
       expect(expired.map((row) => row.id)).toEqual([old.id]);
-      expect(recent.created_at.getTime()).toBeGreaterThan(old.created_at.getTime());
+      expect(recent.createdAt.getTime()).toBeGreaterThan(old.createdAt.getTime());
     });
 
     it("hands the claimed upload id back exactly once when two sweeps race", async () => {
@@ -221,10 +225,7 @@ describe("memory file rows", () => {
       ]);
 
       expect(claims.filter((claim) => claim !== null)).toEqual(["upload-race"]);
-      expect(await store.findFileById(row.id)).toMatchObject({
-        status: "failed",
-        upload_id: null,
-      });
+      expect(await store.findFileById(row.id)).toMatchObject({ kind: "failed" });
     });
 
     it("claims nothing while the row is still within its ttl", async () => {
@@ -234,7 +235,7 @@ describe("memory file rows", () => {
       store.advance(1);
 
       expect(await store.claimExpiredMultipart(row.id, 3)).toBeNull();
-      expect(await store.findFileById(row.id)).toMatchObject({ status: "pending" });
+      expect(await store.findFileById(row.id)).toMatchObject({ kind: "multipart" });
     });
   });
 
@@ -250,7 +251,7 @@ describe("memory file rows", () => {
       const page = await store.listFiles(listing({ directory: "docs", limit: 2 }));
 
       expect(page.total).toBe(3);
-      expect(page.items.map((row) => row.original_name)).toEqual(["file-2.bin", "file-1.bin"]);
+      expect(page.items.map((row) => row.originalName)).toEqual(["file-2.bin", "file-1.bin"]);
     });
 
     it("keeps a nested directory out of a non-recursive listing and in a recursive one", async () => {

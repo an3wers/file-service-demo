@@ -1,23 +1,24 @@
-import { createTestClock } from "../../testing/clock.js";
-import { createMemoryObjectStore } from "../../storage/memory-object-store.js";
-import type { MemoryObjectStore } from "../../storage/memory-object-store.js";
+import { createTestClock } from "../../../testing/clock.js";
+import { createMemoryObjectStore } from "../../../storage/memory-object-store.js";
+import type { MemoryObjectStore } from "../../../storage/memory-object-store.js";
 import { createMemoryFileRows } from "./memory-file-rows.js";
 import type { MemoryFileRows } from "./memory-file-rows.js";
-import { createFilesModule } from "./files.service.js";
-import type { FilesModule } from "./files.service.js";
-import { createMultipartModule } from "./multipart.service.js";
-import type { MultipartModule } from "./multipart.service.js";
-import { createCleanupModule } from "./cleanup.service.js";
-import type { CleanupModule } from "./cleanup.service.js";
-import type { AppError } from "../../errors.js";
-import type { UploadPolicy } from "./upload-policy.js";
-import type { FileRow } from "./files.types.js";
+import { createUploadsModule } from "../application/uploads.js";
+import type { UploadsModule } from "../application/uploads.js";
+import { createCatalogModule } from "../application/catalog.js";
+import type { CatalogModule } from "../application/catalog.js";
+import { createMultipartModule } from "../application/multipart.js";
+import type { MultipartModule } from "../application/multipart.js";
+import { createCleanupModule } from "../application/cleanup.js";
+import type { CleanupModule } from "../application/cleanup.js";
+import type { UploadPolicy } from "../domain/upload-policy.js";
+import type { StoredFile } from "../domain/stored-file.js";
 
 /**
  * The files module as a test drives it: the real modules, assembled the way
- * `composition.ts` assembles them, on the two second implementations.
+ * `index.ts` assembles them, on the two second implementations.
  *
- * The multipart module is the real one and the files module drives it through
+ * The multipart module is the real one and the uploads module drives it through
  * the same interface; only the storage seam and the rows seam are substituted.
  * That is what lets a test assert an observable result — what came back to the
  * caller, and what state the metadata row and storage ended in — rather than a
@@ -49,7 +50,13 @@ export const PENDING_TTL_HOURS = 24;
 function testPolicy(overrides: Partial<UploadPolicy> = {}): UploadPolicy {
   return {
     multipartThresholdBytes: 5 * MIB,
-    planLimits: { partSize: 5 * MIB, maxParts: 10_000, maxObjectSize: 200 * GIB },
+    planLimits: {
+      partSize: 5 * MIB,
+      minPartSize: 5 * MIB,
+      maxPartSize: 5 * 1024 * MIB,
+      maxParts: 10_000,
+      maxObjectSize: 200 * GIB,
+    },
     partUrlBatch: 2,
     maxConcurrency: 3,
     maxActiveUploads: 2,
@@ -62,9 +69,9 @@ function testPolicy(overrides: Partial<UploadPolicy> = {}): UploadPolicy {
 }
 
 export interface Harness {
-  /** The real files module: confirmation, links and deletion live in it. */
-  files: FilesModule;
-  /** The same multipart module the files module drives. */
+  /** The uploads and catalog scenarios merged behind one facade, as routes see it. */
+  files: UploadsModule & CatalogModule;
+  /** The same multipart module the uploads module drives. */
   multipart: MultipartModule;
   /** The real cleanup module, on the same storage and rows. */
   cleanup: CleanupModule;
@@ -78,7 +85,7 @@ export interface Harness {
    */
   advance(hours: number): void;
   /** The metadata row as a router would see it: by id. */
-  rowOf(id: string): Promise<FileRow>;
+  rowOf(id: string): Promise<StoredFile>;
   /** How many rows were written at all, deleted and failed ones included. */
   rowCount(): Promise<number>;
 }
@@ -86,14 +93,16 @@ export interface Harness {
 export function buildHarness(policyOverrides: Partial<UploadPolicy> = {}): Harness {
   const clock = createTestClock();
   const objectStore = createMemoryObjectStore({ clock });
-  const fileRows = createMemoryFileRows({ clock });
+  const fileRows = createMemoryFileRows({ clock, bucket: BUCKET });
   const policy = testPolicy(policyOverrides);
-  const multipart = createMultipartModule({ objectStore, fileRows, policy, bucket: BUCKET });
+  const multipart = createMultipartModule({ objectStore, fileRows, policy, clock });
+  const uploads = createUploadsModule({ objectStore, fileRows, policy, multipart, clock });
+  const catalog = createCatalogModule({ objectStore, fileRows, policy, clock });
 
   return {
     multipart,
-    files: createFilesModule({ objectStore, fileRows, policy, multipart, bucket: BUCKET }),
-    cleanup: createCleanupModule({ objectStore, fileRows, policy, now: clock.now }),
+    files: { ...uploads, ...catalog },
+    cleanup: createCleanupModule({ objectStore, fileRows, policy, clock }),
     objectStore,
     fileRows,
     policy,
@@ -127,11 +136,11 @@ export function buildHarness(policyOverrides: Partial<UploadPolicy> = {}): Harne
 }
 
 /** Hands back the thrown error, so a test can check its code and not just the throw. */
-export async function thrownBy(run: () => Promise<unknown>): Promise<AppError> {
+export async function thrownBy(run: () => Promise<unknown>): Promise<Error> {
   try {
     await run();
   } catch (error) {
-    return error as AppError;
+    return error as Error;
   }
 
   throw new Error("Expected the call to reject, but it resolved");

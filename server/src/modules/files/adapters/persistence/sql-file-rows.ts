@@ -1,11 +1,8 @@
-import { query } from "../../db/pool.js";
-import type { FileRows, ReadyValues } from "./file-rows.js";
-import type {
-  DirectoryDto,
-  FileRow,
-  InsertFileInput,
-  ListFilesParams,
-} from "./files.types.js";
+import { query } from "../../../../db/pool.js";
+import type { FileRows, ReadyValues, DirectoryDto, InsertFileInput, ListFilesParams } from "../../domain/ports/file-rows.js";
+import { toStoredFile } from "./row-mapper.js";
+import type { FileRow } from "./row-mapper.js";
+import type { StoredFile } from "../../domain/stored-file.js";
 
 const SORT_COLUMNS = {
   created_at: "created_at",
@@ -18,49 +15,19 @@ function escapeLike(value: string): string {
   return value.replaceAll(/[\\%_]/g, String.raw`\$&`);
 }
 
-export async function insertFile(input: InsertFileInput): Promise<FileRow> {
-  const { rows } = await query<FileRow>(
-    `insert into files (
-       id, bucket, object_key, directory, original_name, extension,
-       content_type, size_bytes, etag, status, upload_source,
-       upload_id, part_size, part_count
-     )
-     values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
-     returning *`,
-    [
-      input.id,
-      input.bucket,
-      input.objectKey,
-      input.directory,
-      input.originalName,
-      input.extension,
-      input.contentType,
-      input.sizeBytes,
-      input.etag,
-      input.status,
-      input.uploadSource,
-      input.uploadId ?? null,
-      input.partSize ?? null,
-      input.partCount ?? null,
-    ],
-  );
-
-  return rows[0]!;
-}
-
-export async function findFileById(id: string): Promise<FileRow | null> {
+export async function findFileById(id: string): Promise<StoredFile | null> {
   const { rows } = await query<FileRow>(
     "select * from files where id = $1 and deleted_at is null",
     [id],
   );
 
-  return rows[0] ?? null;
+  return rows[0] ? toStoredFile(rows[0]) : null;
 }
 
 export async function markFileReady(
   id: string,
   values: ReadyValues,
-): Promise<FileRow | null> {
+): Promise<StoredFile | null> {
   const { rows } = await query<FileRow>(
     `update files
         set status = 'ready',
@@ -76,7 +43,7 @@ export async function markFileReady(
     [id, values.sizeBytes, values.etag, values.contentType],
   );
 
-  return rows[0] ?? null;
+  return rows[0] ? toStoredFile(rows[0]) : null;
 }
 
 export async function markFileFailed(id: string): Promise<void> {
@@ -125,7 +92,7 @@ export async function claimExpiredMultipart(
   return rows[0]?.upload_id ?? null;
 }
 
-export async function softDeleteFile(id: string): Promise<FileRow | null> {
+export async function softDeleteFile(id: string): Promise<StoredFile | null> {
   const { rows } = await query<FileRow>(
     `update files
         set deleted_at = now(), updated_at = now()
@@ -134,7 +101,7 @@ export async function softDeleteFile(id: string): Promise<FileRow | null> {
     [id],
   );
 
-  return rows[0] ?? null;
+  return rows[0] ? toStoredFile(rows[0]) : null;
 }
 
 export async function hardDeleteFile(id: string): Promise<void> {
@@ -143,7 +110,7 @@ export async function hardDeleteFile(id: string): Promise<void> {
 
 export async function listFiles(
   params: ListFilesParams,
-): Promise<{ items: FileRow[]; total: number }> {
+): Promise<{ items: StoredFile[]; total: number }> {
   const conditions = ["deleted_at is null"];
   const values: unknown[] = [];
 
@@ -186,7 +153,7 @@ export async function listFiles(
   );
 
   return {
-    items: rows,
+    items: rows.map(toStoredFile),
     total: rows[0]?.total_count ?? 0,
   };
 }
@@ -208,7 +175,7 @@ export async function findKnownUploadIds(ids: string[]): Promise<Set<string>> {
   return new Set(rows.map((row) => row.upload_id));
 }
 
-export async function listExpiredPending(ttlHours: number): Promise<FileRow[]> {
+export async function listExpiredPending(ttlHours: number): Promise<StoredFile[]> {
   const { rows } = await query<FileRow>(
     `select * from files
       where status = 'pending'
@@ -218,7 +185,7 @@ export async function listExpiredPending(ttlHours: number): Promise<FileRow[]> {
     [ttlHours],
   );
 
-  return rows;
+  return rows.map(toStoredFile);
 }
 
 /**
@@ -260,17 +227,53 @@ export async function listChildDirectories(parent: string): Promise<DirectoryDto
  * The annotation is the whole point of it: it is what makes the SQL side prove,
  * at compile time, that it still answers for every operation those modules ask
  * for. Callers take the one interface they need, never this bundle.
+ *
+ * `bucket` is fixed here rather than threaded through every call: this is the
+ * row writer the domain talks about when it says the column is filled by
+ * "whoever writes the row", not by the scenario that asked for the insert.
  */
-export const sqlFileRows: FileRows = {
-  insertFile,
-  findFileById,
-  markFileReady,
-  markFileFailed,
-  countActiveMultipart,
-  claimExpiredMultipart,
-  softDeleteFile,
-  listFiles,
-  findKnownUploadIds,
-  listExpiredPending,
-  listChildDirectories,
-};
+export function createSqlFileRows(bucket: string): FileRows {
+  async function insertFile(input: InsertFileInput): Promise<StoredFile> {
+    const { rows } = await query<FileRow>(
+      `insert into files (
+         id, bucket, object_key, directory, original_name, extension,
+         content_type, size_bytes, etag, status, upload_source,
+         upload_id, part_size, part_count
+       )
+       values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+       returning *`,
+      [
+        input.id,
+        bucket,
+        input.objectKey,
+        input.directory,
+        input.originalName,
+        input.extension,
+        input.contentType,
+        input.sizeBytes,
+        input.etag,
+        input.status,
+        input.uploadSource,
+        input.uploadId ?? null,
+        input.partSize ?? null,
+        input.partCount ?? null,
+      ],
+    );
+
+    return toStoredFile(rows[0]!);
+  }
+
+  return {
+    insertFile,
+    findFileById,
+    markFileReady,
+    markFileFailed,
+    countActiveMultipart,
+    claimExpiredMultipart,
+    softDeleteFile,
+    listFiles,
+    findKnownUploadIds,
+    listExpiredPending,
+    listChildDirectories,
+  };
+}

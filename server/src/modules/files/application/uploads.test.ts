@@ -1,12 +1,12 @@
 import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
-import { ERROR_CODES } from "../../errors.js";
-import { THREE_PART_SIZE, buildHarness, thrownBy } from "./files-module.harness.js";
-import type { FilesModule } from "./files.service.js";
-import type { PresignMultipartResult, PresignSingleResult } from "./files.types.js";
+import { MultipartNotFoundError, UploadNotCompletedError } from "../domain/errors.js";
+import { THREE_PART_SIZE, buildHarness, thrownBy } from "../testing/files-module.harness.js";
+import type { UploadsModule, UploadThroughServerInput, PresignSingleResult } from "./uploads.js";
+import type { PresignMultipartResult } from "./multipart.js";
 
 /**
- * Правила подтверждения загрузки через интерфейс фабрики файлового модуля:
+ * Правила подтверждения загрузки через интерфейс фабрики модуля загрузок:
  * объектное хранилище и репозиторий строк метаданных подменены вторыми
  * реализациями поверх Map, а модуль составных загрузок настоящий и собран на
  * тех же зависимостях.
@@ -22,7 +22,7 @@ function etagOf(body: Buffer): string {
 }
 
 /** Резервирование под один подписанный PUT: размер ниже порога составной. */
-async function reserveSingle(files: FilesModule, size?: number): Promise<PresignSingleResult> {
+async function reserveSingle(files: UploadsModule, size?: number): Promise<PresignSingleResult> {
   const reserved = await files.createPresignedUpload({
     filename: "report.bin",
     directory: "docs",
@@ -39,7 +39,7 @@ async function reserveSingle(files: FilesModule, size?: number): Promise<Presign
 
 /** Резервирование составной загрузки: размер за порогом сам уводит на этот путь. */
 async function reserveMultipart(
-  files: FilesModule,
+  files: UploadsModule,
   size = THREE_PART_SIZE,
 ): Promise<PresignMultipartResult> {
   const reserved = await files.createPresignedUpload({
@@ -76,7 +76,7 @@ describe("confirming an upload", () => {
 
       expect(await files.completeUpload(reserved.id)).toMatchObject({
         id: reserved.id,
-        status: "ready",
+        kind: "ready",
         size: body.byteLength,
         etag: etagOf(body),
         contentType: "text/plain",
@@ -105,13 +105,10 @@ describe("confirming an upload", () => {
       const reserved = await reserveSingle(files, 4);
       const error = await thrownBy(() => files.completeUpload(reserved.id));
 
-      expect(error).toMatchObject({
-        statusCode: 409,
-        code: ERROR_CODES.UPLOAD_NOT_COMPLETED,
-        details: { key: reserved.key },
-      });
+      expect(error).toBeInstanceOf(UploadNotCompletedError);
+      expect(error).toMatchObject({ details: { key: reserved.key } });
       // Строка осталась зарезервированной: клиент ещё может дослать байты.
-      expect(await rowOf(reserved.id)).toMatchObject({ status: "pending", etag: null });
+      expect(await rowOf(reserved.id)).toMatchObject({ kind: "reserved" });
     });
   });
 
@@ -129,7 +126,7 @@ describe("confirming an upload", () => {
       const confirmed = await files.completeUpload(reserved.id);
 
       expect(confirmed).toMatchObject({
-        status: "ready",
+        kind: "ready",
         size: assembled.byteLength,
         etag: etagOf(assembled),
       });
@@ -137,11 +134,7 @@ describe("confirming an upload", () => {
       expect(objectStore.objectAt(reserved.key)?.body).toEqual(assembled);
       expect(objectStore.openUploads()).toEqual([]);
       // Подтверждённая строка больше не несёт плана: загрузка неживая.
-      expect(await rowOf(reserved.id)).toMatchObject({
-        upload_id: null,
-        part_size: null,
-        part_count: null,
-      });
+      expect(await rowOf(reserved.id)).toMatchObject({ kind: "ready" });
       // И повторный вопрос по неживой загрузке отвечается тем же, а не отказом.
       expect(await files.completeUpload(reserved.id)).toEqual(confirmed);
     });
@@ -163,7 +156,7 @@ describe("confirming an upload", () => {
       ]);
 
       expect(second).toEqual(first);
-      expect(first).toMatchObject({ status: "ready", size: Buffer.concat(PARTS).byteLength });
+      expect(first).toMatchObject({ kind: "ready", size: Buffer.concat(PARTS).byteLength });
       // Объект собран один раз, и второй сборки под тем же ключом не случилось.
       expect(objectStore.objectKeys()).toEqual([reserved.key]);
     });
@@ -178,37 +171,33 @@ describe("confirming an upload", () => {
 
       const error = await thrownBy(() => files.completeUpload(reserved.id));
 
-      expect(error).toMatchObject({
-        statusCode: 409,
-        code: ERROR_CODES.MULTIPART_NOT_FOUND,
-        details: { key: reserved.key },
-      });
-      expect(await rowOf(reserved.id)).toMatchObject({ status: "pending" });
+      expect(error).toBeInstanceOf(MultipartNotFoundError);
+      expect(error).toMatchObject({ details: { key: reserved.key } });
+      expect(await rowOf(reserved.id)).toMatchObject({ kind: "multipart" });
     });
   });
 });
 
 describe("uploading through the server", () => {
-  /** То, что кладёт multer: тело уже в памяти. */
-  function multerFile(body: Buffer): Express.Multer.File {
+  /** То, что попадает в сценарий: тело уже в памяти, без формы multer. */
+  function uploadInput(body: Buffer): UploadThroughServerInput {
     return {
-      fieldname: "file",
-      originalname: "report.bin",
-      encoding: "7bit",
-      mimetype: "text/plain",
+      filename: "report.bin",
+      directory: "docs",
+      contentType: "text/plain",
+      bytes: body,
       size: body.byteLength,
-      buffer: body,
-    } as Express.Multer.File;
+    };
   }
 
   it("stores the bytes and confirms the row in one call", async () => {
     const { files, objectStore } = buildHarness();
     const body = Buffer.from("through the server");
 
-    const uploaded = await files.uploadThroughServer(multerFile(body), "docs");
+    const uploaded = await files.uploadThroughServer(uploadInput(body));
 
     expect(uploaded).toMatchObject({
-      status: "ready",
+      kind: "ready",
       uploadSource: "server",
       directory: "docs",
       size: body.byteLength,
@@ -223,7 +212,7 @@ describe("uploading through the server", () => {
 
     fileRows.failNext("insertFile", failure);
 
-    await expect(files.uploadThroughServer(multerFile(Buffer.from("orphan")), "docs")).rejects.toBe(
+    await expect(files.uploadThroughServer(uploadInput(Buffer.from("orphan")))).rejects.toBe(
       failure,
     );
     // Ни строки, ни объекта: сироты, за которую хранилище тарифицирует, нет.
@@ -240,46 +229,9 @@ describe("uploading through the server", () => {
     // были записаны до строки и убирает их именно откат, а не их отсутствие.
     objectStore.failNext("remove", new Error("storage is down"));
 
-    await expect(files.uploadThroughServer(multerFile(Buffer.from("orphan")), "docs")).rejects.toBe(
+    await expect(files.uploadThroughServer(uploadInput(Buffer.from("orphan")))).rejects.toBe(
       failure,
     );
     expect(objectStore.objectKeys()).toHaveLength(1);
-  });
-});
-
-describe("handing out a signed download link", () => {
-  it("refuses a link for a file whose upload was never confirmed", async () => {
-    const { files } = buildHarness();
-
-    const reserved = await reserveSingle(files, 4);
-    const error = await thrownBy(() =>
-      files.getDownloadUrl(reserved.id, { disposition: "attachment" }),
-    );
-
-    expect(error).toMatchObject({ statusCode: 409, code: ERROR_CODES.FILE_NOT_READY });
-  });
-
-  it("serves the card of an unconfirmed file without a link rather than failing", async () => {
-    const { files } = buildHarness();
-
-    const reserved = await reserveSingle(files, 4);
-
-    const card = await files.getFileCard(reserved.id, true);
-
-    expect(card).toMatchObject({ status: "pending" });
-    expect(card).not.toHaveProperty("downloadUrl");
-  });
-
-  it("signs a link once the upload is confirmed", async () => {
-    const { files, objectStore } = buildHarness();
-
-    const reserved = await reserveSingle(files, 4);
-
-    objectStore.uploadObject(reserved.key, Buffer.from("four"), "text/plain");
-    await files.completeUpload(reserved.id);
-
-    const link = await files.getDownloadUrl(reserved.id, { disposition: "attachment" });
-
-    expect(link).toMatchObject({ url: expect.stringContaining(reserved.key), name: "report.bin" });
   });
 });

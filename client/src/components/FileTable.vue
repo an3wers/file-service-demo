@@ -69,12 +69,18 @@ const skeletonRows = [0, 1, 2, 3, 4]
 
 <template>
   <div class="flex flex-col gap-4">
-    <Alert v-if="browser.error.value" variant="destructive">
+    <Alert
+      v-if="browser.error.value"
+      variant="destructive"
+    >
       <TriangleAlertIcon />
       <AlertTitle>Не удалось загрузить список</AlertTitle>
       <AlertDescription>
         <p>{{ browser.error.value.message }}</p>
-        <p v-if="browser.error.value.reference" class="opacity-80">
+        <p
+          v-if="browser.error.value.reference"
+          class="opacity-80"
+        >
           {{ browser.error.value.reference }}
         </p>
         <!-- Кнопки нет, когда повтор заведомо бесполезен: 502 чинится деплоем. -->
@@ -91,7 +97,10 @@ const skeletonRows = [0, 1, 2, 3, 4]
       </AlertDescription>
     </Alert>
 
-    <div v-else class="overflow-x-auto">
+    <div
+      v-else
+      class="overflow-x-auto"
+    >
       <Table>
         <TableHeader>
           <TableRow>
@@ -116,7 +125,9 @@ const skeletonRows = [0, 1, 2, 3, 4]
                   class="size-3"
                 />
               </button>
-              <template v-else>{{ column.label }}</template>
+              <template v-else>
+                {{ column.label }}
+              </template>
             </TableHead>
             <TableHead class="w-24 text-right">
               <span class="sr-only">Действия</span>
@@ -126,8 +137,14 @@ const skeletonRows = [0, 1, 2, 3, 4]
 
         <TableBody>
           <template v-if="browser.loading.value">
-            <TableRow v-for="row in skeletonRows" :key="row">
-              <TableCell v-for="cell in 6" :key="cell">
+            <TableRow
+              v-for="row in skeletonRows"
+              :key="row"
+            >
+              <TableCell
+                v-for="cell in 6"
+                :key="cell"
+              >
                 <Skeleton class="h-5 w-full" />
               </TableCell>
             </TableRow>
@@ -147,7 +164,10 @@ const skeletonRows = [0, 1, 2, 3, 4]
                   <span class="truncate">{{ folder.name }}</span>
                 </span>
               </TableCell>
-              <TableCell :colspan="5" class="text-muted-foreground">
+              <TableCell
+                :colspan="5"
+                class="text-muted-foreground"
+              >
                 <Badge variant="secondary">
                   {{ folder.fileCount }}
                   {{ plural(folder.fileCount, ["файл", "файла", "файлов"]) }}
@@ -163,16 +183,30 @@ const skeletonRows = [0, 1, 2, 3, 4]
             >
               <TableCell class="font-medium">
                 <span class="flex items-center gap-2">
-                  <component :is="iconForFile(file)" class="size-4 text-muted-foreground" />
-                  <span class="truncate" :title="file.name">{{ file.name }}</span>
+                  <component
+                    :is="iconForFile(file)"
+                    class="size-4 text-muted-foreground"
+                  />
+                  <span
+                    class="truncate"
+                    :title="file.name"
+                  >{{ file.name }}</span>
                 </span>
               </TableCell>
               <TableCell class="whitespace-nowrap text-muted-foreground">
                 {{ formatBytes(file.size) }}
               </TableCell>
               <TableCell>
-                <Badge v-if="file.extension" variant="outline">{{ file.extension }}</Badge>
-                <span v-else class="text-muted-foreground">—</span>
+                <Badge
+                  v-if="file.extension"
+                  variant="outline"
+                >
+                  {{ file.extension }}
+                </Badge>
+                <span
+                  v-else
+                  class="text-muted-foreground"
+                >—</span>
               </TableCell>
               <TableCell class="whitespace-nowrap text-muted-foreground">
                 {{ formatDate(file.createdAt) }}
@@ -209,7 +243,10 @@ const skeletonRows = [0, 1, 2, 3, 4]
       </Table>
     </div>
 
-    <Empty v-if="isEmpty" class="border">
+    <Empty
+      v-if="isEmpty"
+      class="border"
+    >
       <EmptyHeader>
         <EmptyMedia variant="icon">
           <SearchXIcon v-if="browser.search.value" />
