@@ -1,22 +1,8 @@
-import type { StoredFile, FileStatus, UploadSource } from "../../domain/stored-file.js";
+import type { StoredFile } from "../../domain/stored-file.js";
 import { statusOf } from "../../domain/stored-file.js";
+import type { FileDto } from "./responses.js";
 
-export interface FileDto {
-  id: string;
-  name: string;
-  directory: string;
-  extension: string;
-  contentType: string;
-  size: number | null;
-  etag: string | null;
-  status: FileStatus;
-  uploadSource: UploadSource;
-  bucket: string;
-  key: string;
-  createdAt: string;
-  updatedAt: string;
-  downloadUrl?: string;
-}
+export type { FileDto } from "./responses.js";
 
 function sizeOf(file: StoredFile): number | null {
   switch (file.kind) {

@@ -4,6 +4,7 @@ import { config } from "./config.js";
 import { checkDatabase } from "./db/pool.js";
 import { createUploadMiddleware } from "./middleware/upload.js";
 import { createHealthRouter } from "./routes/health.js";
+import { buildOpenApiDocument } from "./openapi.js";
 import { createS3Client } from "./storage/s3-client.js";
 import { createS3ObjectStore, PROTOCOL_LIMITS } from "./storage/s3-object-store.js";
 import type { ObjectStore } from "./storage/object-store.js";
@@ -72,6 +73,7 @@ export function buildApp(): Express {
 
   return createApp({
     corsOrigin: config.corsOrigin,
+    apiDocs: config.apiDocsEnabled ? buildOpenApiDocument() : undefined,
     healthRouter: createHealthRouter({ objectStore, checkDatabase }),
     filesRouter,
     directoriesRouter,

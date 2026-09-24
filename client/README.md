@@ -29,6 +29,7 @@ npm run dev                 # http://localhost:5173
 | `npm test` | один прогон vitest |
 | `npm run test:watch` | vitest в watch-режиме |
 | `npm run test:coverage` | покрытие (нужен `npm i -D @vitest/coverage-v8`) |
+| `npm run api:generate` | типы API из `../server/openapi.json` в `src/api/generated/` |
 
 ## Конфигурация
 
@@ -78,7 +79,10 @@ JSON; файл отправляется через XHR (`apiUpload` / `xhrSend`)
   `offset` / `size` / `partCount` присылает сервер.
 - **`format.ts`** — байты, даты (`Intl`), русская плюрализация, иконки по типу файла.
 
-`src/types/api.ts` — руками поддерживаемое зеркало `server/src/modules/files/files.types.ts`.
+`src/api/generated/` — типы API, сгенерированные `@hey-api/openapi-ts` из `server/openapi.json`;
+руками не правятся и коммитятся (Docker-сборка клиента не видит `server/` и генерацию не запускает).
+После `npm run openapi` на сервере — `npm run api:generate` здесь. `src/types/api.ts` реэкспортирует
+их под привычными именами и держит клиентские типы, которых нет в контракте.
 
 `src/components/ui/` — примитивы shadcn-vue; правятся через CLI, а не руками.
 

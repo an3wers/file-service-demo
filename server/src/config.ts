@@ -12,6 +12,7 @@ const envSchema = z.object({
     .default("info"),
   API_KEY: z.string().min(16, "API_KEY must be at least 16 characters"),
   CORS_ORIGIN: z.string().default("http://localhost:5173"),
+  API_DOCS_ENABLED: booleanish.optional(),
 
   S3_ENDPOINT: z.url(),
   S3_REGION: z.string().min(1),
@@ -70,6 +71,7 @@ export const config = {
   logLevel: env.LOG_LEVEL,
   apiKey: env.API_KEY,
   corsOrigin: env.CORS_ORIGIN.split(",").map((origin) => origin.trim()).filter(Boolean),
+  apiDocsEnabled: env.API_DOCS_ENABLED ?? env.NODE_ENV !== "production",
 
   s3: {
     endpoint: env.S3_ENDPOINT,

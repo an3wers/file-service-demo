@@ -2,15 +2,26 @@ import cors from "cors";
 import express from "express";
 import type { Express, Router } from "express";
 import { pinoHttp } from "pino-http";
+import swaggerUi from "swagger-ui-express";
 import { logger } from "./logger.js";
 import { errorHandler, notFoundHandler } from "./middleware/error-handler.js";
 import { apiKeyAuth } from "./middleware/api-key.js";
+
+export const MOUNTS = {
+  health: "/health",
+  files: "/api/files",
+  directories: "/api/directories",
+} as const;
+
+export const API_DOCS_PATH = "/api/docs";
+export const API_SPEC_PATH = "/api/openapi.json";
 
 export interface AppDeps {
   healthRouter: Router;
   filesRouter: Router;
   directoriesRouter: Router;
   corsOrigin: string[];
+  apiDocs?: object | undefined;
 }
 
 /**
@@ -23,6 +34,7 @@ export function createApp({
   filesRouter,
   directoriesRouter,
   corsOrigin,
+  apiDocs,
 }: AppDeps): Express {
   const app = express();
 
@@ -46,11 +58,22 @@ export function createApp({
   });
 
   // Health checks stay open so probes do not need the API key.
-  app.use("/health", healthRouter);
+  app.use(MOUNTS.health, healthRouter);
+
+  if (apiDocs) {
+    app.get(API_SPEC_PATH, (_req, res) => {
+      res.json(apiDocs);
+    });
+    app.use(
+      API_DOCS_PATH,
+      swaggerUi.serve,
+      swaggerUi.setup(apiDocs, { swaggerOptions: { persistAuthorization: true } }),
+    );
+  }
 
   app.use("/api", apiKeyAuth);
-  app.use("/api/files", filesRouter);
-  app.use("/api/directories", directoriesRouter);
+  app.use(MOUNTS.files, filesRouter);
+  app.use(MOUNTS.directories, directoriesRouter);
 
   // Express 5-compatible catch-all route.
   app.all("/{*path}", notFoundHandler);
