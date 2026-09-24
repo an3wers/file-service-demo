@@ -112,22 +112,10 @@ async function load(): Promise<void> {
   }
 }
 
-/**
- * Единственная точка входа для всех изменений, кроме `page`: сброс на первую
- * страницу сам вызовет вотчер, поэтому двойного запроса не возникает.
- */
 function applyFilters(): void {
-  if (page.value !== 1) {
-    page.value = 1
-    return
-  }
-
+  page.value = 1
   void load()
 }
-
-watch(page, () => {
-  void load()
-})
 
 watch(
   searchInput,
@@ -170,12 +158,29 @@ function setLimit(next: number): void {
   applyFilters()
 }
 
+function setPage(next: number): void {
+  page.value = next
+  void load()
+}
+
 function refresh(): void {
   void load()
 }
 
-// Приложение чисто клиентское — первый запрос делаем сразу.
-void load()
+function reset(): void {
+  controller?.abort()
+  controller = null
+  requestId += 1
+  directory.value = ""
+  searchInput.value = ""
+  search.value = ""
+  page.value = 1
+  files.value = []
+  directories.value = []
+  pagination.value = null
+  loading.value = false
+  error.value = null
+}
 
 export function useFileBrowser() {
   return {
@@ -196,6 +201,8 @@ export function useFileBrowser() {
     goTo,
     toggleSort,
     setLimit,
+    setPage,
     refresh,
+    reset,
   }
 }

@@ -58,7 +58,7 @@ npm run dev
 
 # клиент → http://localhost:5173
 cd client && npm install
-cp .env.example .env       # VITE_API_KEY — тем же ключом, что и API_KEY сервера
+cp .env.example .env
 npm run dev
 ```
 
@@ -69,13 +69,13 @@ npm run dev
 ## Стек
 
 Сервер — Express 5, TypeScript, `pg`, AWS SDK v3, zod, pino, multer. Клиент — Vue 3
-(`<script setup>`), TypeScript, Vite, Tailwind CSS v4, shadcn-vue, `vue-sonner`, `@vueuse/core`.
+(`<script setup>`), TypeScript, Vite, Tailwind CSS v4, shadcn-vue, `vue-router`, `vue-sonner`, `@vueuse/core`.
 Тесты с обеих сторон — Vitest (`npm test` в каждой папке).
 
 ## Границы демо
 
-- **API-ключ один на весь сервис** и на клиенте попадает в бандл — пользователей, сессий и прав здесь
-  нет. Так можно только локально.
+- **Пользователь один** — его логин и пароль задаёт окружение сервера (`LOGIN_USER_APP`,
+  `PASSWORD_USER_APP`); регистрации и прав нет, файлы общие.
 - **Удаление мягкое в базе и best-effort в хранилище**: источник истины — запись, поэтому её выводят
   из обращения первой.
 - **HTTP-маршруты тестами не покрыты** — покрыта логика, которой не нужны ни S3, ни база.

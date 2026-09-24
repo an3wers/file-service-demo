@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from "vue";
+import { computed, onMounted, ref } from "vue";
 import { SearchIcon, UploadIcon } from "@lucide/vue";
 import type { FileDto } from "@/types/api";
 import {
@@ -43,6 +43,8 @@ import { useFileBrowser } from "@/composables/useFileBrowser";
 
 const browser = useFileBrowser();
 const actions = useFileActions();
+
+onMounted(browser.refresh);
 
 const selectedFile = ref<FileDto | null>(null);
 const cardOpen = ref(false);
@@ -146,7 +148,7 @@ function onDeleted(file: FileDto): void {
         :total="total"
         :sibling-count="1"
         show-edges
-        @update:page="browser.page.value = $event"
+        @update:page="browser.setPage"
       >
         <PaginationContent v-slot="{ items }">
           <PaginationPrevious />

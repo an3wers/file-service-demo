@@ -1,4 +1,11 @@
+import type { AuthSession } from "@/api/generated";
 import type { ApiErrorBody } from "@/types/api";
+import {
+  expireSession,
+  getAccessToken,
+  isRenewalDue,
+  shareRenewal,
+} from "./session";
 
 export class ApiError extends Error {
   status: number;
@@ -124,22 +131,14 @@ export function parseErrorBody(
  * Запросы идут по относительному пути через vite-прокси, поэтому CORS сервера
  * в игру не вступает ни в dev, ни в `vite preview`.
  */
-export async function apiRequest<T>(
+export async function sendRequest<T>(
   path: string,
   init: RequestInit = {},
 ): Promise<T> {
-  const headers = new Headers(init.headers);
-
-  // VITE_API_KEY в client/.env, подставляется в каждый запрос. Просто, но ключ попадает в бандл —
-  // ПРИЕМЛЕМО ТОЛЬКО ДЛЯ ЛОКАЛЬНОГО MVP.
-  headers.set("X-API-Key", import.meta.env.VITE_API_KEY);
-  // Content-Type здесь не выставляем никогда: JSON-вызовы ставят его сами, а у
-  // FormData его должен проставить браузер — иначе потеряется boundary.
-
   let response: Response;
 
   try {
-    response = await fetch(`/api${path}`, { ...init, headers });
+    response = await fetch(`/api${path}`, init);
   } catch (error) {
     // AbortError вызывающий код гасит молча, сетевой сбой — показывает.
     if (isAbortError(error)) {
@@ -166,6 +165,69 @@ export async function apiRequest<T>(
   }
 
   return parseBody(text) as T;
+}
+
+export function renewSession(): Promise<void> {
+  return shareRenewal(async () => {
+    try {
+      return await sendRequest<AuthSession>("/auth/refresh", { method: "POST" });
+    } catch (error) {
+      if (isApiError(error) && error.status === 401) {
+        expireSession();
+      }
+
+      throw error;
+    }
+  });
+}
+
+async function withSession<T>(
+  run: (authorization: Record<string, string>) => Promise<T>,
+): Promise<T> {
+  if (isRenewalDue()) {
+    await renewSession();
+  }
+
+  const token = getAccessToken();
+  const authorize = (value: string | null): Record<string, string> =>
+    value ? { Authorization: `Bearer ${value}` } : {};
+
+  try {
+    return await run(authorize(token));
+  } catch (error) {
+    if (!isApiError(error) || error.status !== 401) {
+      throw error;
+    }
+
+    if (error.code !== "UNAUTHORIZED") {
+      expireSession();
+      throw error;
+    }
+
+    if (token === null) {
+      throw error;
+    }
+
+    if (getAccessToken() === token) {
+      await renewSession();
+    }
+
+    return await run(authorize(getAccessToken()));
+  }
+}
+
+export function apiRequest<T>(path: string, init: RequestInit = {}): Promise<T> {
+  // Content-Type здесь не выставляем никогда: JSON-вызовы ставят его сами, а у
+  // FormData его должен проставить браузер — иначе потеряется boundary.
+  return withSession((authorization) => {
+    const headers = new Headers(init.headers);
+
+    for (const [name, value] of Object.entries(authorization)) {
+      headers.set(name, value);
+    }
+
+    return sendRequest<T>(path, { ...init, headers });
+  });
 }
 
 /** Прогресс отправки тела запроса. `total === null` — размер неизвестен. */
@@ -255,19 +317,24 @@ export function xhrSend(
 }
 
 /**
- * Аналог `apiRequest` для отправки файла: тот же префикс, ключ и разбор ошибок,
+ * Аналог `apiRequest` для отправки файла: тот же префикс, токен и разбор ошибок,
  * но поверх XHR — ради прогресса.
  */
-export async function apiUpload<T>(
+export function apiUpload<T>(
   path: string,
   body: XMLHttpRequestBodyInit,
   options: UploadOptions = {},
 ): Promise<T> {
-  const { status, text } = await xhrSend("POST", `/api${path}`, body, {
-    ...options,
-    // Content-Type не трогаем: у FormData его вместе с boundary ставит браузер.
-    headers: { "X-API-Key": import.meta.env.VITE_API_KEY },
-  });
+  // Content-Type не трогаем: у FormData его вместе с boundary ставит браузер.
+  return withSession((headers) => sendUpload<T>(path, body, { ...options, headers }));
+}
+
+async function sendUpload<T>(
+  path: string,
+  body: XMLHttpRequestBodyInit,
+  options: XhrOptions,
+): Promise<T> {
+  const { status, text } = await xhrSend("POST", `/api${path}`, body, options);
 
   if (status === 204) {
     return undefined as unknown as T;
