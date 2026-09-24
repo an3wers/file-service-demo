@@ -24,6 +24,7 @@ npm run dev
 | `npm run db:migrate` | применяет `src/db/migrations/*.sql`, история в `schema_migrations` |
 | `npm run db:cleanup` | разбирает presigned-загрузки, которые так и не подтвердили |
 | `npm run s3:cors` | применяет CORS-правила бакета для `CORS_ORIGIN` |
+| `npm run openapi` | пересобирает `openapi.json` из Zod-схем; после него — `npm run api:generate` в `client/` |
 
 ## Конфигурация
 
@@ -38,6 +39,7 @@ npm run dev
 | `PORT` | `3000` | |
 | `API_KEY` | — | обязателен в `X-API-Key` на каждом маршруте `/api/*` |
 | `CORS_ORIGIN` | `http://localhost:5173` | через запятую; используется и в `npm run s3:cors` |
+| `API_DOCS_ENABLED` | `true` вне production, `false` в production | Swagger UI на `/api/docs` и спецификация на `/api/openapi.json` |
 | `MAX_UPLOAD_SIZE_MB` | `50` | только для загрузок через сервер |
 | `PRESIGN_UPLOAD_TTL_SECONDS` | `900` | |
 | `PRESIGN_DOWNLOAD_TTL_SECONDS` | `300` | |
@@ -54,7 +56,15 @@ npm run dev
 
 ## API
 
-`/health` и `/health/ready` открыты. Всё под `/api` требует `X-API-Key`.
+`/health` и `/health/ready` открыты. Всё под `/api` требует `X-API-Key`, кроме документации.
+
+Контракт описан в `openapi.json` — он собирается из Zod-схем запросов и ответов
+(`src/modules/files/adapters/http/schemas.ts`, `responses.ts`, `openapi.ts`) командой
+`npm run openapi` и коммитится; клиент генерирует из него типы. Тест `src/openapi.test.ts` падает,
+если файл устарел или маршрут не описан. Почему так — [ADR-0006](../docs/adr/0006-kontrakt-api-iz-zod-shem.md).
+
+Swagger UI — `/api/docs` (через vite-прокси: `http://localhost:5173/api/docs`). Ключ вводится
+в **Authorize** и переживает перезагрузку страницы. Включается `API_DOCS_ENABLED`.
 
 ### Ошибки
 

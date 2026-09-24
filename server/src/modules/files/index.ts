@@ -19,6 +19,7 @@ import type { UploadPolicy } from "./domain/upload-policy.js";
 
 export type { UploadPolicy } from "./domain/upload-policy.js";
 export { mapFilesError } from "./adapters/http/error-map.js";
+export { filesPaths, directoriesPaths } from "./adapters/http/openapi.js";
 
 /**
  * The whole surface the rest of the app is allowed to know about this module:

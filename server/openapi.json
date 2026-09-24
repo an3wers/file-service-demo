@@ -1,0 +1,1767 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "File Service API",
+    "version": "1.0.0",
+    "description": "Файлы в S3-совместимом хранилище и их метаданные в PostgreSQL. Все /api/* требуют заголовок X-API-Key."
+  },
+  "security": [
+    {
+      "ApiKey": []
+    }
+  ],
+  "tags": [
+    {
+      "name": "files",
+      "description": "Каталог файлов и загрузка через сервер"
+    },
+    {
+      "name": "uploads",
+      "description": "Загрузка в обход сервера по подписанным ссылкам"
+    },
+    {
+      "name": "directories",
+      "description": "Каталоги"
+    },
+    {
+      "name": "health",
+      "description": "Пробы живости и готовности, без ключа"
+    }
+  ],
+  "paths": {
+    "/health": {
+      "get": {
+        "tags": [
+          "health"
+        ],
+        "summary": "Процесс жив",
+        "operationId": "getLiveness",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "Процесс отвечает",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LivenessResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/health/ready": {
+      "get": {
+        "tags": [
+          "health"
+        ],
+        "summary": "Зависимости доступны",
+        "operationId": "getReadiness",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "База и хранилище отвечают",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReadinessResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "База или хранилище недоступны",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReadinessResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/files": {
+      "post": {
+        "tags": [
+          "files"
+        ],
+        "summary": "Загрузить файл через сервер",
+        "description": "Файл целиком буферизуется в памяти сервера и ограничен MAX_UPLOAD_SIZE_MB. Файлы крупнее грузятся через /presign-upload.",
+        "operationId": "uploadFile",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "directory": {
+                    "type": "string",
+                    "maxLength": 1024
+                  },
+                  "file": {
+                    "type": "string",
+                    "format": "binary",
+                    "contentEncoding": "binary"
+                  }
+                },
+                "required": [
+                  "file"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Файл сохранён",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FileDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Нет поля file, лишние поля формы, недопустимое имя или каталог",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Нет заголовка X-API-Key или ключ неверный",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Файл больше лимита загрузки через сервер",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Запрос не прошёл валидацию; details — результат z.flattenError()",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Непредвиденная ошибка сервера",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Хранилище или база данных недоступны",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "tags": [
+          "files"
+        ],
+        "summary": "Список файлов",
+        "operationId": "listFiles",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "directory",
+            "schema": {
+              "type": "string",
+              "maxLength": 1024
+            }
+          },
+          {
+            "in": "query",
+            "name": "recursive",
+            "schema": {
+              "default": "false",
+              "type": "string",
+              "enum": [
+                "0",
+                "1",
+                "true",
+                "false"
+              ]
+            }
+          },
+          {
+            "in": "query",
+            "name": "search",
+            "schema": {
+              "type": "string",
+              "maxLength": 255
+            }
+          },
+          {
+            "in": "query",
+            "name": "status",
+            "schema": {
+              "default": "ready",
+              "$ref": "#/components/schemas/ListStatusFilter"
+            }
+          },
+          {
+            "in": "query",
+            "name": "page",
+            "schema": {
+              "default": 1,
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "schema": {
+              "default": 50,
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "maximum": 200
+            }
+          },
+          {
+            "in": "query",
+            "name": "sort",
+            "schema": {
+              "default": "created_at",
+              "$ref": "#/components/schemas/SortField"
+            }
+          },
+          {
+            "in": "query",
+            "name": "order",
+            "schema": {
+              "default": "desc",
+              "$ref": "#/components/schemas/SortOrder"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Страница списка",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListFilesResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Недопустимый каталог",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Нет заголовка X-API-Key или ключ неверный",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Запрос не прошёл валидацию; details — результат z.flattenError()",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Непредвиденная ошибка сервера",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Хранилище или база данных недоступны",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/files/presign-upload": {
+      "post": {
+        "tags": [
+          "uploads"
+        ],
+        "summary": "Зарезервировать файл и получить подписанные ссылки",
+        "description": "Шаг 1 загрузки в обход сервера. До порога составной загрузки — одна ссылка для PUT (strategy = single), после — план и первая пачка ссылок на части (strategy = multipart).",
+        "operationId": "presignUpload",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "filename": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 512
+                  },
+                  "directory": {
+                    "type": "string",
+                    "maxLength": 1024
+                  },
+                  "contentType": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 255
+                  },
+                  "size": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991
+                  }
+                },
+                "required": [
+                  "filename"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Файл зарезервирован",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PresignUploadResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Недопустимое имя или каталог",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Нет заголовка X-API-Key или ключ неверный",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Файл больше потолка размера объекта",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Запрос не прошёл валидацию; details — результат z.flattenError()",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Слишком много незавершённых составных загрузок",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Непредвиденная ошибка сервера",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Хранилище или база данных недоступны",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/files/{id}/multipart/part-urls": {
+      "post": {
+        "tags": [
+          "uploads"
+        ],
+        "summary": "Следующая пачка ссылок на части",
+        "description": "Этим же вызовом перевыпускаются ссылки, срок которых истёк.",
+        "operationId": "getPartUrls",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+            },
+            "required": true
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "partNumbers": {
+                    "minItems": 1,
+                    "type": "array",
+                    "items": {
+                      "type": "integer",
+                      "exclusiveMinimum": 0,
+                      "maximum": 9007199254740991
+                    }
+                  }
+                },
+                "required": [
+                  "partNumbers"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Ссылки на запрошенные части",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PartUrlsResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Номеров больше, чем подписывается за раз, или номер вне плана",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Нет заголовка X-API-Key или ключ неверный",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Файла нет или он удалён",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "У файла нет живой составной загрузки",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Запрос не прошёл валидацию; details — результат z.flattenError()",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Непредвиденная ошибка сервера",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Хранилище или база данных недоступны",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/files/{id}/multipart": {
+      "get": {
+        "tags": [
+          "uploads"
+        ],
+        "summary": "Что уже лежит в хранилище по составной загрузке",
+        "description": "По ответу прерванная загрузка догружает недостающие части.",
+        "operationId": "getMultipartStatus",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+            },
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Загруженные части",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MultipartStatusResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Нет заголовка X-API-Key или ключ неверный",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Файла нет или он удалён",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "У файла нет живой составной загрузки",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Запрос не прошёл валидацию; details — результат z.flattenError()",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Непредвиденная ошибка сервера",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Хранилище или база данных недоступны",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/files/{id}": {
+      "get": {
+        "tags": [
+          "files"
+        ],
+        "summary": "Карточка файла",
+        "operationId": "getFile",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+            },
+            "required": true
+          },
+          {
+            "in": "query",
+            "name": "withUrl",
+            "schema": {
+              "default": "false",
+              "type": "string",
+              "enum": [
+                "0",
+                "1",
+                "true",
+                "false"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Карточка файла; downloadUrl есть только у готового файла при withUrl=true",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FileDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Нет заголовка X-API-Key или ключ неверный",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Файла нет или он удалён",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Запрос не прошёл валидацию; details — результат z.flattenError()",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Непредвиденная ошибка сервера",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Хранилище или база данных недоступны",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "files"
+        ],
+        "summary": "Удалить файл",
+        "operationId": "deleteFile",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+            },
+            "required": true
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Файл удалён"
+          },
+          "401": {
+            "description": "Нет заголовка X-API-Key или ключ неверный",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Файла нет или он удалён",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Запрос не прошёл валидацию; details — результат z.flattenError()",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Непредвиденная ошибка сервера",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Хранилище или база данных недоступны",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/files/{id}/complete": {
+      "post": {
+        "tags": [
+          "uploads"
+        ],
+        "summary": "Подтвердить загрузку",
+        "description": "Шаг 2 загрузки в обход сервера: размер и ETag сверяются с хранилищем. Составная загрузка собирается здесь же. Повторное подтверждение — не ошибка.",
+        "operationId": "completeUpload",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+            },
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Файл готов",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FileDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Нет заголовка X-API-Key или ключ неверный",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Файла нет или он удалён",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Объекта ещё нет в хранилище или загружены не все части",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Запрос не прошёл валидацию; details — результат z.flattenError()",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Непредвиденная ошибка сервера",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Хранилище или база данных недоступны",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/files/{id}/download-url": {
+      "get": {
+        "tags": [
+          "files"
+        ],
+        "summary": "Подписанная ссылка на скачивание",
+        "operationId": "getDownloadUrl",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+            },
+            "required": true
+          },
+          {
+            "in": "query",
+            "name": "disposition",
+            "schema": {
+              "default": "attachment",
+              "type": "string",
+              "enum": [
+                "attachment",
+                "inline"
+              ]
+            }
+          },
+          {
+            "in": "query",
+            "name": "expiresIn",
+            "schema": {
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "maximum": 604800
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Ссылка на скачивание",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DownloadUrlResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Нет заголовка X-API-Key или ключ неверный",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Файла нет или он удалён",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Файл ещё не готов",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Запрос не прошёл валидацию; details — результат z.flattenError()",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Непредвиденная ошибка сервера",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Хранилище или база данных недоступны",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/directories": {
+      "get": {
+        "tags": [
+          "directories"
+        ],
+        "summary": "Подкаталоги каталога",
+        "operationId": "listDirectories",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "parent",
+            "schema": {
+              "type": "string",
+              "maxLength": 1024
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Подкаталоги",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DirectoriesResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Недопустимый каталог",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Нет заголовка X-API-Key или ключ неверный",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Запрос не прошёл валидацию; details — результат z.flattenError()",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Непредвиденная ошибка сервера",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Хранилище или база данных недоступны",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "ListStatusFilter": {
+        "type": "string",
+        "enum": [
+          "pending",
+          "ready",
+          "failed",
+          "any"
+        ]
+      },
+      "SortField": {
+        "type": "string",
+        "enum": [
+          "created_at",
+          "original_name",
+          "size_bytes"
+        ]
+      },
+      "SortOrder": {
+        "type": "string",
+        "enum": [
+          "asc",
+          "desc"
+        ]
+      },
+      "LivenessResponse": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string",
+            "const": "ok"
+          },
+          "timestamp": {
+            "type": "string",
+            "format": "date-time",
+            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+          }
+        },
+        "required": [
+          "status",
+          "timestamp"
+        ],
+        "additionalProperties": false
+      },
+      "ReadinessResponse": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "ok",
+              "degraded"
+            ]
+          },
+          "checks": {
+            "type": "object",
+            "properties": {
+              "database": {
+                "$ref": "#/components/schemas/DependencyCheck"
+              },
+              "storage": {
+                "$ref": "#/components/schemas/DependencyCheck"
+              }
+            },
+            "required": [
+              "database",
+              "storage"
+            ],
+            "additionalProperties": false
+          },
+          "timestamp": {
+            "type": "string",
+            "format": "date-time",
+            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+          }
+        },
+        "required": [
+          "status",
+          "checks",
+          "timestamp"
+        ],
+        "additionalProperties": false
+      },
+      "DependencyCheck": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "ok",
+              "error"
+            ]
+          },
+          "message": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "additionalProperties": false
+      },
+      "FileDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+          },
+          "name": {
+            "type": "string"
+          },
+          "directory": {
+            "type": "string"
+          },
+          "extension": {
+            "type": "string"
+          },
+          "contentType": {
+            "type": "string"
+          },
+          "size": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "null, пока размер неизвестен, и у неудавшейся загрузки"
+          },
+          "etag": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "status": {
+            "$ref": "#/components/schemas/FileStatus"
+          },
+          "uploadSource": {
+            "$ref": "#/components/schemas/UploadSource"
+          },
+          "bucket": {
+            "type": "string"
+          },
+          "key": {
+            "type": "string"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time",
+            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time",
+            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+          },
+          "downloadUrl": {
+            "description": "Ключа нет, а не null, когда карточка запрошена без withUrl",
+            "type": "string",
+            "format": "uri"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "directory",
+          "extension",
+          "contentType",
+          "size",
+          "etag",
+          "status",
+          "uploadSource",
+          "bucket",
+          "key",
+          "createdAt",
+          "updatedAt"
+        ],
+        "additionalProperties": false
+      },
+      "FileStatus": {
+        "type": "string",
+        "enum": [
+          "pending",
+          "ready",
+          "failed"
+        ]
+      },
+      "UploadSource": {
+        "type": "string",
+        "enum": [
+          "server",
+          "presigned",
+          "multipart"
+        ]
+      },
+      "ErrorResponse": {
+        "type": "object",
+        "properties": {
+          "error": {
+            "type": "object",
+            "properties": {
+              "code": {
+                "type": "string"
+              },
+              "message": {
+                "type": "string"
+              },
+              "details": {},
+              "requestId": {
+                "type": [
+                  "string",
+                  "number"
+                ]
+              }
+            },
+            "required": [
+              "code",
+              "message"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "error"
+        ],
+        "additionalProperties": false
+      },
+      "ListFilesResponse": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FileDto"
+            }
+          },
+          "pagination": {
+            "$ref": "#/components/schemas/Pagination"
+          }
+        },
+        "required": [
+          "items",
+          "pagination"
+        ],
+        "additionalProperties": false
+      },
+      "Pagination": {
+        "type": "object",
+        "properties": {
+          "page": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          },
+          "total": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          },
+          "totalPages": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          }
+        },
+        "required": [
+          "page",
+          "limit",
+          "total",
+          "totalPages"
+        ],
+        "additionalProperties": false
+      },
+      "PresignUploadResponse": {
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/PresignSingleResponse"
+          },
+          {
+            "$ref": "#/components/schemas/PresignMultipartResponse"
+          }
+        ],
+        "type": "object",
+        "discriminator": {
+          "propertyName": "strategy",
+          "mapping": {
+            "single": "#/components/schemas/PresignSingleResponse",
+            "multipart": "#/components/schemas/PresignMultipartResponse"
+          }
+        }
+      },
+      "PresignSingleResponse": {
+        "type": "object",
+        "properties": {
+          "strategy": {
+            "type": "string",
+            "const": "single"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+          },
+          "key": {
+            "type": "string"
+          },
+          "directory": {
+            "type": "string"
+          },
+          "uploadUrl": {
+            "type": "string",
+            "format": "uri"
+          },
+          "expiresAt": {
+            "type": "string",
+            "format": "date-time",
+            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+          },
+          "requiredHeaders": {
+            "type": "object",
+            "propertyNames": {
+              "type": "string"
+            },
+            "additionalProperties": {
+              "type": "string"
+            },
+            "description": "Заголовки, вошедшие в подпись: PUT обязан отправить их дословно"
+          }
+        },
+        "required": [
+          "strategy",
+          "id",
+          "key",
+          "directory",
+          "uploadUrl",
+          "expiresAt",
+          "requiredHeaders"
+        ],
+        "additionalProperties": false
+      },
+      "PresignMultipartResponse": {
+        "type": "object",
+        "properties": {
+          "strategy": {
+            "type": "string",
+            "const": "multipart"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+          },
+          "key": {
+            "type": "string"
+          },
+          "directory": {
+            "type": "string"
+          },
+          "uploadId": {
+            "type": "string"
+          },
+          "size": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          },
+          "partSize": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          },
+          "partCount": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          },
+          "maxConcurrency": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991,
+            "description": "Сколько частей держать в полёте одновременно; число назначает сервер"
+          },
+          "expiresAt": {
+            "type": "string",
+            "format": "date-time",
+            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+          },
+          "parts": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MultipartPartDto"
+            },
+            "description": "Первая пачка ссылок; остальные — через /multipart/part-urls"
+          }
+        },
+        "required": [
+          "strategy",
+          "id",
+          "key",
+          "directory",
+          "uploadId",
+          "size",
+          "partSize",
+          "partCount",
+          "maxConcurrency",
+          "expiresAt",
+          "parts"
+        ],
+        "additionalProperties": false
+      },
+      "MultipartPartDto": {
+        "type": "object",
+        "properties": {
+          "partNumber": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          },
+          "offset": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991,
+            "description": "Начало части в исходном файле: клиент режет file.slice(offset, offset + size)"
+          },
+          "size": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          },
+          "url": {
+            "type": "string",
+            "format": "uri"
+          }
+        },
+        "required": [
+          "partNumber",
+          "offset",
+          "size",
+          "url"
+        ],
+        "additionalProperties": false
+      },
+      "PartUrlsResponse": {
+        "type": "object",
+        "properties": {
+          "expiresAt": {
+            "type": "string",
+            "format": "date-time",
+            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+          },
+          "parts": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MultipartPartDto"
+            }
+          }
+        },
+        "required": [
+          "expiresAt",
+          "parts"
+        ],
+        "additionalProperties": false
+      },
+      "MultipartStatusResponse": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+          },
+          "uploadId": {
+            "type": "string"
+          },
+          "size": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "partSize": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "partCount": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "uploadedParts": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "minimum": -9007199254740991,
+              "maximum": 9007199254740991
+            }
+          },
+          "uploadedBytes": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          }
+        },
+        "required": [
+          "id",
+          "uploadId",
+          "size",
+          "partSize",
+          "partCount",
+          "uploadedParts",
+          "uploadedBytes"
+        ],
+        "additionalProperties": false
+      },
+      "DownloadUrlResponse": {
+        "type": "object",
+        "properties": {
+          "url": {
+            "type": "string",
+            "format": "uri"
+          },
+          "expiresAt": {
+            "type": "string",
+            "format": "date-time",
+            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+          },
+          "name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "url",
+          "expiresAt",
+          "name"
+        ],
+        "additionalProperties": false
+      },
+      "DirectoriesResponse": {
+        "type": "object",
+        "properties": {
+          "parent": {
+            "type": "string"
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DirectoryDto"
+            }
+          }
+        },
+        "required": [
+          "parent",
+          "items"
+        ],
+        "additionalProperties": false
+      },
+      "DirectoryDto": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          },
+          "fileCount": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          }
+        },
+        "required": [
+          "name",
+          "path",
+          "fileCount"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "securitySchemes": {
+      "ApiKey": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "X-API-Key"
+      }
+    }
+  }
+}
