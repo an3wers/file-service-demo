@@ -3,7 +3,8 @@ import { fileURLToPath } from "node:url";
 import { createDocument } from "zod-openapi";
 import type { ZodOpenApiPathsObject } from "zod-openapi";
 import { MOUNTS } from "./app.js";
-import { API_KEY_SECURITY } from "./http-contract.js";
+import { BEARER_SECURITY } from "./http-contract.js";
+import { authPaths } from "./modules/auth/index.js";
 import { directoriesPaths, filesPaths } from "./modules/files/index.js";
 import { healthPaths } from "./routes/health.openapi.js";
 
@@ -38,22 +39,25 @@ export function buildOpenApiDocument(): OpenApiDocument {
       version: packageVersion(),
       description:
         "Файлы в S3-совместимом хранилище и их метаданные в PostgreSQL. " +
-        "Все /api/* требуют заголовок X-API-Key.",
+        "Все /api/* требуют заголовок Authorization: Bearer <токен доступа>, кроме /api/auth/*: " +
+        "токен выдают вход и продление.",
     },
-    security: [{ [API_KEY_SECURITY]: [] }],
+    security: [{ [BEARER_SECURITY]: [] }],
     components: {
       securitySchemes: {
-        [API_KEY_SECURITY]: { type: "apiKey", in: "header", name: "X-API-Key" },
+        [BEARER_SECURITY]: { type: "http", scheme: "bearer", bearerFormat: "JWT" },
       },
     },
     tags: [
+      { name: "auth", description: "Вход, продление и выход, без токена доступа" },
       { name: "files", description: "Каталог файлов и загрузка через сервер" },
       { name: "uploads", description: "Загрузка в обход сервера по подписанным ссылкам" },
       { name: "directories", description: "Каталоги" },
-      { name: "health", description: "Пробы живости и готовности, без ключа" },
+      { name: "health", description: "Пробы живости и готовности, без токена" },
     ],
     paths: {
       ...mount(MOUNTS.health, healthPaths),
+      ...mount(MOUNTS.auth, authPaths),
       ...mount(MOUNTS.files, filesPaths),
       ...mount(MOUNTS.directories, directoriesPaths),
     },

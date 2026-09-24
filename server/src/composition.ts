@@ -9,6 +9,7 @@ import { createS3Client } from "./storage/s3-client.js";
 import { createS3ObjectStore, PROTOCOL_LIMITS } from "./storage/s3-object-store.js";
 import type { ObjectStore } from "./storage/object-store.js";
 import { createFilesHttp } from "./modules/files/index.js";
+import { createAuthHttp } from "./modules/auth/index.js";
 import type { UploadPolicy } from "./modules/files/index.js";
 
 /**
@@ -71,10 +72,14 @@ export function buildApp(): Express {
     uploadSingleFile: createUploadMiddleware(config.uploads.maxSizeBytes),
   });
 
+  const { authRouter, requireAuth } = createAuthHttp(config.auth);
+
   return createApp({
     corsOrigin: config.corsOrigin,
     apiDocs: config.apiDocsEnabled ? buildOpenApiDocument() : undefined,
     healthRouter: createHealthRouter({ objectStore, checkDatabase }),
+    authRouter,
+    requireAuth,
     filesRouter,
     directoriesRouter,
   });

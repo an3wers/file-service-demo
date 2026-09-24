@@ -26,6 +26,7 @@
     "@aws-sdk/s3-request-presigner": "^3.1119.0",
     "cors": "^2.8.6",
     "express": "^5.2.1",
+    "jose": "^6.2.12",
     "multer": "^2.2.0",
     "pg": "^8.23.0",
     "pino": "^10.3.1",

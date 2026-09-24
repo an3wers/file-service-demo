@@ -10,7 +10,16 @@ const envSchema = z.object({
   LOG_LEVEL: z
     .enum(["fatal", "error", "warn", "info", "debug", "trace", "silent"])
     .default("info"),
-  API_KEY: z.string().min(16, "API_KEY must be at least 16 characters"),
+  LOGIN_USER_APP: z
+    .string()
+    .min(1, "LOGIN_USER_APP must not be empty")
+    .refine((value) => value === value.trim(), "LOGIN_USER_APP must not start or end with whitespace"),
+  PASSWORD_USER_APP: z.string().min(8, "PASSWORD_USER_APP must be at least 8 characters"),
+  JWT_ACCESS_SECRET: z.string().min(32, "JWT_ACCESS_SECRET must be at least 32 characters"),
+  JWT_REFRESH_SECRET: z.string().min(32, "JWT_REFRESH_SECRET must be at least 32 characters"),
+  JWT_ACCESS_TTL_MINUTES: z.coerce.number().int().positive().default(15),
+  JWT_REFRESH_TTL_DAYS: z.coerce.number().int().positive().default(7),
+  COOKIE_SECURE: booleanish.default(false),
   CORS_ORIGIN: z.string().default("http://localhost:5173"),
   API_DOCS_ENABLED: booleanish.optional(),
 
@@ -69,9 +78,18 @@ export const config = {
   isProduction: env.NODE_ENV === "production",
   port: env.PORT,
   logLevel: env.LOG_LEVEL,
-  apiKey: env.API_KEY,
   corsOrigin: env.CORS_ORIGIN.split(",").map((origin) => origin.trim()).filter(Boolean),
   apiDocsEnabled: env.API_DOCS_ENABLED ?? env.NODE_ENV !== "production",
+
+  auth: {
+    login: env.LOGIN_USER_APP,
+    password: env.PASSWORD_USER_APP,
+    accessSecret: env.JWT_ACCESS_SECRET,
+    refreshSecret: env.JWT_REFRESH_SECRET,
+    accessTtlSeconds: env.JWT_ACCESS_TTL_MINUTES * 60,
+    refreshTtlSeconds: env.JWT_REFRESH_TTL_DAYS * 24 * 60 * 60,
+    cookieSecure: env.COOKIE_SECURE,
+  },
 
   s3: {
     endpoint: env.S3_ENDPOINT,

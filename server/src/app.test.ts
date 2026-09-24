@@ -3,7 +3,6 @@ import type { Server } from "node:http";
 import { Router } from "express";
 import { afterEach, describe, expect, it } from "vitest";
 import { API_DOCS_PATH, API_SPEC_PATH, createApp } from "./app.js";
-import { config } from "./config.js";
 
 const document = { openapi: "3.1.0", info: { title: "test", version: "0.0.0" }, paths: {} };
 
@@ -12,6 +11,8 @@ let server: Server | undefined;
 async function start(apiDocs?: object): Promise<string> {
   const app = createApp({
     healthRouter: Router(),
+    authRouter: Router(),
+    requireAuth: (_req, _res, next) => next(),
     filesRouter: Router(),
     directoriesRouter: Router(),
     corsOrigin: [],
@@ -31,7 +32,7 @@ afterEach(async () => {
 });
 
 describe("документация API", () => {
-  it("отдаёт спецификацию и Swagger UI без API-ключа, когда включена", async () => {
+  it("отдаёт спецификацию и Swagger UI без токена доступа, когда включена", async () => {
     const base = await start(document);
 
     const spec = await fetch(`${base}${API_SPEC_PATH}`);
@@ -45,10 +46,8 @@ describe("документация API", () => {
 
   it("не отдаёт ни спецификацию, ни Swagger UI, когда выключена", async () => {
     const base = await start();
-    const headers = { "X-API-Key": config.apiKey };
-
-    const spec = await fetch(`${base}${API_SPEC_PATH}`, { headers });
-    const ui = await fetch(`${base}${API_DOCS_PATH}/`, { headers });
+    const spec = await fetch(`${base}${API_SPEC_PATH}`);
+    const ui = await fetch(`${base}${API_DOCS_PATH}/`);
 
     expect(spec.status).toBe(404);
     expect(ui.status).toBe(404);

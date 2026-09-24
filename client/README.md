@@ -2,8 +2,8 @@
 
 Одностраничный интерфейс к [файловому сервису](../server/README.md): загрузка файлов в двух режимах
 (через API и напрямую в объектное хранилище по presigned-ссылке), дерево папок, список с поиском,
-сортировкой и пагинацией, карточка файла, скачивание и удаление. Роутинга нет — весь интерфейс на
-одной странице: `App.vue` — это шапка плюс `FileBrowser`.
+сортировкой и пагинацией, карточка файла, скачивание и удаление. Две страницы на `vue-router`:
+`/login` — форма входа, `/` — шапка плюс `FileBrowser`.
 
 Vue 3 (`<script setup>`), TypeScript, Vite 8, Tailwind CSS v4, shadcn-vue (new-york / neutral /
 lucide), тосты — `vue-sonner`, утилиты — `@vueuse/core`.
@@ -12,7 +12,7 @@ lucide), тосты — `vue-sonner`, утилиты — `@vueuse/core`.
 
 ```bash
 npm install
-cp .env.example .env        # заполнить VITE_API_KEY — тем же ключом, что и API_KEY сервера
+cp .env.example .env
 npm run dev                 # http://localhost:5173
 ```
 
@@ -38,7 +38,6 @@ npm run dev                 # http://localhost:5173
 
 | Переменная | По умолчанию | Примечания |
 |---|---|---|
-| `VITE_API_KEY` | — | уходит в `X-API-Key` на каждом запросе; должен совпадать с `API_KEY` сервера. Попадает в бандл — приемлемо только для локального MVP |
 | `VITE_MAX_UPLOAD_SIZE_MB` | `50` | справочный порог для режима «через сервер»; настоящий лимит живёт на сервере и приходит как 413 |
 | `VITE_S3_HOST` | — | базовый URL хранилища для ссылки «Статичный url» в карточке файла |
 | `VITE_API_TARGET` | `http://localhost:3000` | цель dev/preview-прокси; это переменная окружения процесса, а не ключ из `.env` |
@@ -53,14 +52,29 @@ JSON; файл отправляется через XHR (`apiUpload` / `xhrSend`)
 бакета настроен ровно на `http://localhost:5173` (`npm run s3:cors` на сервере). Молчаливый сдвиг на
 5174 сломал бы presigned-загрузку непрозрачной CORS-ошибкой.
 
+## Вход
+
+Логин и пароль пользователя задаёт окружение сервера (`LOGIN_USER_APP`, `PASSWORD_USER_APP`).
+
+- **`api/session.ts`** — обычный TS без Vue: токен доступа только в памяти, `expiresAt`, общий промис
+  продления, колбэк `onSessionExpired`. Токен обновления — httpOnly-cookie, скрипты его не видят.
+- **`apiRequest` / `apiUpload`** — подставляют `Authorization: Bearer`. Если до `expiresAt` меньше
+  30 секунд, сначала продлевают сессию. На `401 UNAUTHORIZED` — одно продление на все параллельные
+  запросы и повтор; на `SESSION_EXPIRED` — `onSessionExpired` без повтора.
+- **`useAuth`** — реактивный синглтон поверх `session.ts`: статус старта, пользователь, вход, выход,
+  `BroadcastChannel` между вкладками (рассылаются вход и выход, истечение — нет).
+- **`router/`** — guard ждёт один `POST /api/auth/refresh` на старте: `401` → `/login`, другая ошибка
+  → полноэкранная ошибка с «Повторить». Выход и истечение сессии отменяют загрузку и ведут на
+  `/login`; навигация браузера файлов сбрасывается только при выходе.
+
 ## Устройство
 
 Состояние приложения живёт на уровне модулей в `src/composables/` — страница одна, браузер файлов
 один, поэтому пропсы через три уровня не гоняются.
 
 - **`useFileBrowser`** — список: директория, поиск (дебаунс 350 мс), пагинация, сортировка, крошки.
-  `load()` отменяемый и защищён инкрементным id от гонок ответов; первый запрос уходит сразу на
-  импорте модуля.
+  `load()` отменяемый и защищён инкрементным id от гонок ответов; первый запрос уходит при монтировании
+  `FileBrowser`, `reset()` при выходе возвращает к корню.
 - **`useUpload`** — загрузка: режим (`server` / `presigned`), стадии, прогресс, отмена через
   `AbortController`. В presigned-режиме выбор single / multipart делает сервер (поле `strategy`),
   клиент исполняет присланный план. Multipart: параллельность по `maxConcurrency` сервера, повтор
@@ -118,17 +132,22 @@ Vitest + happy-dom, тесты лежат рядом с кодом (`src/**/*.te
 tailwind-плагин, ни dev-proxy. `src/test/setup.ts` доставляет браузерные API, которых нет в
 happy-dom, но которые нужны reka-ui (`matchMedia`, `ResizeObserver`, pointer-capture).
 
-Покрыты оркестровка `useUpload` (модуль API замокан целиком), помощники `parts.ts` и `format.ts`,
-плюс дымовой mount SFC через алиас `@`.
+Покрыты оркестровка `useUpload` (модуль API замокан целиком), продление сессии в `api/client`,
+guard и синхронизация вкладок в `router/`, форма входа, помощники `parts.ts` и `format.ts`, плюс
+дымовой mount SFC через алиас `@`.
 
 ## Структура
 
 ```
 src/
   main.ts  App.vue  style.css  env.d.ts
-  api/          client.ts — fetch + XHR-загрузка, ApiError, buildQuery, разбор ошибок
-                files.ts, directories.ts — по функции на эндпоинт
-  composables/  useFileBrowser.ts — состояние списка
+  api/          client.ts — fetch + XHR-загрузка, ApiError, buildQuery, разбор ошибок, продление
+                session.ts — токен доступа в памяти
+                auth.ts, files.ts, directories.ts — по функции на эндпоинт
+  router/       index.ts — маршруты и guard, реакция на выход и истечение сессии
+  pages/        LoginPage.vue, FilesPage.vue
+  composables/  useAuth.ts        — сессия для UI, BroadcastChannel между вкладками
+                useFileBrowser.ts — состояние списка
                 useUpload.ts       — оркестровка загрузки (server / presigned / multipart)
                 useFileActions.ts  — скачивание и удаление
   components/   FileBrowser.vue — точка сборки

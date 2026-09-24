@@ -77,7 +77,7 @@ export function presignUpload(
 
 /**
  * Голый XHR в обход `apiRequest`: это чужой origin (S3), туда не идут ни
- * `X-API-Key`, ни credentials. Заголовки — РОВНО те, что попали в подпись:
+ * токен доступа, ни credentials. Заголовки — РОВНО те, что попали в подпись:
  * любой лишний браузеру пришлось бы воспроизвести байт-в-байт.
  */
 async function putToS3(
