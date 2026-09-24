@@ -2,6 +2,7 @@ import { buildApp } from "./composition.js";
 import { config } from "./config.js";
 import { checkDatabase, pool } from "./db/pool.js";
 import { logger } from "./logger.js";
+import { syncAuthUser } from "./modules/auth/index.js";
 
 // Fail at boot rather than on the first request that needs the database.
 try {
@@ -9,6 +10,18 @@ try {
   logger.info("Connected to PostgreSQL");
 } catch (error) {
   logger.error({ err: error }, "Cannot reach PostgreSQL; aborting startup");
+  process.exit(1);
+}
+
+try {
+  const sync = await syncAuthUser(config.auth);
+
+  logger.info({ login: config.auth.login, ...sync }, "User from the environment is in sync");
+} catch (error) {
+  logger.error(
+    { err: error },
+    "Не удалось завести пользователя из окружения: выполните db:migrate и перезапустите сервер",
+  );
   process.exit(1);
 }
 

@@ -4,6 +4,8 @@
  */
 export const ERROR_CODES = {
   UNAUTHORIZED: "UNAUTHORIZED",
+  INVALID_CREDENTIALS: "INVALID_CREDENTIALS",
+  SESSION_EXPIRED: "SESSION_EXPIRED",
   ROUTE_NOT_FOUND: "ROUTE_NOT_FOUND",
   VALIDATION_ERROR: "VALIDATION_ERROR",
   INTERNAL_SERVER_ERROR: "INTERNAL_SERVER_ERROR",
@@ -68,7 +70,7 @@ export const badRequest = (
   options?: AppErrorOptions,
 ) => new AppError(400, code, message, details, options);
 
-export const unauthorized = (message = "Missing or invalid API key") =>
+export const unauthorized = (message = "Missing or invalid access token") =>
   new AppError(401, ERROR_CODES.UNAUTHORIZED, message);
 
 export const notFound = (

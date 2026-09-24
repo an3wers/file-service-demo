@@ -1,14 +1,14 @@
 import cors from "cors";
 import express from "express";
-import type { Express, Router } from "express";
+import type { Express, RequestHandler, Router } from "express";
 import { pinoHttp } from "pino-http";
 import swaggerUi from "swagger-ui-express";
 import { logger } from "./logger.js";
 import { errorHandler, notFoundHandler } from "./middleware/error-handler.js";
-import { apiKeyAuth } from "./middleware/api-key.js";
 
 export const MOUNTS = {
   health: "/health",
+  auth: "/api/auth",
   files: "/api/files",
   directories: "/api/directories",
 } as const;
@@ -18,6 +18,8 @@ export const API_SPEC_PATH = "/api/openapi.json";
 
 export interface AppDeps {
   healthRouter: Router;
+  authRouter: Router;
+  requireAuth: RequestHandler;
   filesRouter: Router;
   directoriesRouter: Router;
   corsOrigin: string[];
@@ -31,6 +33,8 @@ export interface AppDeps {
  */
 export function createApp({
   healthRouter,
+  authRouter,
+  requireAuth,
   filesRouter,
   directoriesRouter,
   corsOrigin,
@@ -44,7 +48,7 @@ export function createApp({
   app.use(
     cors({
       origin: corsOrigin,
-      allowedHeaders: ["Content-Type", "X-API-Key"],
+      allowedHeaders: ["Content-Type", "Authorization"],
     }),
   );
   app.use(express.json({ limit: "1mb" }));
@@ -57,7 +61,6 @@ export function createApp({
     });
   });
 
-  // Health checks stay open so probes do not need the API key.
   app.use(MOUNTS.health, healthRouter);
 
   if (apiDocs) {
@@ -71,7 +74,8 @@ export function createApp({
     );
   }
 
-  app.use("/api", apiKeyAuth);
+  app.use(MOUNTS.auth, authRouter);
+  app.use("/api", requireAuth);
   app.use(MOUNTS.files, filesRouter);
   app.use(MOUNTS.directories, directoriesRouter);
 

@@ -11,7 +11,14 @@ import globals from "globals";
  * `logger.ts`, the `storage/` port types) are not in this list on purpose:
  * see `src/modules/files/README.md` for why the boundary stops there.
  */
-const VENDOR_PACKAGES = ["pg", "express", "multer", "@aws-sdk/client-s3", "@aws-sdk/s3-request-presigner"];
+const VENDOR_PACKAGES = [
+  "pg",
+  "express",
+  "multer",
+  "jose",
+  "@aws-sdk/client-s3",
+  "@aws-sdk/s3-request-presigner",
+];
 
 const MODULES_DIR = fileURLToPath(new URL("src/modules/", import.meta.url));
 

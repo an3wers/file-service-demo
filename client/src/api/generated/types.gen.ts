@@ -29,6 +29,26 @@ export type DependencyCheck = {
     message?: string;
 };
 
+export type AuthSession = {
+    accessToken: string;
+    /**
+     * Сколько секунд живёт токен доступа
+     */
+    expiresIn: number;
+    user: {
+        login: string;
+    };
+};
+
+export type ErrorResponse = {
+    error: {
+        code: string;
+        message: string;
+        details?: unknown;
+        requestId?: string | number;
+    };
+};
+
 export type FileDto = {
     id: string;
     name: string;
@@ -55,15 +75,6 @@ export type FileDto = {
 export type FileStatus = 'pending' | 'ready' | 'failed';
 
 export type UploadSource = 'server' | 'presigned' | 'multipart';
-
-export type ErrorResponse = {
-    error: {
-        code: string;
-        message: string;
-        details?: unknown;
-        requestId?: string | number;
-    };
-};
 
 export type ListFilesResponse = {
     items: Array<FileDto>;
@@ -201,6 +212,99 @@ export type GetReadinessResponses = {
 
 export type GetReadinessResponse = GetReadinessResponses[keyof GetReadinessResponses];
 
+export type LoginData = {
+    body: {
+        login: string;
+        password: string;
+    };
+    path?: never;
+    query?: never;
+    url: '/api/auth/login';
+};
+
+export type LoginErrors = {
+    /**
+     * INVALID_CREDENTIALS: неверный логин или пароль
+     */
+    401: ErrorResponse;
+    /**
+     * Запрос не прошёл валидацию; details — результат z.flattenError()
+     */
+    422: ErrorResponse;
+    /**
+     * Непредвиденная ошибка сервера
+     */
+    500: ErrorResponse;
+    /**
+     * Хранилище или база данных недоступны
+     */
+    503: ErrorResponse;
+};
+
+export type LoginError = LoginErrors[keyof LoginErrors];
+
+export type LoginResponses = {
+    /**
+     * Вход выполнен
+     */
+    200: AuthSession;
+};
+
+export type LoginResponse = LoginResponses[keyof LoginResponses];
+
+export type RefreshSessionData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/auth/refresh';
+};
+
+export type RefreshSessionErrors = {
+    /**
+     * SESSION_EXPIRED: cookie нет, токен недействителен или истёк, сессии отозваны
+     */
+    401: ErrorResponse;
+    /**
+     * Запрос не прошёл валидацию; details — результат z.flattenError()
+     */
+    422: ErrorResponse;
+    /**
+     * Непредвиденная ошибка сервера
+     */
+    500: ErrorResponse;
+    /**
+     * Хранилище или база данных недоступны
+     */
+    503: ErrorResponse;
+};
+
+export type RefreshSessionError = RefreshSessionErrors[keyof RefreshSessionErrors];
+
+export type RefreshSessionResponses = {
+    /**
+     * Сессия продлена
+     */
+    200: AuthSession;
+};
+
+export type RefreshSessionResponse = RefreshSessionResponses[keyof RefreshSessionResponses];
+
+export type LogoutData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/auth/logout';
+};
+
+export type LogoutResponses = {
+    /**
+     * Cookie очищена
+     */
+    204: void;
+};
+
+export type LogoutResponse = LogoutResponses[keyof LogoutResponses];
+
 export type ListFilesData = {
     body?: never;
     path?: never;
@@ -223,7 +327,7 @@ export type ListFilesErrors = {
      */
     400: ErrorResponse;
     /**
-     * Нет заголовка X-API-Key или ключ неверный
+     * Нет токена доступа или он недействителен
      */
     401: ErrorResponse;
     /**
@@ -267,7 +371,7 @@ export type UploadFileErrors = {
      */
     400: ErrorResponse;
     /**
-     * Нет заголовка X-API-Key или ключ неверный
+     * Нет токена доступа или он недействителен
      */
     401: ErrorResponse;
     /**
@@ -317,7 +421,7 @@ export type PresignUploadErrors = {
      */
     400: ErrorResponse;
     /**
-     * Нет заголовка X-API-Key или ключ неверный
+     * Нет токена доступа или он недействителен
      */
     401: ErrorResponse;
     /**
@@ -370,7 +474,7 @@ export type GetPartUrlsErrors = {
      */
     400: ErrorResponse;
     /**
-     * Нет заголовка X-API-Key или ключ неверный
+     * Нет токена доступа или он недействителен
      */
     401: ErrorResponse;
     /**
@@ -417,7 +521,7 @@ export type GetMultipartStatusData = {
 
 export type GetMultipartStatusErrors = {
     /**
-     * Нет заголовка X-API-Key или ключ неверный
+     * Нет токена доступа или он недействителен
      */
     401: ErrorResponse;
     /**
@@ -464,7 +568,7 @@ export type DeleteFileData = {
 
 export type DeleteFileErrors = {
     /**
-     * Нет заголовка X-API-Key или ключ неверный
+     * Нет токена доступа или он недействителен
      */
     401: ErrorResponse;
     /**
@@ -509,7 +613,7 @@ export type GetFileData = {
 
 export type GetFileErrors = {
     /**
-     * Нет заголовка X-API-Key или ключ неверный
+     * Нет токена доступа или он недействителен
      */
     401: ErrorResponse;
     /**
@@ -552,7 +656,7 @@ export type CompleteUploadData = {
 
 export type CompleteUploadErrors = {
     /**
-     * Нет заголовка X-API-Key или ключ неверный
+     * Нет токена доступа или он недействителен
      */
     401: ErrorResponse;
     /**
@@ -602,7 +706,7 @@ export type GetDownloadUrlData = {
 
 export type GetDownloadUrlErrors = {
     /**
-     * Нет заголовка X-API-Key или ключ неверный
+     * Нет токена доступа или он недействителен
      */
     401: ErrorResponse;
     /**
@@ -653,7 +757,7 @@ export type ListDirectoriesErrors = {
      */
     400: ErrorResponse;
     /**
-     * Нет заголовка X-API-Key или ключ неверный
+     * Нет токена доступа или он недействителен
      */
     401: ErrorResponse;
     /**

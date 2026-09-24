@@ -37,7 +37,13 @@ npm run dev
 | Переменная | По умолчанию | Примечания |
 |---|---|---|
 | `PORT` | `3000` | |
-| `API_KEY` | — | обязателен в `X-API-Key` на каждом маршруте `/api/*` |
+| `LOGIN_USER_APP` | — | логин единственного пользователя; непустой, без пробелов по краям |
+| `PASSWORD_USER_APP` | — | его пароль, ≥ 8 символов; смена + рестарт завершают все сессии |
+| `JWT_ACCESS_SECRET` | — | ключ подписи токенов доступа, ≥ 32 символов |
+| `JWT_REFRESH_SECRET` | — | ключ подписи токенов обновления, ≥ 32 символов, отличный от предыдущего |
+| `JWT_ACCESS_TTL_MINUTES` | `15` | срок токена доступа |
+| `JWT_REFRESH_TTL_DAYS` | `7` | срок токена обновления и `Max-Age` его cookie |
+| `COOKIE_SECURE` | `false` | флаг `Secure` у cookie; `true` только за HTTPS |
 | `CORS_ORIGIN` | `http://localhost:5173` | через запятую; используется и в `npm run s3:cors` |
 | `API_DOCS_ENABLED` | `true` вне production, `false` в production | Swagger UI на `/api/docs` и спецификация на `/api/openapi.json` |
 | `MAX_UPLOAD_SIZE_MB` | `50` | только для загрузок через сервер |
@@ -56,15 +62,35 @@ npm run dev
 
 ## API
 
-`/health` и `/health/ready` открыты. Всё под `/api` требует `X-API-Key`, кроме документации.
+`/health` и `/health/ready` открыты. Всё под `/api` требует `Authorization: Bearer <токен доступа>`,
+кроме `/api/auth/*` и документации. Токен проверяется только по подписи, сроку и типу, без базы.
+
+### Аутентификация
+
+Пользователь один, его задают `LOGIN_USER_APP` и `PASSWORD_USER_APP`; регистрации нет. На старте,
+после проверки базы, сервер заводит для него строку в `users` (без дублей и при одновременных
+стартах), а если пароль в `.env` сменился — перехеширует его и поднимает `token_version`, то есть
+завершает все сессии. Строки с другими логинами не трогаются, но войти может только логин из
+окружения. Без применённой миграции `004_users.sql` сервер не стартует. Почему так —
+[ADR-0007](../docs/adr/0007-autentifikatsiya-polzovatelya-iz-okruzheniya.md).
+
+| Эндпоинт | Успех | Ошибка |
+|---|---|---|
+| `POST /api/auth/login` `{ login, password }` | `200 { accessToken, expiresIn, user: { login } }` + cookie | `401 INVALID_CREDENTIALS` |
+| `POST /api/auth/refresh` (по cookie) | тот же ответ и новая cookie | `401 SESSION_EXPIRED` |
+| `POST /api/auth/logout` | `204`, cookie очищена; ничего не отзывает | — |
+
+Токен обновления живёт в cookie `refresh_token` (`HttpOnly`, `SameSite=Strict`, `Path=/api/auth`,
+`Max-Age` = `JWT_REFRESH_TTL_DAYS`, `Secure` = `COOKIE_SECURE`). Пароли хешируются `scrypt` из
+`node:crypto`, токены — JWT HS256 на `jose`. Модуль — `src/modules/auth/`, слои как у `files`.
 
 Контракт описан в `openapi.json` — он собирается из Zod-схем запросов и ответов
 (`src/modules/files/adapters/http/schemas.ts`, `responses.ts`, `openapi.ts`) командой
 `npm run openapi` и коммитится; клиент генерирует из него типы. Тест `src/openapi.test.ts` падает,
 если файл устарел или маршрут не описан. Почему так — [ADR-0006](../docs/adr/0006-kontrakt-api-iz-zod-shem.md).
 
-Swagger UI — `/api/docs` (через vite-прокси: `http://localhost:5173/api/docs`). Ключ вводится
-в **Authorize** и переживает перезагрузку страницы. Включается `API_DOCS_ENABLED`.
+Swagger UI — `/api/docs` (через vite-прокси: `http://localhost:5173/api/docs`). Токен доступа из
+ответа `POST /api/auth/login` вводится в **Authorize** и переживает перезагрузку страницы. Включается `API_DOCS_ENABLED`.
 
 ### Ошибки
 
@@ -88,7 +114,9 @@ Swagger UI — `/api/docs` (через vite-прокси: `http://localhost:5173
 
 | Код | Статус | Когда |
 |---|---|---|
-| `UNAUTHORIZED` | 401 | нет или неверен `X-API-Key` |
+| `UNAUTHORIZED` | 401 | нет токена доступа, он истёк или недействителен |
+| `INVALID_CREDENTIALS` | 401 | вход не удался; не говорит, что именно неверно — логин или пароль |
+| `SESSION_EXPIRED` | 401 | продление не удалось: нет cookie, токен истёк или сессии отозваны — нужен вход |
 | `ROUTE_NOT_FOUND` | 404 | такого маршрута нет |
 | `VALIDATION_ERROR` | 422 | не прошла zod-схема; `details` — `{ formErrors, fieldErrors }` |
 | `FILE_REQUIRED` | 400 | в `multipart/form-data` нет поля `file` |
@@ -279,8 +307,8 @@ npm run test:coverage  # покрытие; требует npm i -D @vitest/cover
 прогон перестаёт зависеть от того, что лежит в локальном `.env`.
 
 Набор покрывает логику, которой не нужны ни S3, ни база: именование и санитизация ключей, трансляция
-ошибок pg и AWS SDK, маппер `FileDto`, сверка API-ключа. Для тестов на уровне HTTP-маршрутов
-понадобится `supertest` — он пока не установлен.
+ошибок pg и AWS SDK, маппер `FileDto`, вход, продление и `requireAuth` поверх in-memory строк пользователей. Маршруты `/api/auth/*` и
+`requireAuth` проверяются по HTTP на поднятом через `app.listen(0)` приложении, без `supertest`.
 
 ## Структура
 
@@ -292,7 +320,8 @@ src/
   storage/   object-store.ts (шов), s3-object-store.ts и s3-client.ts (специфика
              Cloud.ru), s3-errors.ts (трансляция ошибок SDK), memory-object-store.ts
              (реализация для тестов), keys.ts (именование и санитизация)
-  middleware/ api-key.ts, upload.ts, validate.ts, error-handler.ts
+  middleware/ upload.ts, validate.ts, error-handler.ts
+  modules/auth/   вход, продление, выход, requireAuth и пользователь из окружения
   modules/files/  routes → module → rows: фабрики, принимающие зависимости, плюс
                   file-rows.ts (узкие интерфейсы) и memory-file-rows.ts, files.repo.ts
                   (SQL), cleanup.service.ts (уборка), upload-plan.ts, upload-policy.ts,

@@ -3,14 +3,18 @@
   "info": {
     "title": "File Service API",
     "version": "1.0.0",
-    "description": "Файлы в S3-совместимом хранилище и их метаданные в PostgreSQL. Все /api/* требуют заголовок X-API-Key."
+    "description": "Файлы в S3-совместимом хранилище и их метаданные в PostgreSQL. Все /api/* требуют заголовок Authorization: Bearer <токен доступа>, кроме /api/auth/*: токен выдают вход и продление."
   },
   "security": [
     {
-      "ApiKey": []
+      "BearerAuth": []
     }
   ],
   "tags": [
+    {
+      "name": "auth",
+      "description": "Вход, продление и выход, без токена доступа"
+    },
     {
       "name": "files",
       "description": "Каталог файлов и загрузка через сервер"
@@ -25,7 +29,7 @@
     },
     {
       "name": "health",
-      "description": "Пробы живости и готовности, без ключа"
+      "description": "Пробы живости и готовности, без токена"
     }
   ],
   "paths": {
@@ -79,6 +83,205 @@
                 }
               }
             }
+          }
+        }
+      }
+    },
+    "/api/auth/login": {
+      "post": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "Вход",
+        "description": "Меняет логин и пароль пользователя из окружения на токен доступа (в теле ответа) и токен обновления (в httpOnly-cookie).",
+        "operationId": "login",
+        "security": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "login": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 255
+                  },
+                  "password": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 1024
+                  }
+                },
+                "required": [
+                  "login",
+                  "password"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Вход выполнен",
+            "headers": {
+              "Set-Cookie": {
+                "required": true,
+                "description": "refresh_token: токен обновления; HttpOnly, SameSite=Strict, Path=/api/auth",
+                "schema": {
+                  "type": "string",
+                  "description": "refresh_token: токен обновления; HttpOnly, SameSite=Strict, Path=/api/auth"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthSession"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "INVALID_CREDENTIALS: неверный логин или пароль",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Запрос не прошёл валидацию; details — результат z.flattenError()",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Непредвиденная ошибка сервера",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Хранилище или база данных недоступны",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/auth/refresh": {
+      "post": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "Продление",
+        "description": "Меняет токен обновления из cookie на новую пару токенов; новый токен обновления приходит в cookie.",
+        "operationId": "refreshSession",
+        "security": [],
+        "parameters": [
+          {
+            "in": "cookie",
+            "name": "refresh_token",
+            "schema": {
+              "description": "Токен обновления из входа или продления",
+              "type": "string"
+            },
+            "description": "Токен обновления из входа или продления"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Сессия продлена",
+            "headers": {
+              "Set-Cookie": {
+                "required": true,
+                "description": "refresh_token: токен обновления; HttpOnly, SameSite=Strict, Path=/api/auth",
+                "schema": {
+                  "type": "string",
+                  "description": "refresh_token: токен обновления; HttpOnly, SameSite=Strict, Path=/api/auth"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthSession"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "SESSION_EXPIRED: cookie нет, токен недействителен или истёк, сессии отозваны",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Запрос не прошёл валидацию; details — результат z.flattenError()",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Непредвиденная ошибка сервера",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Хранилище или база данных недоступны",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/auth/logout": {
+      "post": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "Выход",
+        "description": "Очищает cookie токена обновления в этом браузере. Ничего не отзывает; повторный вызов не ошибка.",
+        "operationId": "logout",
+        "security": [],
+        "responses": {
+          "204": {
+            "description": "Cookie очищена"
           }
         }
       }
@@ -137,7 +340,7 @@
             }
           },
           "401": {
-            "description": "Нет заголовка X-API-Key или ключ неверный",
+            "description": "Нет токена доступа или он недействителен",
             "content": {
               "application/json": {
                 "schema": {
@@ -292,7 +495,7 @@
             }
           },
           "401": {
-            "description": "Нет заголовка X-API-Key или ключ неверный",
+            "description": "Нет токена доступа или он недействителен",
             "content": {
               "application/json": {
                 "schema": {
@@ -398,7 +601,7 @@
             }
           },
           "401": {
-            "description": "Нет заголовка X-API-Key или ключ неверный",
+            "description": "Нет токена доступа или он недействителен",
             "content": {
               "application/json": {
                 "schema": {
@@ -526,7 +729,7 @@
             }
           },
           "401": {
-            "description": "Нет заголовка X-API-Key или ключ неверный",
+            "description": "Нет токена доступа или он недействителен",
             "content": {
               "application/json": {
                 "schema": {
@@ -620,7 +823,7 @@
             }
           },
           "401": {
-            "description": "Нет заголовка X-API-Key или ключ неверный",
+            "description": "Нет токена доступа или он недействителен",
             "content": {
               "application/json": {
                 "schema": {
@@ -727,7 +930,7 @@
             }
           },
           "401": {
-            "description": "Нет заголовка X-API-Key или ключ неверный",
+            "description": "Нет токена доступа или он недействителен",
             "content": {
               "application/json": {
                 "schema": {
@@ -801,7 +1004,7 @@
             "description": "Файл удалён"
           },
           "401": {
-            "description": "Нет заголовка X-API-Key или ключ неверный",
+            "description": "Нет токена доступа или он недействителен",
             "content": {
               "application/json": {
                 "schema": {
@@ -885,7 +1088,7 @@
             }
           },
           "401": {
-            "description": "Нет заголовка X-API-Key или ключ неверный",
+            "description": "Нет токена доступа или он недействителен",
             "content": {
               "application/json": {
                 "schema": {
@@ -999,7 +1202,7 @@
             }
           },
           "401": {
-            "description": "Нет заголовка X-API-Key или ключ неверный",
+            "description": "Нет токена доступа или он недействителен",
             "content": {
               "application/json": {
                 "schema": {
@@ -1100,7 +1303,7 @@
             }
           },
           "401": {
-            "description": "Нет заголовка X-API-Key или ключ неверный",
+            "description": "Нет токена доступа или он недействителен",
             "content": {
               "application/json": {
                 "schema": {
@@ -1246,6 +1449,70 @@
         ],
         "additionalProperties": false
       },
+      "AuthSession": {
+        "type": "object",
+        "properties": {
+          "accessToken": {
+            "type": "string"
+          },
+          "expiresIn": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991,
+            "description": "Сколько секунд живёт токен доступа"
+          },
+          "user": {
+            "type": "object",
+            "properties": {
+              "login": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "login"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "accessToken",
+          "expiresIn",
+          "user"
+        ],
+        "additionalProperties": false
+      },
+      "ErrorResponse": {
+        "type": "object",
+        "properties": {
+          "error": {
+            "type": "object",
+            "properties": {
+              "code": {
+                "type": "string"
+              },
+              "message": {
+                "type": "string"
+              },
+              "details": {},
+              "requestId": {
+                "type": [
+                  "string",
+                  "number"
+                ]
+              }
+            },
+            "required": [
+              "code",
+              "message"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "error"
+        ],
+        "additionalProperties": false
+      },
       "FileDto": {
         "type": "object",
         "properties": {
@@ -1345,38 +1612,6 @@
           "presigned",
           "multipart"
         ]
-      },
-      "ErrorResponse": {
-        "type": "object",
-        "properties": {
-          "error": {
-            "type": "object",
-            "properties": {
-              "code": {
-                "type": "string"
-              },
-              "message": {
-                "type": "string"
-              },
-              "details": {},
-              "requestId": {
-                "type": [
-                  "string",
-                  "number"
-                ]
-              }
-            },
-            "required": [
-              "code",
-              "message"
-            ],
-            "additionalProperties": false
-          }
-        },
-        "required": [
-          "error"
-        ],
-        "additionalProperties": false
       },
       "ListFilesResponse": {
         "type": "object",
@@ -1757,10 +1992,10 @@
       }
     },
     "securitySchemes": {
-      "ApiKey": {
-        "type": "apiKey",
-        "in": "header",
-        "name": "X-API-Key"
+      "BearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "JWT"
       }
     }
   }

@@ -13,7 +13,11 @@ const testEnv = {
   NODE_ENV: "test",
   LOG_LEVEL: "silent",
   PORT: "3000",
-  API_KEY: "test-api-key-0123456789",
+  LOGIN_USER_APP: "operator",
+  PASSWORD_USER_APP: "test-password",
+  JWT_ACCESS_SECRET: "test-access-secret-0123456789abcdef",
+  JWT_REFRESH_SECRET: "test-refresh-secret-0123456789abcdef",
+  COOKIE_SECURE: "false",
   CORS_ORIGIN: "http://localhost:5173",
 
   S3_ENDPOINT: "https://s3.test.local",

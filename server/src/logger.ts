@@ -5,7 +5,7 @@ export const logger = pino({
   level: config.logLevel,
   redact: {
     paths: [
-      "req.headers['x-api-key']",
+      "res.headers['set-cookie']",
       "req.headers.authorization",
       "req.headers.cookie",
     ],

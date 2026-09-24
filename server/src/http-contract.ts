@@ -1,7 +1,7 @@
 import { z } from "zod";
 import type { ZodOpenApiResponseObject, ZodOpenApiResponsesObject } from "zod-openapi";
 
-export const API_KEY_SECURITY = "ApiKey";
+export const BEARER_SECURITY = "BearerAuth";
 
 export const errorResponseSchema = z
   .object({
@@ -33,7 +33,7 @@ export function apiErrors(
   specific: Record<number, string> = {},
 ): ZodOpenApiResponsesObject {
   const descriptions: Record<number, string> = {
-    401: "Нет заголовка X-API-Key или ключ неверный",
+    401: "Нет токена доступа или он недействителен",
     422: "Запрос не прошёл валидацию; details — результат z.flattenError()",
     ...specific,
     500: "Непредвиденная ошибка сервера",

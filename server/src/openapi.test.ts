@@ -3,6 +3,7 @@ import type { Router } from "express";
 import { describe, expect, it } from "vitest";
 import { MOUNTS } from "./app.js";
 import { createFilesHttp } from "./modules/files/index.js";
+import { createAuthHttp } from "./modules/auth/index.js";
 import type { UploadPolicy } from "./modules/files/index.js";
 import {
   OPENAPI_FILE,
@@ -77,8 +78,19 @@ describe("OpenAPI-документ", () => {
       checkDatabase: async () => undefined,
     });
 
+    const { authRouter } = createAuthHttp({
+      login: "operator",
+      password: "test-password",
+      accessSecret: "a".repeat(32),
+      refreshSecret: "r".repeat(32),
+      accessTtlSeconds: 900,
+      refreshTtlSeconds: 604800,
+      cookieSecure: false,
+    });
+
     const registered = [
       ...operationsOf(MOUNTS.health, healthRouter),
+      ...operationsOf(MOUNTS.auth, authRouter),
       ...operationsOf(MOUNTS.files, filesRouter),
       ...operationsOf(MOUNTS.directories, directoriesRouter),
     ].sort();

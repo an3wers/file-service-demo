@@ -5,6 +5,7 @@ import { AppError, ERROR_CODES, badRequest, payloadTooLarge } from "../errors.js
 import { config } from "../config.js";
 import { logger } from "../logger.js";
 import { mapFilesError } from "../modules/files/index.js";
+import { mapAuthError } from "../modules/auth/index.js";
 
 export const notFoundHandler: RequestHandler = (req, _res, next) => {
   next(
@@ -26,10 +27,10 @@ function toAppError(error: unknown): AppError {
     return error;
   }
 
-  const filesError = mapFilesError(error);
+  const moduleError = mapFilesError(error) ?? mapAuthError(error);
 
-  if (filesError) {
-    return filesError;
+  if (moduleError) {
+    return moduleError;
   }
 
   if (error instanceof ZodError) {
