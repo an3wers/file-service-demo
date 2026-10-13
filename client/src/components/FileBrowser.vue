@@ -37,6 +37,7 @@ import DeleteFileDialog from "./DeleteFileDialog.vue";
 import DirectoryBreadcrumbs from "./DirectoryBreadcrumbs.vue";
 import FileCardDialog from "./FileCardDialog.vue";
 import FileTable from "./FileTable.vue";
+import DirectoryList from "./DirectoryList.vue";
 import CreateDirectoryDialog from "./CreateDirectoryDialog.vue";
 import UploadPanel from "./UploadPanel.vue";
 import { useFileActions } from "@/composables/useFileActions";
@@ -145,6 +146,8 @@ function onDeleted(file: FileDto): void {
       <DirectoryBreadcrumbs />
 
       <Separator />
+
+      <DirectoryList />
 
       <FileTable
         @open="openCard"
