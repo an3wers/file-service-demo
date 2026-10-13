@@ -61,10 +61,6 @@ async function load(): Promise<void> {
   error.value = null
 
   const term = search.value
-  // Сервер не фильтрует директории по `search`, а на второй странице списка
-  // папки неуместны — в этих случаях подставляем пустой список без запроса.
-  const wantDirectories = !term && page.value === 1
-
   try {
     const [filesResponse, directoriesResponse] = await Promise.all([
       listFiles(
@@ -80,9 +76,7 @@ async function load(): Promise<void> {
         },
         signal,
       ),
-      wantDirectories
-        ? listDirectories(directory.value, signal)
-        : Promise.resolve({ parent: directory.value, items: [] }),
+      listDirectories(directory.value, signal),
     ])
 
     if (id !== requestId) {
