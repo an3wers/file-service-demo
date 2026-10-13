@@ -1,5 +1,7 @@
 import { AppError, ERROR_CODES, badRequest, conflict, notFound, payloadTooLarge, tooManyRequests } from "../../../../errors.js";
 import {
+  DirectoryAlreadyExistsError,
+  DirectoryNotFoundError,
   FileNotFoundError,
   FileNotReadyError,
   FileTooLargeError,
@@ -17,6 +19,14 @@ export function mapFilesError(error: unknown): AppError | undefined {
   }
 
   const options = { cause: error };
+
+  if (error instanceof DirectoryNotFoundError) {
+    return notFound(ERROR_CODES.DIRECTORY_NOT_FOUND, error.message, error.details, options);
+  }
+
+  if (error instanceof DirectoryAlreadyExistsError) {
+    return conflict(ERROR_CODES.DIRECTORY_ALREADY_EXISTS, error.message, error.details, options);
+  }
 
   if (error instanceof FileNotFoundError) {
     return notFound(ERROR_CODES.FILE_NOT_FOUND, error.message, error.details, options);

@@ -349,6 +349,16 @@
               }
             }
           },
+          "404": {
+            "description": "Директория не найдена",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
           "413": {
             "description": "Файл больше лимита загрузки через сервер",
             "content": {
@@ -504,6 +514,16 @@
               }
             }
           },
+          "404": {
+            "description": "Директория не найдена",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
           "422": {
             "description": "Запрос не прошёл валидацию; details — результат z.flattenError()",
             "content": {
@@ -602,6 +622,16 @@
           },
           "401": {
             "description": "Нет токена доступа или он недействителен",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Директория не найдена",
             "content": {
               "application/json": {
                 "schema": {
@@ -1265,6 +1295,105 @@
       }
     },
     "/api/directories": {
+      "post": {
+        "tags": [
+          "directories"
+        ],
+        "summary": "Создать каталог внутри существующего родителя",
+        "operationId": "createDirectory",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateDirectoryBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Каталог создан",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DirectoryDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Недопустимое имя или каталог",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Нет токена доступа или он недействителен",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Директория не найдена",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Директория уже существует",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Запрос не прошёл валидацию; details — результат z.flattenError()",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Непредвиденная ошибка сервера",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Хранилище или база данных недоступны",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      },
       "get": {
         "tags": [
           "directories"
@@ -1304,6 +1433,16 @@
           },
           "401": {
             "description": "Нет токена доступа или он недействителен",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Директория не найдена",
             "content": {
               "application/json": {
                 "schema": {
@@ -1370,6 +1509,22 @@
         "enum": [
           "asc",
           "desc"
+        ]
+      },
+      "CreateDirectoryBody": {
+        "type": "object",
+        "properties": {
+          "parent": {
+            "type": "string",
+            "maxLength": 1024
+          },
+          "name": {
+            "type": "string",
+            "maxLength": 512
+          }
+        },
+        "required": [
+          "name"
         ]
       },
       "LivenessResponse": {
@@ -1949,25 +2104,6 @@
         ],
         "additionalProperties": false
       },
-      "DirectoriesResponse": {
-        "type": "object",
-        "properties": {
-          "parent": {
-            "type": "string"
-          },
-          "items": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/DirectoryDto"
-            }
-          }
-        },
-        "required": [
-          "parent",
-          "items"
-        ],
-        "additionalProperties": false
-      },
       "DirectoryDto": {
         "type": "object",
         "properties": {
@@ -1987,6 +2123,25 @@
           "name",
           "path",
           "fileCount"
+        ],
+        "additionalProperties": false
+      },
+      "DirectoriesResponse": {
+        "type": "object",
+        "properties": {
+          "parent": {
+            "type": "string"
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DirectoryDto"
+            }
+          }
+        },
+        "required": [
+          "parent",
+          "items"
         ],
         "additionalProperties": false
       }

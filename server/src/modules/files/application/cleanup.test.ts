@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { MemoryObjectStore } from "../../../storage/memory-object-store.js";
 import type { UploadedPart } from "../../../storage/object-store.js";
-import { MIB, PENDING_TTL_HOURS, THREE_PART_SIZE, buildHarness } from "../testing/files-module.harness.js";
+import { MIB, PENDING_TTL_HOURS, THREE_PART_SIZE, buildHarnessWithDirectories } from "../testing/files-module.harness.js";
 
 /**
  * Правила уборки через интерфейс фабрики модуля: объектное хранилище и
@@ -44,7 +44,7 @@ function uploadEveryPart(objectStore: MemoryObjectStore, uploadId: string): Uplo
 describe("cleanup", () => {
   describe("expired pending rows", () => {
     it("recovers an upload whose confirmation was the only thing lost", async () => {
-      const { files, cleanup, objectStore, rowOf, advance } = buildHarness();
+      const { files, cleanup, objectStore, rowOf, advance } = await buildHarnessWithDirectories();
 
       const reserved = await files.createPresignedUpload(singleUpload());
       // Клиент положил байты по подписанной ссылке и не подтвердил загрузку.
@@ -64,7 +64,7 @@ describe("cleanup", () => {
     });
 
     it("recovers a multipart upload storage had already assembled", async () => {
-      const { multipart, cleanup, objectStore, rowOf, advance } = buildHarness();
+      const { multipart, cleanup, objectStore, rowOf, advance } = await buildHarnessWithDirectories();
 
       const started = await multipart.createMultipartUpload(multipartUpload());
 
@@ -81,7 +81,7 @@ describe("cleanup", () => {
     });
 
     it("marks an upload failed when storage has no object at the key", async () => {
-      const { files, cleanup, objectStore, rowOf, advance } = buildHarness();
+      const { files, cleanup, objectStore, rowOf, advance } = await buildHarnessWithDirectories();
 
       const reserved = await files.createPresignedUpload(singleUpload());
 
@@ -95,7 +95,7 @@ describe("cleanup", () => {
     });
 
     it("marks a multipart upload failed when neither the upload nor an object is left", async () => {
-      const { multipart, cleanup, objectStore, rowOf, advance } = buildHarness();
+      const { multipart, cleanup, objectStore, rowOf, advance } = await buildHarnessWithDirectories();
 
       const started = await multipart.createMultipartUpload(multipartUpload());
 
@@ -111,7 +111,7 @@ describe("cleanup", () => {
     });
 
     it("leaves the upload alone when the claim is lost to whoever settled the row", async () => {
-      const { files, multipart, cleanup, objectStore, fileRows, rowOf, advance } = buildHarness();
+      const { files, multipart, cleanup, objectStore, fileRows, rowOf, advance } = await buildHarnessWithDirectories();
 
       const started = await multipart.createMultipartUpload(multipartUpload());
 
@@ -131,7 +131,7 @@ describe("cleanup", () => {
     });
 
     it("aborts an abandoned multipart upload and fails its row", async () => {
-      const { multipart, cleanup, objectStore, rowOf, advance } = buildHarness();
+      const { multipart, cleanup, objectStore, rowOf, advance } = await buildHarnessWithDirectories();
 
       const started = await multipart.createMultipartUpload(multipartUpload());
 
@@ -149,7 +149,7 @@ describe("cleanup", () => {
 
   describe("orphan sweep", () => {
     it("aborts uploads no row points at, sparing known and fresh ones", async () => {
-      const { multipart, cleanup, objectStore, advance } = buildHarness();
+      const { multipart, cleanup, objectStore, advance } = await buildHarnessWithDirectories();
 
       const orphan = await objectStore.beginMultipart("docs/orphan.bin", {
         contentType: "text/plain",

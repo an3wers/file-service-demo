@@ -10,6 +10,7 @@ import {
   validatedQuery,
 } from "../../../../middleware/validate.js";
 import {
+  createDirectorySchema,
   directoriesQuerySchema,
   downloadUrlQuerySchema,
   fileCardQuerySchema,
@@ -173,6 +174,10 @@ export function createDirectoriesRouter(catalog: CatalogModule): Router {
     const { parent } = validatedQuery<DirectoriesQuery>(res);
 
     res.json(await catalog.listDirectories(parent));
+  });
+
+  directoriesRouter.post("/", validateBody(createDirectorySchema), async (req, res) => {
+    res.status(201).json(await catalog.createDirectory({ parent: req.body.parent, name: req.body.name }));
   });
 
   return directoriesRouter;

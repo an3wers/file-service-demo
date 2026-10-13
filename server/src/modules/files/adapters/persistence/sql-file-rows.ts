@@ -1,5 +1,5 @@
 import { query } from "../../../../db/pool.js";
-import type { FileRows, ReadyValues, DirectoryDto, InsertFileInput, ListFilesParams } from "../../domain/ports/file-rows.js";
+import type { FileRows, ReadyValues, InsertFileInput, ListFilesParams } from "../../domain/ports/file-rows.js";
 import { toStoredFile } from "./row-mapper.js";
 import type { FileRow } from "./row-mapper.js";
 import type { StoredFile } from "../../domain/stored-file.js";
@@ -189,40 +189,6 @@ export async function listExpiredPending(ttlHours: number): Promise<StoredFile[]
 }
 
 /**
- * Immediate child folders of `parent`, derived from the stored directory paths
- * (object storage has no real folders). `fileCount` covers the whole subtree, which is what
- * a folder listing wants to show.
- */
-export async function listChildDirectories(parent: string): Promise<DirectoryDto[]> {
-  const { rows } = await query<{ path: string; file_count: number }>(
-    `with children as (
-       select case
-                when $1 = '' then split_part(directory, '/', 1)
-                else $1 || '/' || split_part(right(directory, -(length($1) + 1)), '/', 1)
-              end as path
-         from files
-        where deleted_at is null
-          and status = 'ready'
-          and ($1 = '' or directory = $1 or directory like $2 escape '\\')
-          and directory <> $1
-          and directory <> ''
-     )
-     select path, count(*)::int as file_count
-       from children
-      where path <> ''
-      group by path
-      order by path`,
-    [parent, `${escapeLike(parent)}/%`],
-  );
-
-  return rows.map((row) => ({
-    path: row.path,
-    name: row.path.split("/").pop() ?? row.path,
-    fileCount: row.file_count,
-  }));
-}
-
-/**
  * The same functions seen through the narrow interfaces the modules declare.
  * The annotation is the whole point of it: it is what makes the SQL side prove,
  * at compile time, that it still answers for every operation those modules ask
@@ -274,6 +240,5 @@ export function createSqlFileRows(bucket: string): FileRows {
     listFiles,
     findKnownUploadIds,
     listExpiredPending,
-    listChildDirectories,
   };
 }

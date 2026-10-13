@@ -1,3 +1,6 @@
+import { normalizeDirectory } from "../domain/keys.js";
+import { requireDirectory } from "../domain/directories.js";
+import type { DirectoriesForUpload } from "../domain/ports/directories.js";
 import { logger } from "../../../logger.js";
 import type { Clock } from "../domain/ports/clock.js";
 import { FileNotFoundError, MultipartNotFoundError, UploadNotCompletedError } from "../domain/errors.js";
@@ -11,6 +14,7 @@ import type { UploadPolicy } from "../domain/upload-policy.js";
 
 export interface UploadsModuleDeps {
   objectStore: ObjectStoreForFiles;
+  directories: DirectoriesForUpload;
   fileRows: FileRowsForFiles;
   policy: UploadPolicy;
   /** Multipart is a separate module this one drives, not a branch inside it. */
@@ -61,6 +65,7 @@ function fileNotFound(id: string) {
 export function createUploadsModule({
   objectStore,
   fileRows,
+  directories,
   policy,
   multipart,
   clock,
@@ -78,6 +83,7 @@ export function createUploadsModule({
   return {
     /** Upload proxied through the server: the request body is already in memory. */
     async uploadThroughServer(input): Promise<StoredFile> {
+      await requireDirectory(directories, normalizeDirectory(input.directory));
       const { id, key, directory, originalName, extension, contentType } = reserveKey({
         filename: input.filename,
         directory: input.directory,
@@ -130,6 +136,7 @@ export function createUploadsModule({
      * that predate multipart working unchanged.
      */
     async createPresignedUpload(input): Promise<PresignUploadResult> {
+      await requireDirectory(directories, normalizeDirectory(input.directory));
       if (needsMultipart(input.size, policy.multipartThresholdBytes)) {
         return await multipart.createMultipartUpload({
           filename: input.filename,

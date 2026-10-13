@@ -64,3 +64,8 @@ export type FileCardQuery = z.infer<typeof fileCardQuerySchema>;
 export type DownloadUrlQuery = z.infer<typeof downloadUrlQuerySchema>;
 export type DirectoriesQuery = z.infer<typeof directoriesQuerySchema>;
 export type IdParams = z.infer<typeof idParamsSchema>;
+
+export const createDirectorySchema = z.object({
+  parent: z.string().max(1024).optional(),
+  name: z.string().max(512),
+}).meta({ id: "CreateDirectoryBody" });
