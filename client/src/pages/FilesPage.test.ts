@@ -11,9 +11,9 @@ function json(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } })
 }
 
-async function mountPage() {
+async function mountPage(url = "/") {
   const router = createRouter({ history: createMemoryHistory(), routes: [{ path: "/", component: FilesPage }] })
-  await router.push("/")
+  await router.push(url)
   await router.isReady()
   const wrapper = mount(FilesPage, { attachTo: document.body, global: { plugins: [router] } })
   await flushPromises()
@@ -111,7 +111,7 @@ describe("создание каталога на странице файлов",
       }
       return json({ items: [], pagination: { page: 1, limit: 20, total: 0, totalPages: 0 } })
     }))
-    const { wrapper } = await mountPage()
+    const { wrapper, router } = await mountPage()
     await fireEvent.click(screen.getByText("docs"))
     await flushPromises()
     await fireEvent.click(screen.getByRole("button", { name: "Создать каталог" }))
@@ -127,8 +127,9 @@ describe("создание каталога на странице файлов",
     expect(posted).toEqual([{ parent: "docs", name: "existing" }, { parent: "docs", name: "reports" }])
     expect(wrapper.text()).toContain("reports")
     expect(screen.getByText("docs")).toBeTruthy()
+    const address = router.currentRoute.value.fullPath
     wrapper.unmount()
-    const reopened = await mountPage()
+    const reopened = await mountPage(address)
     expect(reopened.wrapper.text()).toContain("reports")
   })
 

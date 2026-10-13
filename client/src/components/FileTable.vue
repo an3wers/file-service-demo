@@ -70,6 +70,15 @@ const skeletonRows = [0, 1, 2, 3, 4]
       <AlertTitle>Не удалось загрузить список</AlertTitle>
       <AlertDescription>
         <p>{{ browser.error.value.message }}</p>
+        <Button
+          v-if="browser.error.value.directoryNotFound"
+          variant="outline"
+          size="sm"
+          class="mt-2"
+          @click="browser.openDirectory('')"
+        >
+          Перейти в корень
+        </Button>
         <p
           v-if="browser.error.value.reference"
           class="opacity-80"
