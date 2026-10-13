@@ -10,6 +10,11 @@ export type SortField = 'created_at' | 'original_name' | 'size_bytes';
 
 export type SortOrder = 'asc' | 'desc';
 
+export type CreateDirectoryBody = {
+    parent?: string;
+    name: string;
+};
+
 export type LivenessResponse = {
     status: 'ok';
     timestamp: string;
@@ -160,15 +165,15 @@ export type DownloadUrlResponse = {
     name: string;
 };
 
-export type DirectoriesResponse = {
-    parent: string;
-    items: Array<DirectoryDto>;
-};
-
 export type DirectoryDto = {
     name: string;
     path: string;
     fileCount: number;
+};
+
+export type DirectoriesResponse = {
+    parent: string;
+    items: Array<DirectoryDto>;
 };
 
 export type GetLivenessData = {
@@ -331,6 +336,10 @@ export type ListFilesErrors = {
      */
     401: ErrorResponse;
     /**
+     * Директория не найдена
+     */
+    404: ErrorResponse;
+    /**
      * Запрос не прошёл валидацию; details — результат z.flattenError()
      */
     422: ErrorResponse;
@@ -374,6 +383,10 @@ export type UploadFileErrors = {
      * Нет токена доступа или он недействителен
      */
     401: ErrorResponse;
+    /**
+     * Директория не найдена
+     */
+    404: ErrorResponse;
     /**
      * Файл больше лимита загрузки через сервер
      */
@@ -424,6 +437,10 @@ export type PresignUploadErrors = {
      * Нет токена доступа или он недействителен
      */
     401: ErrorResponse;
+    /**
+     * Директория не найдена
+     */
+    404: ErrorResponse;
     /**
      * Файл больше потолка размера объекта
      */
@@ -761,6 +778,10 @@ export type ListDirectoriesErrors = {
      */
     401: ErrorResponse;
     /**
+     * Директория не найдена
+     */
+    404: ErrorResponse;
+    /**
      * Запрос не прошёл валидацию; details — результат z.flattenError()
      */
     422: ErrorResponse;
@@ -784,3 +805,52 @@ export type ListDirectoriesResponses = {
 };
 
 export type ListDirectoriesResponse = ListDirectoriesResponses[keyof ListDirectoriesResponses];
+
+export type CreateDirectoryData = {
+    body: CreateDirectoryBody;
+    path?: never;
+    query?: never;
+    url: '/api/directories';
+};
+
+export type CreateDirectoryErrors = {
+    /**
+     * Недопустимое имя или каталог
+     */
+    400: ErrorResponse;
+    /**
+     * Нет токена доступа или он недействителен
+     */
+    401: ErrorResponse;
+    /**
+     * Директория не найдена
+     */
+    404: ErrorResponse;
+    /**
+     * Директория уже существует
+     */
+    409: ErrorResponse;
+    /**
+     * Запрос не прошёл валидацию; details — результат z.flattenError()
+     */
+    422: ErrorResponse;
+    /**
+     * Непредвиденная ошибка сервера
+     */
+    500: ErrorResponse;
+    /**
+     * Хранилище или база данных недоступны
+     */
+    503: ErrorResponse;
+};
+
+export type CreateDirectoryError = CreateDirectoryErrors[keyof CreateDirectoryErrors];
+
+export type CreateDirectoryResponses = {
+    /**
+     * Каталог создан
+     */
+    201: DirectoryDto;
+};
+
+export type CreateDirectoryResponse = CreateDirectoryResponses[keyof CreateDirectoryResponses];

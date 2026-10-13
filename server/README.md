@@ -237,10 +237,11 @@ GET /api/files/:id?withUrl=true          → FileDto (withUrl добавляет
 GET /api/files/:id/download-url?disposition=attachment|inline&expiresIn=
                                          → { url, expiresAt, name }
 DELETE /api/files/:id                    → 204
+POST /api/directories                   { parent?, name } → 201 { name, path, fileCount }
 GET /api/directories?parent=docs         → { parent, items: [{ name, path, fileCount }] }
 ```
 
-`/api/directories` выводит дерево папок из сохранённых путей директорий; `fileCount` учитывает всё
+`/api/directories` читает самостоятельные постоянные каталоги, включая пустые; `fileCount` учитывает всё
 поддерево. Ссылки на скачивание несут `Content-Disposition`, восстанавливающий исходное имя файла,
 включая не-ASCII, через RFC 5987 `filename*`.
 
@@ -330,3 +331,16 @@ src/
   testing/   clock.ts и failure-switch.ts — ручки вторых реализаций
   **/*.test.ts  тесты рядом с модулями, которые они проверяют
 ```
+
+Создание принимает одно имя и существующего родителя (по умолчанию — корень). Неизвестный
+каталог возвращает `404 DIRECTORY_NOT_FOUND` при чтении и загрузке; дубликат имени у одного
+родителя — `409 DIRECTORY_ALREADY_EXISTS`. Перед загрузкой в новый каталог его нужно создать.
+
+### Проверки каталогов на PostgreSQL
+
+`npm run test:postgres` запускает отдельные проверки миграции существующих каталогов,
+сохранности объектных ключей и конкурентного создания. Нужен локальный PostgreSQL на
+`127.0.0.1:55431` с базой `file_service_test` и пользователем `test` (пароль `test`);
+подключение настраивается в `vitest.postgres.config.ts`.
+Проверки создают изолированную схему со случайным именем и удаляют её после прогона.
+Обычная команда `npm test` не требует базы данных.

@@ -1,3 +1,4 @@
+import { createSqlDirectories } from "./adapters/persistence/sql-directories.js";
 import type { Router } from "express";
 import type { RequestHandler } from "express";
 import { createSqlFileRows } from "./adapters/persistence/sql-file-rows.js";
@@ -52,15 +53,18 @@ export function createFilesHttp(
 
   const clock = deps.clock ?? systemClock;
   const fileRows = createSqlFileRows(deps.bucket);
+  const directories = createSqlDirectories();
   const multipart = createMultipartModule({
     objectStore: deps.objectStore,
     fileRows,
+    directories,
     policy: deps.policy,
     clock,
   });
   const uploads = createUploadsModule({
     objectStore: deps.objectStore,
     fileRows,
+    directories,
     policy: deps.policy,
     multipart,
     clock,
@@ -68,6 +72,7 @@ export function createFilesHttp(
   const catalog = createCatalogModule({
     objectStore: deps.objectStore,
     fileRows,
+    directories,
     policy: deps.policy,
     clock,
   });

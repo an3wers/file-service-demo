@@ -5,7 +5,7 @@ import type { GetDownloadUrlResult } from "../../application/catalog.js";
 import type { MultipartStatus, PartUrlsResult } from "../../application/multipart.js";
 import type { PresignUploadResult } from "../../application/uploads.js";
 import type { FileStatus, UploadSource } from "../../domain/stored-file.js";
-import type { DirectoryDto } from "../../domain/ports/file-rows.js";
+import type { DirectoryDto } from "../../domain/ports/directories.js";
 import type {
   directoryDtoSchema,
   downloadUrlResponseSchema,

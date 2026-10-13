@@ -4,7 +4,7 @@ import { MultipartNotFoundError, TooManyActiveUploadsError } from "../domain/err
 import {
   MIB,
   THREE_PART_SIZE,
-  buildHarness,
+  buildHarnessWithDirectories,
   thrownBy,
 } from "../testing/files-module.harness.js";
 
@@ -23,7 +23,7 @@ function uploadRequest(size = THREE_PART_SIZE) {
 describe("multipart uploads", () => {
   describe("part ranges", () => {
     it("hands out the ranges of the plan recorded at start, with a shorter last part", async () => {
-      const { multipart, rowOf } = buildHarness({ partUrlBatch: 3 });
+      const { multipart, rowOf } = await buildHarnessWithDirectories({ partUrlBatch: 3 });
 
       const started = await multipart.createMultipartUpload(uploadRequest());
       const { parts } = await multipart.createPartUrls(await rowOf(started.id), {
@@ -39,7 +39,7 @@ describe("multipart uploads", () => {
     });
 
     it("signs the first batch at the start, capped by the policy", async () => {
-      const { multipart } = buildHarness();
+      const { multipart } = await buildHarnessWithDirectories();
 
       const started = await multipart.createMultipartUpload(uploadRequest());
 
@@ -48,7 +48,7 @@ describe("multipart uploads", () => {
     });
 
     it("refuses a part number outside the plan", async () => {
-      const { multipart, rowOf } = buildHarness();
+      const { multipart, rowOf } = await buildHarnessWithDirectories();
 
       const started = await multipart.createMultipartUpload(uploadRequest());
       const error = await thrownBy(async () =>
@@ -63,7 +63,7 @@ describe("multipart uploads", () => {
     });
 
     it("refuses a batch longer than the policy allows, naming the limit", async () => {
-      const { multipart, rowOf, policy } = buildHarness();
+      const { multipart, rowOf, policy } = await buildHarnessWithDirectories();
 
       const started = await multipart.createMultipartUpload(uploadRequest());
       const error = await thrownBy(async () =>
@@ -80,7 +80,7 @@ describe("multipart uploads", () => {
 
   describe("admission", () => {
     it("refuses over the concurrent-upload limit before anything opens in storage", async () => {
-      const { multipart, objectStore, fileRows } = buildHarness({ maxActiveUploads: 1 });
+      const { multipart, objectStore, fileRows } = await buildHarnessWithDirectories({ maxActiveUploads: 1 });
 
       await multipart.createMultipartUpload(uploadRequest());
 
@@ -100,7 +100,7 @@ describe("multipart uploads", () => {
 
   describe("cleaning up after a failed start", () => {
     it("aborts the upload it opened when the first batch of URLs cannot be signed", async () => {
-      const { multipart, objectStore, rowCount } = buildHarness();
+      const { multipart, objectStore, rowCount } = await buildHarnessWithDirectories();
 
       objectStore.failNext("signPart", new Error("signing is down"));
       const error = await thrownBy(() => multipart.createMultipartUpload(uploadRequest()));
@@ -114,7 +114,7 @@ describe("multipart uploads", () => {
 
   describe("status of an interrupted upload", () => {
     it("reports the part numbers and bytes storage actually holds", async () => {
-      const { multipart, objectStore, rowOf } = buildHarness();
+      const { multipart, objectStore, rowOf } = await buildHarnessWithDirectories();
 
       const started = await multipart.createMultipartUpload(uploadRequest());
 
@@ -134,7 +134,7 @@ describe("multipart uploads", () => {
     });
 
     it("reports nothing uploaded while storage holds no parts", async () => {
-      const { multipart, rowOf } = buildHarness();
+      const { multipart, rowOf } = await buildHarnessWithDirectories();
 
       const started = await multipart.createMultipartUpload(uploadRequest());
 
@@ -145,7 +145,7 @@ describe("multipart uploads", () => {
     });
 
     it("conflicts when storage no longer knows the upload", async () => {
-      const { multipart, objectStore, rowOf } = buildHarness();
+      const { multipart, objectStore, rowOf } = await buildHarnessWithDirectories();
 
       const started = await multipart.createMultipartUpload(uploadRequest());
 
@@ -161,7 +161,7 @@ describe("multipart uploads", () => {
 
   describe("deleting a live multipart upload", () => {
     it("cancels the parts instead of removing an object that does not exist", async () => {
-      const { multipart, files, objectStore, fileRows } = buildHarness();
+      const { multipart, files, objectStore, fileRows } = await buildHarnessWithDirectories();
 
       const started = await multipart.createMultipartUpload(uploadRequest());
 

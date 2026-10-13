@@ -1,8 +1,11 @@
+import type { DirectoryDto } from "../domain/ports/directories.js";
+import { requireDirectory } from "../domain/directories.js";
+import type { DirectoriesForCatalog } from "../domain/ports/directories.js";
 import { logger } from "../../../logger.js";
-import { normalizeDirectory } from "../domain/keys.js";
+import { normalizeDirectory, normalizeDirectoryName } from "../domain/keys.js";
 import type { Clock } from "../domain/ports/clock.js";
-import { FileNotFoundError, FileNotReadyError } from "../domain/errors.js";
-import type { DirectoryDto, FileRowsForFiles, ListFilesParams } from "../domain/ports/file-rows.js";
+import { DirectoryAlreadyExistsError, FileNotFoundError, FileNotReadyError } from "../domain/errors.js";
+import type { FileRowsForFiles, ListFilesParams } from "../domain/ports/file-rows.js";
 import type { ObjectStoreForFiles } from "../domain/ports/object-storage.js";
 import { expiresAt } from "../domain/reservation.js";
 import { statusOf } from "../domain/stored-file.js";
@@ -12,6 +15,7 @@ import type { UploadPolicy } from "../domain/upload-policy.js";
 export interface CatalogModuleDeps {
   objectStore: ObjectStoreForFiles;
   fileRows: FileRowsForFiles;
+  directories: DirectoriesForCatalog;
   policy: UploadPolicy;
   /** The wall clock a reservation's `expiresAt` reads, shared with every other scenario. */
   clock: Clock;
@@ -50,6 +54,7 @@ export interface ListFilesResult {
 }
 
 export interface CatalogModule {
+  createDirectory(input: { parent?: string | undefined; name: string }): Promise<DirectoryDto>;
   getDownloadUrl(id: string, input: GetDownloadUrlInput): Promise<GetDownloadUrlResult>;
   getFileCard(id: string, withUrl: boolean): Promise<FileCardResult>;
   listFiles(input: ListFilesInput): Promise<ListFilesResult>;
@@ -67,6 +72,7 @@ function fileNotFound(id: string) {
 export function createCatalogModule({
   objectStore,
   fileRows,
+  directories,
   policy,
   clock,
 }: CatalogModuleDeps): CatalogModule {
@@ -129,6 +135,9 @@ export function createCatalogModule({
     },
 
     async listFiles(input): Promise<ListFilesResult> {
+      if (input.directory !== undefined) {
+        await requireDirectory(directories, normalizeDirectory(input.directory));
+      }
       const params: ListFilesParams = {
         recursive: input.recursive,
         page: input.page,
@@ -170,10 +179,22 @@ export function createCatalogModule({
       }
     },
 
+    async createDirectory(input) {
+      const parent = normalizeDirectory(input.parent);
+      const name = normalizeDirectoryName(input.name);
+      const path = normalizeDirectory(parent ? `${parent}/${name}` : name);
+      await requireDirectory(directories, parent);
+      if (!(await directories.create(parent, name))) {
+        throw new DirectoryAlreadyExistsError("Директория уже существует", { path });
+      }
+      return { name, path, fileCount: 0 };
+    },
+
     async listDirectories(rawParent) {
       const parent = normalizeDirectory(rawParent);
 
-      return { parent, items: await fileRows.listChildDirectories(parent) };
+      await requireDirectory(directories, parent);
+      return { parent, items: await directories.listChildren(parent) };
     },
   };
 }

@@ -1,3 +1,6 @@
+import { normalizeDirectory } from "../domain/keys.js";
+import { requireDirectory } from "../domain/directories.js";
+import type { DirectoriesForUpload } from "../domain/ports/directories.js";
 import { ERROR_CODES, badRequest, conflict } from "../../../errors.js";
 import { logger } from "../../../logger.js";
 import type { CompleteOutcome } from "../../../storage/object-store.js";
@@ -14,6 +17,7 @@ import type { LiveMultipartUpload, StoredFile } from "../domain/stored-file.js";
 
 export interface MultipartModuleDeps {
   objectStore: ObjectStoreForMultipart;
+  directories: DirectoriesForUpload;
   fileRows: FileRowsForMultipart;
   policy: UploadPolicy;
   /** The wall clock a part URL's `expiresAt` reads, shared with every other scenario. */
@@ -99,6 +103,7 @@ function requireLiveUpload(file: StoredFile): LiveMultipartUpload {
 export function createMultipartModule({
   objectStore,
   fileRows,
+  directories,
   policy,
   clock,
 }: MultipartModuleDeps): MultipartModule {
@@ -123,6 +128,7 @@ export function createMultipartModule({
 
   return {
     async createMultipartUpload(body): Promise<PresignMultipartResult> {
+      await requireDirectory(directories, normalizeDirectory(body.directory));
       const { id, key, directory, originalName, extension, contentType } = reserveKey(body);
 
       // Both of these refuse before anything exists in storage to roll back.

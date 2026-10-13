@@ -37,6 +37,7 @@ import DeleteFileDialog from "./DeleteFileDialog.vue";
 import DirectoryBreadcrumbs from "./DirectoryBreadcrumbs.vue";
 import FileCardDialog from "./FileCardDialog.vue";
 import FileTable from "./FileTable.vue";
+import CreateDirectoryDialog from "./CreateDirectoryDialog.vue";
 import UploadPanel from "./UploadPanel.vue";
 import { useFileActions } from "@/composables/useFileActions";
 import { useFileBrowser } from "@/composables/useFileBrowser";
@@ -51,6 +52,7 @@ const cardOpen = ref(false);
 const fileToDelete = ref<FileDto | null>(null);
 const deleteOpen = ref(false);
 const uploadOpen = ref(false);
+const createOpen = ref(false);
 
 const limitValue = computed({
   get: () => String(browser.limit.value),
@@ -86,8 +88,18 @@ function onDeleted(file: FileDto): void {
       <CardDescription>
         Найдено: {{ total }}. Поиск идёт по текущей папке и её подпапкам.
       </CardDescription>
-      <CardAction>
-        <Button @click="uploadOpen = true">
+      <CardAction class="flex flex-wrap gap-2">
+        <Button
+          variant="outline"
+          :disabled="browser.loading.value || !!browser.error.value"
+          @click="createOpen = true"
+        >
+          Создать каталог
+        </Button>
+        <Button
+          :disabled="browser.loading.value || !!browser.error.value"
+          @click="uploadOpen = true"
+        >
           <UploadIcon data-icon="inline-start" />
           Загрузить файл
         </Button>
@@ -173,6 +185,7 @@ function onDeleted(file: FileDto): void {
     </CardContent>
   </Card>
 
+  <CreateDirectoryDialog v-model:open="createOpen" />
   <UploadPanel v-model:open="uploadOpen" />
 
   <FileCardDialog

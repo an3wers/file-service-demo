@@ -297,28 +297,7 @@ describe("memory file rows", () => {
       expect(descending.items.map((row) => row.id)).toEqual([pending.id, sized.id]);
     });
 
-    it("counts a whole subtree under each immediate child folder", async () => {
-      const store = createMemoryFileRows();
 
-      const ready = async (directory: string, key: string) => {
-        const row = await store.insertFile(reserve({ directory, objectKey: key }));
-
-        await store.markFileReady(row.id, { sizeBytes: 1, etag: null, contentType: "text/plain" });
-      };
-
-      await ready("docs", "docs/a.bin");
-      await ready("docs/2026", "docs/2026/b.bin");
-      await ready("docs/2026/q1", "docs/2026/q1/c.bin");
-      await ready("images", "images/d.bin");
-
-      expect(await store.listChildDirectories("")).toEqual([
-        { path: "docs", name: "docs", fileCount: 3 },
-        { path: "images", name: "images", fileCount: 1 },
-      ]);
-      expect(await store.listChildDirectories("docs")).toEqual([
-        { path: "docs/2026", name: "2026", fileCount: 2 },
-      ]);
-    });
   });
   describe("failNext", () => {
     it("fails the next call to that method and only that one", async () => {

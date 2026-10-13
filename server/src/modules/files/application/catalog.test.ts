@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { FileNotReadyError } from "../domain/errors.js";
-import { buildHarness, thrownBy } from "../testing/files-module.harness.js";
+import { buildHarnessWithDirectories, thrownBy } from "../testing/files-module.harness.js";
 import type { UploadsModule, PresignSingleResult } from "./uploads.js";
 
 /**
@@ -27,7 +27,7 @@ async function reserveSingle(files: UploadsModule, size?: number): Promise<Presi
 
 describe("handing out a signed download link", () => {
   it("refuses a link for a file whose upload was never confirmed", async () => {
-    const { files } = buildHarness();
+    const { files } = await buildHarnessWithDirectories();
 
     const reserved = await reserveSingle(files, 4);
     const error = await thrownBy(() =>
@@ -38,7 +38,7 @@ describe("handing out a signed download link", () => {
   });
 
   it("serves the card of an unconfirmed file without a link rather than failing", async () => {
-    const { files } = buildHarness();
+    const { files } = await buildHarnessWithDirectories();
 
     const reserved = await reserveSingle(files, 4);
 
@@ -49,7 +49,7 @@ describe("handing out a signed download link", () => {
   });
 
   it("signs a link once the upload is confirmed", async () => {
-    const { files, objectStore } = buildHarness();
+    const { files, objectStore } = await buildHarnessWithDirectories();
 
     const reserved = await reserveSingle(files, 4);
 

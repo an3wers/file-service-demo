@@ -7,7 +7,6 @@ import type {
   FileRowsForCleanup,
   FileRowsForFiles,
   FileRowsForMultipart,
-  DirectoryDto,
   InsertFileInput,
   ListFilesParams,
   ReadyValues,
@@ -338,43 +337,7 @@ export function createMemoryFileRows(
         .map(toStoredFile);
     },
 
-    async listChildDirectories(parent: string): Promise<DirectoryDto[]> {
-      failures.check("listChildDirectories");
 
-      const counts = new Map<string, number>();
-
-      for (const row of rows.values()) {
-        if (!live(row) || row.status !== "ready") {
-          continue;
-        }
-
-        const inSubtree =
-          parent === "" || row.directory === parent || row.directory.startsWith(`${parent}/`);
-
-        if (!inSubtree || row.directory === parent || row.directory === "") {
-          continue;
-        }
-
-        const rest = parent === "" ? row.directory : row.directory.slice(parent.length + 1);
-        const head = rest.split("/")[0] ?? "";
-
-        if (head === "") {
-          continue;
-        }
-
-        const path = parent === "" ? head : `${parent}/${head}`;
-
-        counts.set(path, (counts.get(path) ?? 0) + 1);
-      }
-
-      return [...counts.entries()]
-        .sort(([a], [b]) => compareText(a, b))
-        .map(([path, fileCount]) => ({
-          path,
-          name: path.split("/").pop() ?? path,
-          fileCount,
-        }));
-    },
   };
 
   return {
