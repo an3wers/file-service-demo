@@ -20,6 +20,8 @@ const MESSAGES: Record<string, string> = {
   // потолок размера объекта (MAX_OBJECT_SIZE_GB). Какая именно — знает вызывающий,
   // он и дописывает подсказку в описание тоста.
   PAYLOAD_TOO_LARGE: "Файл слишком большой для выбранного способа загрузки",
+  DIRECTORY_NOT_FOUND: "Директория не найдена",
+  DIRECTORY_ALREADY_EXISTS: "Директория уже существует",
   INVALID_DIRECTORY: "Недопустимый путь директории",
   INVALID_FILE_NAME: "Недопустимое имя файла",
 

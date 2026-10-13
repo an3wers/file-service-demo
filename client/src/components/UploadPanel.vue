@@ -25,21 +25,14 @@ import {
 import {
   Field,
   FieldDescription,
-  FieldError,
   FieldGroup,
   FieldLabel,
 } from "@/components/ui/field";
-import { Input } from "@/components/ui/input";
 import { Progress } from "@/components/ui/progress";
 import { Spinner } from "@/components/ui/spinner";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { isAbortError, isApiError } from "@/api/client";
 import { errorMessage, isRetryable, requestReference } from "@/lib/errors";
-import {
-  MAX_DIRECTORY_BYTES,
-  checkDirectory,
-  directoryByteLength,
-} from "@/lib/directory";
 import { formatBytes } from "@/lib/format";
 import { useFileBrowser } from "@/composables/useFileBrowser";
 import {
@@ -57,33 +50,11 @@ const emit = defineEmits<{
 const browser = useFileBrowser();
 const upload = useUpload();
 
-const directoryInput = ref(browser.directory.value);
-// Пока пользователь не тронул поле, оно следует за текущей папкой браузера.
-const dirty = ref(false);
+const targetDirectory = ref(browser.directory.value);
 
-watch(browser.directory, (value) => {
-  if (!dirty.value) {
-    directoryInput.value = value;
-  }
+watch(() => props.open, (open) => {
+  if (open) targetDirectory.value = browser.directory.value;
 });
-
-// Диалог живёт между открытиями, поэтому каждое открытие начинаем с текущей папки.
-watch(
-  () => props.open,
-  (open) => {
-    if (open) {
-      useCurrentDirectory();
-    }
-  },
-);
-
-const check = computed(() => checkDirectory(directoryInput.value));
-const directoryError = computed(() =>
-  check.value.ok ? null : check.value.message,
-);
-const directoryBytes = computed(() =>
-  directoryByteLength(directoryInput.value),
-);
 
 const {
   files,
@@ -163,22 +134,16 @@ function blockWhileUploading(event: Event): void {
   }
 }
 
-function useCurrentDirectory(): void {
-  directoryInput.value = browser.directory.value;
-  dirty.value = false;
-}
-
 async function submit(): Promise<void> {
   const file = selected.value;
-  const directory = check.value;
 
-  if (!file || !directory.ok || upload.uploading.value) {
+  if (!file || upload.uploading.value) {
     return;
   }
 
   try {
     // Отправляем нормализованное значение — оно совпадёт с тем, что вычислит сервер.
-    const result = await upload.upload(file, directory.value);
+    const result = await upload.upload(file, targetDirectory.value);
 
     toast.success(`Файл «${result.name}» загружен`, {
       description: SOURCE_LABELS[result.uploadSource],
@@ -293,35 +258,11 @@ async function submit(): Promise<void> {
           </FieldDescription>
         </Field>
 
-        <Field :data-invalid="directoryError ? true : undefined">
-          <FieldLabel for="directory">
-            Директория
-          </FieldLabel>
-          <Input
-            id="directory"
-            v-model="directoryInput"
-            placeholder="docs/reports"
-            :disabled="upload.uploading.value"
-            :aria-invalid="directoryError ? true : undefined"
-            @input="dirty = true"
-          />
-          <FieldDescription>
-            Пустое поле — корень хранилища. {{ directoryBytes }}/{{
-              MAX_DIRECTORY_BYTES
-            }}
-            байт.
-            <button
-              v-if="directoryInput !== browser.directory.value"
-              type="button"
-              class="underline underline-offset-4 hover:text-primary"
-              @click="useCurrentDirectory"
-            >
-              Текущая папка
-            </button>
-          </FieldDescription>
-          <FieldError v-if="directoryError">
-            {{ directoryError }}
-          </FieldError>
+        <Field>
+          <FieldLabel>Каталог загрузки</FieldLabel>
+          <p class="text-sm">
+            {{ targetDirectory || 'Корень' }}
+          </p>
         </Field>
 
         <Field>
@@ -406,7 +347,7 @@ async function submit(): Promise<void> {
           </Button>
         </DialogClose>
         <Button
-          :disabled="!selected || !!directoryError || upload.uploading.value"
+          :disabled="!selected || upload.uploading.value"
           @click="submit"
         >
           <Spinner

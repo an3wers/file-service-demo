@@ -1,6 +1,7 @@
 import type { ZodOpenApiPathsObject } from "zod-openapi";
 import { apiErrors } from "../../../../http-contract.js";
 import {
+  createDirectorySchema,
   directoriesQuerySchema,
   downloadUrlQuerySchema,
   fileCardQuerySchema,
@@ -12,6 +13,7 @@ import {
 } from "./schemas.js";
 import {
   directoriesResponseSchema,
+  directoryDtoSchema,
   downloadUrlResponseSchema,
   fileDtoSchema,
   listFilesResponseSchema,
@@ -40,6 +42,7 @@ export const filesPaths: ZodOpenApiPathsObject = {
       responses: {
         201: { description: "Файл сохранён", content: json(fileDtoSchema) },
         ...apiErrors({
+          404: "Директория не найдена",
           400: "Нет поля file, лишние поля формы, недопустимое имя или каталог",
           413: "Файл больше лимита загрузки через сервер",
         }),
@@ -52,7 +55,7 @@ export const filesPaths: ZodOpenApiPathsObject = {
       requestParams: { query: listFilesQuerySchema },
       responses: {
         200: { description: "Страница списка", content: json(listFilesResponseSchema) },
-        ...apiErrors({ 400: "Недопустимый каталог" }),
+        ...apiErrors({ 400: "Недопустимый каталог", 404: "Директория не найдена" }),
       },
     },
   },
@@ -69,6 +72,7 @@ export const filesPaths: ZodOpenApiPathsObject = {
         201: { description: "Файл зарезервирован", content: json(presignUploadResponseSchema) },
         ...apiErrors({
           400: "Недопустимое имя или каталог",
+          404: "Директория не найдена",
           413: "Файл больше потолка размера объекта",
           429: "Слишком много незавершённых составных загрузок",
         }),
@@ -171,6 +175,16 @@ export const filesPaths: ZodOpenApiPathsObject = {
 
 export const directoriesPaths: ZodOpenApiPathsObject = {
   "/": {
+    post: {
+      tags: ["directories"],
+      summary: "Создать каталог внутри существующего родителя",
+      operationId: "createDirectory",
+      requestBody: { required: true, content: json(createDirectorySchema) },
+      responses: {
+        201: { description: "Каталог создан", content: json(directoryDtoSchema) },
+        ...apiErrors({ 400: "Недопустимое имя или каталог", 404: "Директория не найдена", 409: "Директория уже существует" }),
+      },
+    },
     get: {
       tags: ["directories"],
       summary: "Подкаталоги каталога",
@@ -178,7 +192,7 @@ export const directoriesPaths: ZodOpenApiPathsObject = {
       requestParams: { query: directoriesQuerySchema },
       responses: {
         200: { description: "Подкаталоги", content: json(directoriesResponseSchema) },
-        ...apiErrors({ 400: "Недопустимый каталог" }),
+        ...apiErrors({ 400: "Недопустимый каталог", 404: "Директория не найдена" }),
       },
     },
   },

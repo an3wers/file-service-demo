@@ -40,6 +40,7 @@ export default defineConfig({
     environment: "node",
     // Тесты лежат рядом с кодом; из сборки они исключены в tsconfig.json.
     include: ["src/**/*.test.ts"],
+    exclude: ["**/node_modules/**", "**/.git/**", "src/**/*.postgres.test.ts"],
     env: testEnv,
     // Явные импорты из "vitest" вместо глобальных describe/it/expect.
     globals: false,

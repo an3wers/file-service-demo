@@ -7,7 +7,7 @@ import type { StoredFile, FileStatus, UploadSource } from "../stored-file.js";
  * There is no single wide repository interface here on purpose. Each module
  * declares only the operations it actually calls, so its dependency reads as a
  * list of the things it does to rows: the files module never claims an expired
- * upload, the cleanup pass never lists directories, and a test double only ever
+ * upload, the cleanup pass never lists files, and a test double only ever
  * has to answer for the narrow interface it is standing in for.
  *
  * Values, not exceptions, carry the outcomes a caller has to react to: a row
@@ -47,12 +47,6 @@ export interface ListFilesParams {
   order: "asc" | "desc";
 }
 
-export interface DirectoryDto {
-  name: string;
-  path: string;
-  fileCount: number;
-}
-
 /** What confirmation knows about an upload that finished. */
 export interface ReadyValues {
   sizeBytes: number | null;
@@ -80,8 +74,6 @@ export interface FileRowsForFiles {
   /** One page plus the total the page was cut from. */
   listFiles(params: ListFilesParams): Promise<{ items: StoredFile[]; total: number }>;
 
-  /** Immediate child folders of `parent`, derived from the stored directories. */
-  listChildDirectories(parent: string): Promise<DirectoryDto[]>;
 }
 
 /** Rows as the multipart module handles them: admission, then reservation. */

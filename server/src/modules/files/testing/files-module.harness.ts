@@ -1,3 +1,4 @@
+import { createMemoryDirectories } from "./memory-directories.js";
 import { createTestClock } from "../../../testing/clock.js";
 import { createMemoryObjectStore } from "../../../storage/memory-object-store.js";
 import type { MemoryObjectStore } from "../../../storage/memory-object-store.js";
@@ -95,9 +96,10 @@ export function buildHarness(policyOverrides: Partial<UploadPolicy> = {}): Harne
   const objectStore = createMemoryObjectStore({ clock });
   const fileRows = createMemoryFileRows({ clock, bucket: BUCKET });
   const policy = testPolicy(policyOverrides);
-  const multipart = createMultipartModule({ objectStore, fileRows, policy, clock });
-  const uploads = createUploadsModule({ objectStore, fileRows, policy, multipart, clock });
-  const catalog = createCatalogModule({ objectStore, fileRows, policy, clock });
+  const directories = createMemoryDirectories(fileRows);
+  const multipart = createMultipartModule({ objectStore, fileRows, directories, policy, clock });
+  const uploads = createUploadsModule({ objectStore, fileRows, directories, policy, multipart, clock });
+  const catalog = createCatalogModule({ objectStore, fileRows, directories, policy, clock });
 
   return {
     multipart,
@@ -144,4 +146,10 @@ export async function thrownBy(run: () => Promise<unknown>): Promise<Error> {
   }
 
   throw new Error("Expected the call to reject, but it resolved");
+}
+
+export async function buildHarnessWithDirectories(policyOverrides: Partial<UploadPolicy> = {}): Promise<Harness> {
+  const harness = buildHarness(policyOverrides);
+  await harness.files.createDirectory({ name: "docs" });
+  return harness;
 }

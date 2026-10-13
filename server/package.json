@@ -10,6 +10,7 @@
     "start": "node --env-file-if-exists=.env dist/server.js",
     "typecheck": "tsc -p tsconfig.test.json",
     "test": "vitest run",
+    "test:postgres": "vitest run --config vitest.postgres.config.ts",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
     "db:migrate": "node --env-file-if-exists=.env --import tsx src/db/migrate.ts",

@@ -25,3 +25,7 @@ export class InvalidFileNameError extends FilesDomainError {}
 export class FileTooLargeError extends FilesDomainError {}
 
 export class InvalidPlanLimitsError extends FilesDomainError {}
+
+export class DirectoryNotFoundError extends FilesDomainError {}
+
+export class DirectoryAlreadyExistsError extends FilesDomainError {}

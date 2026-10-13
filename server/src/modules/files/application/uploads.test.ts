@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import { MultipartNotFoundError, UploadNotCompletedError } from "../domain/errors.js";
-import { THREE_PART_SIZE, buildHarness, thrownBy } from "../testing/files-module.harness.js";
+import { THREE_PART_SIZE, buildHarnessWithDirectories, thrownBy } from "../testing/files-module.harness.js";
 import type { UploadsModule, UploadThroughServerInput, PresignSingleResult } from "./uploads.js";
 import type { PresignMultipartResult } from "./multipart.js";
 
@@ -66,7 +66,7 @@ const PARTS = [Buffer.from("alpha"), Buffer.from("beta"), Buffer.from("gamma")];
 describe("confirming an upload", () => {
   describe("a single signed PUT", () => {
     it("takes the size and etag off the stored object, not off the client's word", async () => {
-      const { files, objectStore } = buildHarness();
+      const { files, objectStore } = await buildHarnessWithDirectories();
 
       // Клиент объявил десять байт, а положил четыре: запомнить надо байты.
       const reserved = await reserveSingle(files, 10);
@@ -84,7 +84,7 @@ describe("confirming an upload", () => {
     });
 
     it("answers a repeated confirmation with the same result instead of an error", async () => {
-      const { files, objectStore } = buildHarness();
+      const { files, objectStore } = await buildHarnessWithDirectories();
 
       const reserved = await reserveSingle(files, 4);
 
@@ -100,7 +100,7 @@ describe("confirming an upload", () => {
     });
 
     it("conflicts on «upload not completed» while storage holds no object", async () => {
-      const { files, rowOf } = buildHarness();
+      const { files, rowOf } = await buildHarnessWithDirectories();
 
       const reserved = await reserveSingle(files, 4);
       const error = await thrownBy(() => files.completeUpload(reserved.id));
@@ -114,7 +114,7 @@ describe("confirming an upload", () => {
 
   describe("a multipart upload", () => {
     it("assembles the object and records what storage holds, not what was planned", async () => {
-      const { files, objectStore, rowOf } = buildHarness();
+      const { files, objectStore, rowOf } = await buildHarnessWithDirectories();
 
       const reserved = await reserveMultipart(files);
 
@@ -140,7 +140,7 @@ describe("confirming an upload", () => {
     });
 
     it("lets the second racing confirmation read the result of the first", async () => {
-      const { files, objectStore } = buildHarness();
+      const { files, objectStore } = await buildHarnessWithDirectories();
 
       const reserved = await reserveMultipart(files);
 
@@ -162,7 +162,7 @@ describe("confirming an upload", () => {
     });
 
     it("conflicts on «no multipart upload» once the upload is gone and no object landed", async () => {
-      const { files, objectStore, rowOf } = buildHarness();
+      const { files, objectStore, rowOf } = await buildHarnessWithDirectories();
 
       const reserved = await reserveMultipart(files);
 
@@ -191,7 +191,7 @@ describe("uploading through the server", () => {
   }
 
   it("stores the bytes and confirms the row in one call", async () => {
-    const { files, objectStore } = buildHarness();
+    const { files, objectStore } = await buildHarnessWithDirectories();
     const body = Buffer.from("through the server");
 
     const uploaded = await files.uploadThroughServer(uploadInput(body));
@@ -207,7 +207,7 @@ describe("uploading through the server", () => {
   });
 
   it("removes the bytes it wrote when the metadata row cannot be inserted", async () => {
-    const { files, objectStore, fileRows, rowCount } = buildHarness();
+    const { files, objectStore, fileRows, rowCount } = await buildHarnessWithDirectories();
     const failure = new Error("the metadata table is down");
 
     fileRows.failNext("insertFile", failure);
@@ -221,7 +221,7 @@ describe("uploading through the server", () => {
   });
 
   it("had written those bytes first, so it is the rollback that removes them", async () => {
-    const { files, objectStore, fileRows } = buildHarness();
+    const { files, objectStore, fileRows } = await buildHarnessWithDirectories();
     const failure = new Error("the metadata table is down");
 
     fileRows.failNext("insertFile", failure);

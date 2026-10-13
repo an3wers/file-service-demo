@@ -91,3 +91,11 @@ export function buildObjectKey(
     extension,
   };
 }
+
+export function normalizeDirectoryName(input: string): string {
+  const name = input.normalize("NFC").trim();
+  if (!name || name.includes("/") || name.includes("\\") || CONTROL_CHARS.test(input)) {
+    throw new InvalidDirectoryError("Directory name must be one non-empty segment");
+  }
+  return normalizeDirectory(name);
+}
