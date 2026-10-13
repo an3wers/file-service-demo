@@ -1,14 +1,14 @@
-import { computed, ref, watch } from "vue"
-import { useDebounceFn } from "@vueuse/core"
+import { computed, ref } from "vue"
 import type { DirectoryDto, FileDto, Pagination, SortField, SortOrder } from "@/types/api"
 import { listDirectories } from "@/api/directories"
 import { listFiles } from "@/api/files"
-import { isAbortError } from "@/api/client"
+import { isAbortError, isApiError } from "@/api/client"
 import { errorMessage, isRetryable, requestReference } from "@/lib/errors"
 
 /** Ошибка списка: текст плюс то, что решает, как её показать. */
 export interface BrowserError {
   message: string
+  directoryNotFound: boolean
   /** Повтор имеет смысл (503 или сетевой сбой) — в UI появляется «Повторить». */
   retryable: boolean
   /** «Код обращения: N» для 5xx, иначе `null`. */
@@ -36,6 +36,13 @@ const error = ref<BrowserError | null>(null)
 
 let controller: AbortController | null = null
 let requestId = 0
+export interface BrowserView {
+  directory: string
+  search: string
+  page: number
+}
+
+let navigate: ((view: BrowserView) => void) | null = null
 
 const breadcrumbs = computed<{ label: string; path: string }[]>(() => {
   const crumbs = [{ label: "Все файлы", path: "" }]
@@ -61,9 +68,6 @@ async function load(): Promise<void> {
   error.value = null
 
   const term = search.value
-  // Сервер не фильтрует директории по `search`, а на второй странице списка
-  // папки неуместны — в этих случаях подставляем пустой список без запроса.
-  const wantDirectories = !term && page.value === 1
 
   try {
     const [filesResponse, directoriesResponse] = await Promise.all([
@@ -80,9 +84,7 @@ async function load(): Promise<void> {
         },
         signal,
       ),
-      wantDirectories
-        ? listDirectories(directory.value, signal)
-        : Promise.resolve({ parent: directory.value, items: [] }),
+      listDirectories(directory.value, signal),
     ])
 
     if (id !== requestId) {
@@ -102,6 +104,7 @@ async function load(): Promise<void> {
     pagination.value = null
     error.value = {
       message: errorMessage(cause, "Не удалось загрузить список файлов"),
+      directoryNotFound: isApiError(cause) && cause.code === "DIRECTORY_NOT_FOUND",
       retryable: isRetryable(cause),
       reference: requestReference(cause),
     }
@@ -113,29 +116,20 @@ async function load(): Promise<void> {
 }
 
 function applyFilters(): void {
-  page.value = 1
-  void load()
+  changeView({ directory: directory.value, search: search.value, page: 1 })
 }
 
-watch(
-  searchInput,
-  useDebounceFn(() => {
-    const next = searchInput.value.trim()
+function changeView(view: BrowserView): void {
+  if (navigate) navigate(view)
+  else restoreView(view)
+}
 
-    if (next === search.value) {
-      return
-    }
-
-    search.value = next
-    applyFilters()
-  }, 350),
-)
+function applySearch(value: string): void {
+  changeView({ directory: directory.value, search: value, page: 1 })
+}
 
 function openDirectory(path: string): void {
-  directory.value = path
-  searchInput.value = ""
-  search.value = ""
-  applyFilters()
+  changeView({ directory: path, search: "", page: 1 })
 }
 
 function goTo(path: string): void {
@@ -159,12 +153,31 @@ function setLimit(next: number): void {
 }
 
 function setPage(next: number): void {
-  page.value = next
-  void load()
+  changeView({ directory: directory.value, search: search.value, page: next })
 }
 
 function refresh(): void {
   void load()
+}
+
+function restoreView(view: BrowserView): void {
+  directory.value = view.directory
+  searchInput.value = view.search
+  search.value = view.search
+  page.value = view.page
+  void load()
+}
+
+function bindNavigation(handler: (view: BrowserView) => void): () => void {
+  navigate = handler
+  return () => {
+    if (navigate === handler) {
+      navigate = null
+      controller?.abort()
+      requestId += 1
+      loading.value = false
+    }
+  }
 }
 
 function reset(): void {
@@ -203,6 +216,9 @@ export function useFileBrowser() {
     setLimit,
     setPage,
     refresh,
+    restoreView,
+    bindNavigation,
+    applySearch,
     reset,
   }
 }

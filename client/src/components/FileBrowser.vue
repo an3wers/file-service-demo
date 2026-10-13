@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from "vue";
+import { computed, ref } from "vue";
 import { SearchIcon, UploadIcon } from "@lucide/vue";
 import type { FileDto } from "@/types/api";
 import {
@@ -41,11 +41,12 @@ import CreateDirectoryDialog from "./CreateDirectoryDialog.vue";
 import UploadPanel from "./UploadPanel.vue";
 import { useFileActions } from "@/composables/useFileActions";
 import { useFileBrowser } from "@/composables/useFileBrowser";
+import { useFileBrowserRoute } from "@/composables/useFileBrowserRoute";
 
 const browser = useFileBrowser();
 const actions = useFileActions();
 
-onMounted(browser.refresh);
+useFileBrowserRoute();
 
 const selectedFile = ref<FileDto | null>(null);
 const cardOpen = ref(false);
