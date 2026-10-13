@@ -4,7 +4,6 @@ import {
   ArrowDownIcon,
   ArrowUpIcon,
   DownloadIcon,
-  FolderIcon,
   FolderOpenIcon,
   RefreshCwIcon,
   SearchXIcon,
@@ -31,7 +30,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table"
-import { formatBytes, formatDate, iconForFile, plural } from "@/lib/format"
+import { formatBytes, formatDate, iconForFile } from "@/lib/format"
 import { useFileBrowser } from "@/composables/useFileBrowser"
 
 const emit = defineEmits<{
@@ -51,17 +50,11 @@ const COLUMNS: { label: string; field?: SortField; class?: string }[] = [
   { label: "Источник" },
 ]
 
-// Папки не смешиваем с результатами поиска: сервер их по `search` не фильтрует.
-const showDirectories = computed(
-  () => !browser.search.value && browser.directories.value.length > 0,
-)
-
 const isEmpty = computed(
   () =>
     !browser.loading.value &&
     !browser.error.value &&
-    browser.files.value.length === 0 &&
-    !showDirectories.value,
+    browser.files.value.length === 0,
 )
 
 const skeletonRows = [0, 1, 2, 3, 4]
@@ -160,30 +153,6 @@ const skeletonRows = [0, 1, 2, 3, 4]
           </template>
 
           <template v-else>
-            <!-- Папки всегда идут первыми: это файловый менеджер, а не плоский список. -->
-            <TableRow
-              v-for="folder in showDirectories ? browser.directories.value : []"
-              :key="folder.path"
-              class="cursor-pointer hover:bg-muted/50"
-              @click="browser.openDirectory(folder.path)"
-            >
-              <TableCell class="font-medium">
-                <span class="flex items-center gap-2">
-                  <FolderIcon class="size-4 text-muted-foreground" />
-                  <span class="truncate">{{ folder.name }}</span>
-                </span>
-              </TableCell>
-              <TableCell
-                :colspan="5"
-                class="text-muted-foreground"
-              >
-                <Badge variant="secondary">
-                  {{ folder.fileCount }}
-                  {{ plural(folder.fileCount, ["файл", "файла", "файлов"]) }}
-                </Badge>
-              </TableCell>
-            </TableRow>
-
             <TableRow
               v-for="file in browser.files.value"
               :key="file.id"

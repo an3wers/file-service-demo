@@ -68,7 +68,6 @@ async function load(): Promise<void> {
   error.value = null
 
   const term = search.value
-
   try {
     const [filesResponse, directoriesResponse] = await Promise.all([
       listFiles(
