@@ -163,7 +163,7 @@ describe("состояние списка файлов в адресе стра�
       return json({ items: [], pagination: { page: 1, limit: 20, total: 0, totalPages: 0 } })
     }))
     const { router } = await mountPage("/")
-    await fireEvent.click(screen.getByRole("button", { name: "Имя" }))
+    await fireEvent.click(screen.getByRole("button", { name: "Название" }))
     await flushPromises()
     expect(router.currentRoute.value.query).toEqual({})
     expect(requests.some((request) => request.pathname === "/api/files" && request.searchParams.get("sort") === "original_name")).toBe(true)

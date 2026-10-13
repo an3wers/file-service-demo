@@ -37,7 +37,6 @@ import DeleteFileDialog from "./DeleteFileDialog.vue";
 import DirectoryBreadcrumbs from "./DirectoryBreadcrumbs.vue";
 import FileCardDialog from "./FileCardDialog.vue";
 import FileTable from "./FileTable.vue";
-import DirectoryList from "./DirectoryList.vue";
 import CreateDirectoryDialog from "./CreateDirectoryDialog.vue";
 import UploadPanel from "./UploadPanel.vue";
 import { useFileActions } from "@/composables/useFileActions";
@@ -70,7 +69,6 @@ function openCard(file: FileDto): void {
 }
 
 function askDelete(file: FileDto): void {
-  // Карточку закрываем: два модальных слоя подряд дерутся за фокус.
   cardOpen.value = false;
   fileToDelete.value = file;
   deleteOpen.value = true;
@@ -147,8 +145,6 @@ function onDeleted(file: FileDto): void {
       <DirectoryBreadcrumbs />
 
       <Separator />
-
-      <DirectoryList />
 
       <FileTable
         @open="openCard"
