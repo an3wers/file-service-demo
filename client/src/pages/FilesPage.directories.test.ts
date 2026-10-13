@@ -7,8 +7,8 @@ import { useFileBrowser } from "@/composables/useFileBrowser"
 import { startSession } from "@/api/session"
 import type { FileDto } from "@/types/api"
 
-function json(body: unknown) {
-  return new Response(JSON.stringify(body), { headers: { "Content-Type": "application/json" } })
+function json(body: unknown, status = 200) {
+  return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } })
 }
 
 function file(name: string, directory = ""): FileDto {
@@ -123,4 +123,56 @@ describe("доступность каталогов на странице фай
     expect(screen.getByText("Пустой каталог")).toBeTruthy()
     expect((screen.getByRole("textbox", { name: "Поиск по имени файла" }) as HTMLInputElement).value).toBe("")
   })
+  it("скрывает каталоги предыдущего родителя во время перехода и не возвращает их из запоздалого ответа", async () => {
+    const initial = new Set<string>()
+    const pending: { path: string; directory: string; resolve: (response: Response) => void }[] = []
+    const rootItems = [
+      { name: "docs", path: "docs", fileCount: 0 },
+      { name: "archive", path: "archive", fileCount: 0 },
+    ]
+    const childItems = [{ name: "reports", path: "docs/reports", fileCount: 0 }]
+    const response = (path: string, directory: string, items = rootItems) => path === "/api/directories"
+      ? json({ parent: directory, items })
+      : json({ items: [], pagination: { page: 1, limit: 20, total: 0, totalPages: 0 } })
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+      const parsed = new URL(url, "http://localhost")
+      const directory = parsed.searchParams.get("parent") ?? parsed.searchParams.get("directory") ?? ""
+      if (!directory && !initial.has(parsed.pathname)) {
+        initial.add(parsed.pathname)
+        return response(parsed.pathname, directory)
+      }
+      return await new Promise<Response>((resolve) => pending.push({ path: parsed.pathname, directory, resolve }))
+    }))
+    const router = await mountPage()
+    await router.push("/?search=anything&page=2")
+    await flushPromises()
+    expect(within(screen.getByRole("region", { name: "Каталоги" })).getAllByRole("button")).toHaveLength(2)
+    await fireEvent.click(within(screen.getByRole("region", { name: "Каталоги" })).getByRole("button", { name: /docs/ }))
+    await flushPromises()
+    expect(router.currentRoute.value.query.directory).toBe("docs")
+    expect(screen.queryByRole("region", { name: "Каталоги" })).toBeNull()
+    for (const request of pending.filter((request) => !request.directory)) request.resolve(response(request.path, ""))
+    await flushPromises()
+    expect(screen.queryByRole("region", { name: "Каталоги" })).toBeNull()
+    for (const request of pending.filter((request) => request.directory === "docs")) request.resolve(response(request.path, "docs", childItems))
+    await flushPromises()
+    expect(within(screen.getByRole("region", { name: "Каталоги" })).getByRole("button", { name: /reports/ })).toBeTruthy()
+    pending.length = 0
+    await router.push("/?directory=docs&search=delayed")
+    await flushPromises()
+    expect(within(screen.getByRole("region", { name: "Каталоги" })).getByRole("button", { name: /reports/ })).toBeTruthy()
+    await router.push("/?directory=missing")
+    await flushPromises()
+    expect(screen.queryByRole("region", { name: "Каталоги" })).toBeNull()
+    for (const request of pending.filter((request) => request.directory === "missing")) {
+      request.resolve(json({ error: { code: "DIRECTORY_NOT_FOUND", message: "Директория не найдена" } }, 404))
+    }
+    await flushPromises()
+    expect(screen.getAllByText("Директория не найдена").length).toBeGreaterThan(0)
+    for (const request of pending.filter((request) => request.directory === "docs")) request.resolve(response(request.path, "docs", childItems))
+    await flushPromises()
+    expect(screen.queryByRole("region", { name: "Каталоги" })).toBeNull()
+    expect(screen.queryByRole("button", { name: /reports/ })).toBeNull()
+  })
+
 })

@@ -1,24 +1,5 @@
 import type { StoredFile, FileStatus, UploadSource } from "../stored-file.js";
 
-/**
- * The seam between the modules that reason about files and the table the
- * metadata rows live in.
- *
- * There is no single wide repository interface here on purpose. Each module
- * declares only the operations it actually calls, so its dependency reads as a
- * list of the things it does to rows: the files module never claims an expired
- * upload, the cleanup pass never lists files, and a test double only ever
- * has to answer for the narrow interface it is standing in for.
- *
- * Values, not exceptions, carry the outcomes a caller has to react to: a row
- * that is not there (or is already soft-deleted) reads as `null`, and a claim
- * somebody else won reads as `null` too. Only failures of the database itself
- * cross this seam as `AppError`.
- *
- * `hardDeleteFile` is deliberately absent: nothing calls it, and a narrow
- * interface is the wrong place to keep an operation alive for later.
- */
-
 /** No `bucket` field: the row writer fills that column from its own construction, not per call. */
 export interface InsertFileInput {
   id: string;

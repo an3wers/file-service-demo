@@ -160,6 +160,9 @@ function refresh(): void {
 }
 
 function restoreView(view: BrowserView): void {
+  if (view.directory !== directory.value) {
+    directories.value = []
+  }
   directory.value = view.directory
   searchInput.value = view.search
   search.value = view.search
