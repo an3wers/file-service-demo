@@ -4,7 +4,11 @@ import { Router } from "express";
 import { afterEach, describe, expect, it } from "vitest";
 import { API_DOCS_PATH, API_SPEC_PATH, createApp } from "./app.js";
 
-const document = { openapi: "3.1.0", info: { title: "test", version: "0.0.0" }, paths: {} };
+const document = {
+  openapi: "3.1.0",
+  info: { title: "test", version: "0.0.0" },
+  paths: {},
+};
 
 let server: Server | undefined;
 
@@ -27,7 +31,9 @@ async function start(apiDocs?: object): Promise<string> {
 }
 
 afterEach(async () => {
-  await new Promise<void>((resolve) => (server ? server.close(() => resolve()) : resolve()));
+  await new Promise<void>((resolve) =>
+    server ? server.close(() => resolve()) : resolve(),
+  );
   server = undefined;
 });
 

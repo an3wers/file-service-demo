@@ -98,7 +98,9 @@ describe("OpenAPI-документ", () => {
     const documented = Object.entries(buildOpenApiDocument().paths ?? {})
       .flatMap(([path, item]) =>
         Object.keys(item ?? {})
-          .filter((key) => ["get", "post", "put", "patch", "delete"].includes(key))
+          .filter((key) =>
+            ["get", "post", "put", "patch", "delete"].includes(key),
+          )
           .map((method) => `${method.toUpperCase()} ${path}`),
       )
       .sort();

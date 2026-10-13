@@ -5,10 +5,18 @@ export const REFRESH_COOKIE = "refresh_token";
 export const REFRESH_COOKIE_PATH = "/api/auth";
 
 export function refreshCookieOptions(secure: boolean): CookieOptions {
-  return { httpOnly: true, sameSite: "strict", path: REFRESH_COOKIE_PATH, secure };
+  return {
+    httpOnly: true,
+    sameSite: "strict",
+    path: REFRESH_COOKIE_PATH,
+    secure,
+  };
 }
 
-export function readCookie(header: string | undefined, name: string): string | undefined {
+export function readCookie(
+  header: string | undefined,
+  name: string,
+): string | undefined {
   if (!header) {
     return undefined;
   }
@@ -20,7 +28,10 @@ export function readCookie(header: string | undefined, name: string): string | u
       continue;
     }
 
-    const raw = pair.slice(separator + 1).trim().replace(/^"(.*)"$/, "$1");
+    const raw = pair
+      .slice(separator + 1)
+      .trim()
+      .replace(/^"(.*)"$/, "$1");
 
     try {
       return decodeURIComponent(raw) || undefined;

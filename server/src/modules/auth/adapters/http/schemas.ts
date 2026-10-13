@@ -8,7 +8,10 @@ export const loginBodySchema = z.object({
 export const sessionResponseSchema = z
   .object({
     accessToken: z.string(),
-    expiresIn: z.number().int().meta({ description: "Сколько секунд живёт токен доступа" }),
+    expiresIn: z
+      .number()
+      .int()
+      .meta({ description: "Сколько секунд живёт токен доступа" }),
     user: z.object({ login: z.string() }),
   })
   .meta({ id: "AuthSession" });

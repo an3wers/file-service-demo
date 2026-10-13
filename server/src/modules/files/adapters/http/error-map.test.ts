@@ -25,9 +25,14 @@ describe("mapFilesError", () => {
   });
 
   it("переводит «файл не готов» в 409", () => {
-    const appError = mapFilesError(new FileNotReadyError('File abc is in status "pending"'));
+    const appError = mapFilesError(
+      new FileNotReadyError('File abc is in status "pending"'),
+    );
 
-    expect(appError).toMatchObject({ statusCode: 409, code: ERROR_CODES.FILE_NOT_READY });
+    expect(appError).toMatchObject({
+      statusCode: 409,
+      code: ERROR_CODES.FILE_NOT_READY,
+    });
   });
 
   it("переводит «загрузка не завершена» в 409 и сохраняет details", () => {
@@ -45,14 +50,22 @@ describe("mapFilesError", () => {
   });
 
   it("переводит «составная загрузка не найдена» в 409", () => {
-    const appError = mapFilesError(new MultipartNotFoundError("No multipart upload"));
+    const appError = mapFilesError(
+      new MultipartNotFoundError("No multipart upload"),
+    );
 
-    expect(appError).toMatchObject({ statusCode: 409, code: ERROR_CODES.MULTIPART_NOT_FOUND });
+    expect(appError).toMatchObject({
+      statusCode: 409,
+      code: ERROR_CODES.MULTIPART_NOT_FOUND,
+    });
   });
 
   it("переводит «слишком много активных загрузок» в 429 и сохраняет details", () => {
     const appError = mapFilesError(
-      new TooManyActiveUploadsError("Too many multipart uploads", { active: 2, limit: 2 }),
+      new TooManyActiveUploadsError("Too many multipart uploads", {
+        active: 2,
+        limit: 2,
+      }),
     );
 
     expect(appError).toMatchObject({
@@ -63,20 +76,32 @@ describe("mapFilesError", () => {
   });
 
   it("переводит «недопустимый каталог» в 400", () => {
-    const appError = mapFilesError(new InvalidDirectoryError("Directory contains control characters"));
+    const appError = mapFilesError(
+      new InvalidDirectoryError("Directory contains control characters"),
+    );
 
-    expect(appError).toMatchObject({ statusCode: 400, code: ERROR_CODES.INVALID_DIRECTORY });
+    expect(appError).toMatchObject({
+      statusCode: 400,
+      code: ERROR_CODES.INVALID_DIRECTORY,
+    });
   });
 
   it("переводит «недопустимое имя файла» в 400", () => {
-    const appError = mapFilesError(new InvalidFileNameError("File name is missing or not usable"));
+    const appError = mapFilesError(
+      new InvalidFileNameError("File name is missing or not usable"),
+    );
 
-    expect(appError).toMatchObject({ statusCode: 400, code: ERROR_CODES.INVALID_FILE_NAME });
+    expect(appError).toMatchObject({
+      statusCode: 400,
+      code: ERROR_CODES.INVALID_FILE_NAME,
+    });
   });
 
   it("переводит «файл слишком большой» в 413 с кодом общего лимита размера", () => {
     const appError = mapFilesError(
-      new FileTooLargeError("File exceeds the 200 GB limit", { maxObjectSize: 1 }),
+      new FileTooLargeError("File exceeds the 200 GB limit", {
+        maxObjectSize: 1,
+      }),
     );
 
     expect(appError).toMatchObject({

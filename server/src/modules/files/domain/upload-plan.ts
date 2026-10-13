@@ -42,7 +42,9 @@ export function assertValidPlanLimits(limits: PlanLimits): void {
     limits.maxObjectSize > 0;
 
   if (!sane) {
-    throw new InvalidPlanLimitsError("Upload plan limits are not sane", { limits });
+    throw new InvalidPlanLimitsError("Upload plan limits are not sane", {
+      limits,
+    });
   }
 }
 
@@ -63,7 +65,10 @@ function ceilTo(value: number, step: number): number {
 }
 
 /** Whether a file of this size goes through multipart rather than a single PUT. */
-export function needsMultipart(size: number | undefined, threshold: number): boolean {
+export function needsMultipart(
+  size: number | undefined,
+  threshold: number,
+): boolean {
   return size !== undefined && size >= threshold;
 }
 
@@ -100,16 +105,22 @@ export function planMultipart(size: number, limits: PlanLimits): UploadPlan {
     partSize = ceilTo(Math.ceil(size / limits.maxParts), MIB);
   }
 
-  partSize = Math.min(Math.max(partSize, limits.minPartSize), limits.maxPartSize);
+  partSize = Math.min(
+    Math.max(partSize, limits.minPartSize),
+    limits.maxPartSize,
+  );
 
   const partCount = Math.ceil(size / partSize);
 
   if (partCount > limits.maxParts) {
     // Unreachable while `maxObjectSize` stays at or below 5 TiB (10 000 parts of
     // 5 GiB is 50 TiB); kept in case that ceiling is ever raised.
-    throw new FileTooLargeError("File cannot be split into parts within the protocol limits", {
-      maxParts: limits.maxParts,
-    });
+    throw new FileTooLargeError(
+      "File cannot be split into parts within the protocol limits",
+      {
+        maxParts: limits.maxParts,
+      },
+    );
   }
 
   return {

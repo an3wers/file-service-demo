@@ -12,7 +12,10 @@ export interface AuthRouterSettings {
   cookieSecure: boolean;
 }
 
-export function createAuthRouter(sessions: SessionsModule, { cookieSecure }: AuthRouterSettings): Router {
+export function createAuthRouter(
+  sessions: SessionsModule,
+  { cookieSecure }: AuthRouterSettings,
+): Router {
   const router = Router();
   const cookieOptions = refreshCookieOptions(cookieSecure);
 
@@ -37,7 +40,10 @@ export function createAuthRouter(sessions: SessionsModule, { cookieSecure }: Aut
 
   router.post("/refresh", async (req, res) => {
     try {
-      respond(res, await sessions.refresh(readCookie(req.get("cookie"), REFRESH_COOKIE)));
+      respond(
+        res,
+        await sessions.refresh(readCookie(req.get("cookie"), REFRESH_COOKIE)),
+      );
     } catch (error) {
       if (error instanceof SessionExpiredError) {
         res.clearCookie(REFRESH_COOKIE, cookieOptions);

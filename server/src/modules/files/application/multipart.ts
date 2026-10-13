@@ -11,7 +11,10 @@ import { expiresAt, reserveKey } from "../domain/reservation.js";
 import { partRange, planMultipart } from "../domain/upload-plan.js";
 import type { UploadPlan } from "../domain/upload-plan.js";
 import type { UploadPolicy } from "../domain/upload-policy.js";
-import { MultipartNotFoundError, TooManyActiveUploadsError } from "../domain/errors.js";
+import {
+  MultipartNotFoundError,
+  TooManyActiveUploadsError,
+} from "../domain/errors.js";
 import { statusOf } from "../domain/stored-file.js";
 import type { LiveMultipartUpload, StoredFile } from "../domain/stored-file.js";
 
@@ -74,9 +77,14 @@ export interface MultipartStatus {
 }
 
 export interface MultipartModule {
-  createMultipartUpload(input: MultipartUploadInput): Promise<PresignMultipartResult>;
+  createMultipartUpload(
+    input: MultipartUploadInput,
+  ): Promise<PresignMultipartResult>;
 
-  createPartUrls(file: StoredFile, input: PartUrlsInput): Promise<PartUrlsResult>;
+  createPartUrls(
+    file: StoredFile,
+    input: PartUrlsInput,
+  ): Promise<PartUrlsResult>;
 
   getMultipartStatus(file: StoredFile): Promise<MultipartStatus>;
 
@@ -92,9 +100,12 @@ export interface MultipartModule {
 /** A file is only a live multipart upload while it is in that state. */
 function requireLiveUpload(file: StoredFile): LiveMultipartUpload {
   if (file.kind !== "multipart") {
-    throw new MultipartNotFoundError(`File ${file.id} has no multipart upload in progress`, {
-      status: statusOf(file),
-    });
+    throw new MultipartNotFoundError(
+      `File ${file.id} has no multipart upload in progress`,
+      {
+        status: statusOf(file),
+      },
+    );
   }
 
   return file;
@@ -129,7 +140,8 @@ export function createMultipartModule({
   return {
     async createMultipartUpload(body): Promise<PresignMultipartResult> {
       await requireDirectory(directories, normalizeDirectory(body.directory));
-      const { id, key, directory, originalName, extension, contentType } = reserveKey(body);
+      const { id, key, directory, originalName, extension, contentType } =
+        reserveKey(body);
 
       // Both of these refuse before anything exists in storage to roll back.
       const plan = planMultipart(body.size, policy.planLimits);
@@ -186,12 +198,14 @@ export function createMultipartModule({
         // Unlike the single-PUT flow, opening the upload is a side effect:
         // without this the bucket keeps an upload nobody can reach, and storage
         // bills for the parts that land in it.
-        await objectStore.abortMultipart(key, uploadId).catch((cleanupError: unknown) => {
-          logger.error(
-            { err: cleanupError, id, key, uploadId },
-            "Failed to abort multipart upload after its metadata row could not be written",
-          );
-        });
+        await objectStore
+          .abortMultipart(key, uploadId)
+          .catch((cleanupError: unknown) => {
+            logger.error(
+              { err: cleanupError, id, key, uploadId },
+              "Failed to abort multipart upload after its metadata row could not be written",
+            );
+          });
 
         throw error;
       }

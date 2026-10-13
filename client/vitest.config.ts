@@ -1,8 +1,8 @@
-import path from "node:path"
-import vue from "@vitejs/plugin-vue"
-import { defineConfig } from "vitest/config"
+import path from "node:path";
+import vue from "@vitejs/plugin-vue";
+import { defineConfig } from "vitest/config";
 
-const __dirname = import.meta.dirname
+const __dirname = import.meta.dirname;
 
 // Отдельный конфиг, а не поле `test` в `vite.config.ts`: при наличии
 // vitest.config.ts vite.config.ts не подхватывается вовсе, и тесты не тянут ни
@@ -29,4 +29,4 @@ export default defineConfig({
     unstubEnvs: true,
     unstubGlobals: true,
   },
-})
+});

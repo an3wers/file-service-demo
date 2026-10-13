@@ -36,10 +36,16 @@ export const listFilesQuerySchema = z.object({
   directory: z.string().max(1024).optional(),
   recursive: flag(false),
   search: z.string().max(255).optional(),
-  status: z.enum(["pending", "ready", "failed", "any"]).meta({ id: "ListStatusFilter" }).default("ready"),
+  status: z
+    .enum(["pending", "ready", "failed", "any"])
+    .meta({ id: "ListStatusFilter" })
+    .default("ready"),
   page: z.coerce.number().int().positive().default(1),
   limit: z.coerce.number().int().positive().max(200).default(50),
-  sort: z.enum(["created_at", "original_name", "size_bytes"]).meta({ id: "SortField" }).default("created_at"),
+  sort: z
+    .enum(["created_at", "original_name", "size_bytes"])
+    .meta({ id: "SortField" })
+    .default("created_at"),
   order: z.enum(["asc", "desc"]).meta({ id: "SortOrder" }).default("desc"),
 });
 
@@ -65,7 +71,9 @@ export type DownloadUrlQuery = z.infer<typeof downloadUrlQuerySchema>;
 export type DirectoriesQuery = z.infer<typeof directoriesQuerySchema>;
 export type IdParams = z.infer<typeof idParamsSchema>;
 
-export const createDirectorySchema = z.object({
-  parent: z.string().max(1024).optional(),
-  name: z.string().max(512),
-}).meta({ id: "CreateDirectoryBody" });
+export const createDirectorySchema = z
+  .object({
+    parent: z.string().max(1024).optional(),
+    name: z.string().max(512),
+  })
+  .meta({ id: "CreateDirectoryBody" });

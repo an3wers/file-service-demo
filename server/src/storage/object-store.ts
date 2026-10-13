@@ -62,7 +62,11 @@ export interface ObjectStore {
   /** Readiness: storage is reachable and the bucket is there. */
   checkAvailable(): Promise<void>;
 
-  put(key: string, body: Buffer, options: PutOptions): Promise<{ etag: string | null }>;
+  put(
+    key: string,
+    body: Buffer,
+    options: PutOptions,
+  ): Promise<{ etag: string | null }>;
 
   /** `null` when no object exists at the key. */
   head(key: string): Promise<StoredObject | null>;
@@ -75,7 +79,10 @@ export interface ObjectStore {
   signDownload(key: string, options: SignDownloadOptions): Promise<string>;
 
   /** Opens an upload and returns the id every later call needs. */
-  beginMultipart(key: string, options: { contentType: string }): Promise<string>;
+  beginMultipart(
+    key: string,
+    options: { contentType: string },
+  ): Promise<string>;
 
   signPart(
     key: string,

@@ -1,4 +1,9 @@
-import { AppError, ERROR_CODES, conflict, serviceUnavailable } from "../errors.js";
+import {
+  AppError,
+  ERROR_CODES,
+  conflict,
+  serviceUnavailable,
+} from "../errors.js";
 
 /** SQLSTATE classes that mean "the database is not answering", not "bad query". */
 const UNAVAILABLE_STATES = new Set([
@@ -61,7 +66,8 @@ function chain(error: unknown): PgErrorShape[] {
 function isUnreachable(links: PgErrorShape[]): boolean {
   return links.some((link) => {
     const code = typeof link.code === "string" ? link.code : "";
-    const message = typeof link.message === "string" ? link.message.toLowerCase() : "";
+    const message =
+      typeof link.message === "string" ? link.message.toLowerCase() : "";
 
     return (
       UNAVAILABLE_STATES.has(code) ||
@@ -86,7 +92,11 @@ export function databaseError(error: unknown): unknown {
   const code = typeof shape.code === "string" ? shape.code : "";
   const options = {
     cause: error,
-    logContext: { pgCode: code, constraint: shape.constraint, table: shape.table },
+    logContext: {
+      pgCode: code,
+      constraint: shape.constraint,
+      table: shape.table,
+    },
   };
 
   if (code === "23505" || code === "23503") {

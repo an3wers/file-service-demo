@@ -20,27 +20,27 @@ npm run dev                 # http://localhost:5173
 файлов, без сервера будет только ошибка «Сервер недоступен». Нужен Node 20.19+ / 22.12+ (в
 репозитории — 24).
 
-| Скрипт | Что делает |
-|---|---|
-| `npm run dev` | Vite dev-сервер на `:5173` (порт закреплён, см. ниже) |
-| `npm run build` | `vue-tsc -b` + `vite build` в `dist/` |
-| `npm run preview` | локальный показ `dist/` с тем же прокси |
-| `npm run typecheck` | `vue-tsc --noEmit` по `tsconfig.app.json` |
-| `npm test` | один прогон vitest |
-| `npm run test:watch` | vitest в watch-режиме |
-| `npm run test:coverage` | покрытие (нужен `npm i -D @vitest/coverage-v8`) |
-| `npm run api:generate` | типы API из `../server/openapi.json` в `src/api/generated/` |
+| Скрипт                  | Что делает                                                  |
+| ----------------------- | ----------------------------------------------------------- |
+| `npm run dev`           | Vite dev-сервер на `:5173` (порт закреплён, см. ниже)       |
+| `npm run build`         | `vue-tsc -b` + `vite build` в `dist/`                       |
+| `npm run preview`       | локальный показ `dist/` с тем же прокси                     |
+| `npm run typecheck`     | `vue-tsc --noEmit` по `tsconfig.app.json`                   |
+| `npm test`              | один прогон vitest                                          |
+| `npm run test:watch`    | vitest в watch-режиме                                       |
+| `npm run test:coverage` | покрытие (нужен `npm i -D @vitest/coverage-v8`)             |
+| `npm run api:generate`  | типы API из `../server/openapi.json` в `src/api/generated/` |
 
 ## Конфигурация
 
 Значения из `.env` (`client/.env`) подставляются в бандл на сборке — своего рантайм-конфига у
 приложения нет.
 
-| Переменная | По умолчанию | Примечания |
-|---|---|---|
-| `VITE_MAX_UPLOAD_SIZE_MB` | `50` | справочный порог для режима «через сервер»; настоящий лимит живёт на сервере и приходит как 413 |
-| `VITE_S3_HOST` | — | базовый URL хранилища для ссылки «Статичный url» в карточке файла |
-| `VITE_API_TARGET` | `http://localhost:3000` | цель dev/preview-прокси; это переменная окружения процесса, а не ключ из `.env` |
+| Переменная                | По умолчанию            | Примечания                                                                                      |
+| ------------------------- | ----------------------- | ----------------------------------------------------------------------------------------------- |
+| `VITE_MAX_UPLOAD_SIZE_MB` | `50`                    | справочный порог для режима «через сервер»; настоящий лимит живёт на сервере и приходит как 413 |
+| `VITE_S3_HOST`            | —                       | базовый URL хранилища для ссылки «Статичный url» в карточке файла                               |
+| `VITE_API_TARGET`         | `http://localhost:3000` | цель dev/preview-прокси; это переменная окружения процесса, а не ключ из `.env`                 |
 
 ## Как клиент общается с API
 

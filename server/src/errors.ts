@@ -59,7 +59,10 @@ export class AppError extends Error {
     public readonly details?: unknown,
     options?: AppErrorOptions,
   ) {
-    super(message, options?.cause !== undefined ? { cause: options.cause } : undefined);
+    super(
+      message,
+      options?.cause !== undefined ? { cause: options.cause } : undefined,
+    );
     this.name = "AppError";
     this.logContext = options?.logContext;
   }
@@ -93,7 +96,8 @@ export const payloadTooLarge = (
   message: string,
   details?: unknown,
   options?: AppErrorOptions,
-) => new AppError(413, ERROR_CODES.PAYLOAD_TOO_LARGE, message, details, options);
+) =>
+  new AppError(413, ERROR_CODES.PAYLOAD_TOO_LARGE, message, details, options);
 
 /** Nothing is permanently wrong: free a slot and the same request goes through. */
 export const tooManyRequests = (

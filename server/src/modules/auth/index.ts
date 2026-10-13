@@ -36,12 +36,16 @@ export function createAuthHttp(settings: AuthSettings): AuthHttpAssembly {
   });
 
   return {
-    authRouter: createAuthRouter(sessions, { cookieSecure: settings.cookieSecure }),
+    authRouter: createAuthRouter(sessions, {
+      cookieSecure: settings.cookieSecure,
+    }),
     requireAuth: createRequireAuth(sessions),
   };
 }
 
-export function syncAuthUser(settings: Pick<AuthSettings, "login" | "password">): Promise<EnvironmentUserSync> {
+export function syncAuthUser(
+  settings: Pick<AuthSettings, "login" | "password">,
+): Promise<EnvironmentUserSync> {
   return syncEnvironmentUser(
     { users: createSqlUserRows(), hasher: createScryptHasher() },
     { login: settings.login, password: settings.password },

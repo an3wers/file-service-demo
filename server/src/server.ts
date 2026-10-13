@@ -16,7 +16,10 @@ try {
 try {
   const sync = await syncAuthUser(config.auth);
 
-  logger.info({ login: config.auth.login, ...sync }, "User from the environment is in sync");
+  logger.info(
+    { login: config.auth.login, ...sync },
+    "User from the environment is in sync",
+  );
 } catch (error) {
   logger.error(
     { err: error },

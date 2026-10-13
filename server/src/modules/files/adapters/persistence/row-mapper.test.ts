@@ -42,7 +42,12 @@ describe("toStoredFile", () => {
 
     it("строка с upload_id и планом становится живой составной загрузкой", () => {
       const file = toStoredFile(
-        row({ upload_id: "upload-1", size_bytes: 12, part_size: 5, part_count: 3 }),
+        row({
+          upload_id: "upload-1",
+          size_bytes: 12,
+          part_size: 5,
+          part_count: 3,
+        }),
       );
 
       expect(file).toMatchObject({
@@ -57,11 +62,17 @@ describe("toStoredFile", () => {
         row({ status: "ready", size_bytes: 2048, etag: '"abc123"' }),
       );
 
-      expect(file).toMatchObject({ kind: "ready", size: 2048, etag: '"abc123"' });
+      expect(file).toMatchObject({
+        kind: "ready",
+        size: 2048,
+        etag: '"abc123"',
+      });
     });
 
     it("готовый файл допускает неизвестные размер и etag", () => {
-      const file = toStoredFile(row({ status: "ready", size_bytes: null, etag: null }));
+      const file = toStoredFile(
+        row({ status: "ready", size_bytes: null, etag: null }),
+      );
 
       expect(file).toMatchObject({ kind: "ready", size: null, etag: null });
     });
@@ -97,7 +108,9 @@ describe("toStoredFile", () => {
 
   describe("незаконные сочетания", () => {
     it("резервирование с планом без upload_id — внутренняя ошибка", () => {
-      expect(() => toStoredFile(row({ part_size: 5, part_count: 3 }))).toThrow(AppError);
+      expect(() => toStoredFile(row({ part_size: 5, part_count: 3 }))).toThrow(
+        AppError,
+      );
       expect(() => toStoredFile(row({ part_size: 5 }))).toThrow(AppError);
       expect(() => toStoredFile(row({ part_count: 3 }))).toThrow(AppError);
     });
@@ -108,25 +121,53 @@ describe("toStoredFile", () => {
 
     it("живая составная загрузка без размера — внутренняя ошибка", () => {
       expect(() =>
-        toStoredFile(row({ upload_id: "upload-1", size_bytes: null, part_size: 5, part_count: 3 })),
+        toStoredFile(
+          row({
+            upload_id: "upload-1",
+            size_bytes: null,
+            part_size: 5,
+            part_count: 3,
+          }),
+        ),
       ).toThrow(AppError);
     });
 
     it("живая составная загрузка без плана частей — внутренняя ошибка", () => {
       expect(() =>
-        toStoredFile(row({ upload_id: "upload-1", size_bytes: 12, part_size: null, part_count: null })),
+        toStoredFile(
+          row({
+            upload_id: "upload-1",
+            size_bytes: 12,
+            part_size: null,
+            part_count: null,
+          }),
+        ),
       ).toThrow(AppError);
     });
 
     it("живая составная загрузка без размера части — внутренняя ошибка", () => {
       expect(() =>
-        toStoredFile(row({ upload_id: "upload-1", size_bytes: 12, part_size: null, part_count: 3 })),
+        toStoredFile(
+          row({
+            upload_id: "upload-1",
+            size_bytes: 12,
+            part_size: null,
+            part_count: 3,
+          }),
+        ),
       ).toThrow(AppError);
     });
 
     it("живая составная загрузка без числа частей — внутренняя ошибка", () => {
       expect(() =>
-        toStoredFile(row({ upload_id: "upload-1", size_bytes: 12, part_size: 5, part_count: null })),
+        toStoredFile(
+          row({
+            upload_id: "upload-1",
+            size_bytes: 12,
+            part_size: 5,
+            part_count: null,
+          }),
+        ),
       ).toThrow(AppError);
     });
 
@@ -154,8 +195,12 @@ describe("toStoredFile", () => {
       expect(() =>
         toStoredFile(row({ status: "ready", part_size: 5, part_count: 3 })),
       ).toThrow(AppError);
-      expect(() => toStoredFile(row({ status: "ready", part_size: 5 }))).toThrow(AppError);
-      expect(() => toStoredFile(row({ status: "ready", part_count: 3 }))).toThrow(AppError);
+      expect(() =>
+        toStoredFile(row({ status: "ready", part_size: 5 })),
+      ).toThrow(AppError);
+      expect(() =>
+        toStoredFile(row({ status: "ready", part_count: 3 })),
+      ).toThrow(AppError);
     });
 
     it("неудавшийся файл с живым upload_id — внутренняя ошибка", () => {

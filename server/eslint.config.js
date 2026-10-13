@@ -3,6 +3,7 @@ import { fileURLToPath } from "node:url";
 import js from "@eslint/js";
 import tseslint from "typescript-eslint";
 import globals from "globals";
+import prettier from "eslint-config-prettier/flat";
 
 /**
  * Vendor packages a module's domain and application layers must never reach
@@ -120,4 +121,5 @@ export default tseslint.config(
   // а не один на весь src/modules: иначе исключение для «это файлы модуля»
   // освобождало бы от правила и файлы совсем другого модуля.
   ...moduleBoundaryRules,
+  prettier,
 );

@@ -39,7 +39,11 @@ export function createMemoryUserRows(): MemoryUserRows {
         return false;
       }
 
-      byId.set(id, { ...user, passwordHash: newHash, tokenVersion: user.tokenVersion + 1 });
+      byId.set(id, {
+        ...user,
+        passwordHash: newHash,
+        tokenVersion: user.tokenVersion + 1,
+      });
 
       return true;
     },

@@ -52,9 +52,15 @@ export const PROTOCOL_LIMITS = {
  * Object keys carry the file id (`<directory>/<uuid>.<ext>`), so a key in the
  * log context is enough to trace a failure back to its row.
  */
-export function createS3ObjectStore(client: S3Client, bucket: string): ObjectStore {
-  const fail = (error: unknown, operation: string, context: Record<string, unknown> = {}) =>
-    storageError(error, { operation, bucket, ...context });
+export function createS3ObjectStore(
+  client: S3Client,
+  bucket: string,
+): ObjectStore {
+  const fail = (
+    error: unknown,
+    operation: string,
+    context: Record<string, unknown> = {},
+  ) => storageError(error, { operation, bucket, ...context });
 
   /** Parts S3 cannot identify are dropped: completing with one would corrupt the object. */
   const toUploadedPart = (part: {
@@ -115,7 +121,9 @@ export function createS3ObjectStore(client: S3Client, bucket: string): ObjectSto
 
     async remove(key): Promise<void> {
       try {
-        await client.send(new DeleteObjectCommand({ Bucket: bucket, Key: key }));
+        await client.send(
+          new DeleteObjectCommand({ Bucket: bucket, Key: key }),
+        );
       } catch (error) {
         throw fail(error, "DeleteObject", { key });
       }
@@ -317,7 +325,9 @@ export function createS3ObjectStore(client: S3Client, bucket: string): ObjectSto
           }
 
           keyMarker = page.IsTruncated ? page.NextKeyMarker : undefined;
-          uploadIdMarker = page.IsTruncated ? page.NextUploadIdMarker : undefined;
+          uploadIdMarker = page.IsTruncated
+            ? page.NextUploadIdMarker
+            : undefined;
         } while (keyMarker !== undefined || uploadIdMarker !== undefined);
       } catch (error) {
         throw fail(error, "ListMultipartUploads");

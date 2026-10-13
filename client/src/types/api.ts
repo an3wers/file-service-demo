@@ -17,10 +17,10 @@ export type {
   SortField,
   SortOrder,
   UploadSource,
-} from "@/api/generated"
+} from "@/api/generated";
 
 /** Форма `details` у 422 VALIDATION_ERROR — это `z.flattenError()`. */
 export interface ValidationDetails {
-  formErrors: string[]
-  fieldErrors: Record<string, string[]>
+  formErrors: string[];
+  fieldErrors: Record<string, string[]>;
 }

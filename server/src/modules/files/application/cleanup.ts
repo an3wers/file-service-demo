@@ -98,12 +98,18 @@ export function createCleanupModule({
    * still sees `pending` and keeps pushing parts into an upload already
    * condemned.
    */
-  async function settleMultipart(file: StoredFile, counters: SettleCounters): Promise<void> {
+  async function settleMultipart(
+    file: StoredFile,
+    counters: SettleCounters,
+  ): Promise<void> {
     const uploadId = await fileRows.claimExpiredMultipart(file.id, ttlHours);
 
     if (!uploadId) {
       counters.skipped += 1;
-      logger.debug({ id: file.id }, "Pending upload was settled by someone else; skipping");
+      logger.debug(
+        { id: file.id },
+        "Pending upload was settled by someone else; skipping",
+      );
       return;
     }
 
@@ -117,7 +123,10 @@ export function createCleanupModule({
         logger.info({ id: file.id, key: file.key }, "Recovered pending upload");
       } else {
         counters.failed += 1;
-        logger.info({ id: file.id, key: file.key }, "Marked pending upload failed");
+        logger.info(
+          { id: file.id, key: file.key },
+          "Marked pending upload failed",
+        );
       }
 
       return;
@@ -133,7 +142,10 @@ export function createCleanupModule({
   }
 
   /** A single presigned PUT: only storage can say whether the object turned up. */
-  async function settleSingle(file: StoredFile, counters: SettleCounters): Promise<void> {
+  async function settleSingle(
+    file: StoredFile,
+    counters: SettleCounters,
+  ): Promise<void> {
     if (await recoverFromObject(file)) {
       counters.recovered += 1;
       logger.info({ id: file.id, key: file.key }, "Recovered pending upload");
@@ -168,7 +180,10 @@ export function createCleanupModule({
             await settleSingle(file, counters);
           }
         } catch (error) {
-          logger.error({ err: error, id: file.id }, "Could not inspect pending upload");
+          logger.error(
+            { err: error, id: file.id },
+            "Could not inspect pending upload",
+          );
         }
       }
 
@@ -190,7 +205,9 @@ export function createCleanupModule({
       const stale = (await objectStore.listMultipartUploads()).filter(
         (upload) => (upload.initiatedAt?.getTime() ?? 0) < cutoff,
       );
-      const known = await fileRows.findKnownUploadIds(stale.map((upload) => upload.uploadId));
+      const known = await fileRows.findKnownUploadIds(
+        stale.map((upload) => upload.uploadId),
+      );
       const result: SweepResult = { examined: stale.length, aborted: 0 };
 
       for (const upload of stale) {

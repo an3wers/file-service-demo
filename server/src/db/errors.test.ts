@@ -15,11 +15,16 @@ describe("databaseError", () => {
 
   it("maps a unique violation to 409", () => {
     const mapped = databaseError(
-      Object.assign(pgError("duplicate key", "23505"), { constraint: "files_pkey" }),
+      Object.assign(pgError("duplicate key", "23505"), {
+        constraint: "files_pkey",
+      }),
     );
 
     expect(mapped).toBeInstanceOf(AppError);
-    expect(mapped).toMatchObject({ statusCode: 409, code: ERROR_CODES.DUPLICATE_RESOURCE });
+    expect(mapped).toMatchObject({
+      statusCode: 409,
+      code: ERROR_CODES.DUPLICATE_RESOURCE,
+    });
     expect((mapped as AppError).logContext).toMatchObject({
       pgCode: "23505",
       constraint: "files_pkey",
@@ -27,7 +32,9 @@ describe("databaseError", () => {
   });
 
   it("maps a cancelled statement to a timeout", () => {
-    expect(databaseError(pgError("canceling statement", "57014"))).toMatchObject({
+    expect(
+      databaseError(pgError("canceling statement", "57014")),
+    ).toMatchObject({
       statusCode: 503,
       code: ERROR_CODES.DATABASE_TIMEOUT,
     });
@@ -41,23 +48,31 @@ describe("databaseError", () => {
   });
 
   it("maps a socket failure to unavailable", () => {
-    expect(databaseError(pgError("connect ECONNREFUSED", "ECONNREFUSED"))).toMatchObject({
+    expect(
+      databaseError(pgError("connect ECONNREFUSED", "ECONNREFUSED")),
+    ).toMatchObject({
       statusCode: 503,
       code: ERROR_CODES.DATABASE_UNAVAILABLE,
     });
   });
 
   it("recognises a bare pg failure by its message", () => {
-    expect(databaseError(pgError("Connection terminated unexpectedly"))).toMatchObject({
+    expect(
+      databaseError(pgError("Connection terminated unexpectedly")),
+    ).toMatchObject({
       statusCode: 503,
       code: ERROR_CODES.DATABASE_UNAVAILABLE,
     });
   });
 
   it("looks down the cause chain", () => {
-    const wrapped = new Error("query failed", { cause: pgError("read ECONNRESET", "ECONNRESET") });
+    const wrapped = new Error("query failed", {
+      cause: pgError("read ECONNRESET", "ECONNRESET"),
+    });
 
-    expect(databaseError(wrapped)).toMatchObject({ code: ERROR_CODES.DATABASE_UNAVAILABLE });
+    expect(databaseError(wrapped)).toMatchObject({
+      code: ERROR_CODES.DATABASE_UNAVAILABLE,
+    });
   });
 
   it("returns a programming error unchanged so it surfaces as a 500", () => {

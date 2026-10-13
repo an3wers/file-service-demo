@@ -1,4 +1,7 @@
-import { InvalidCredentialsError, SessionExpiredError } from "../domain/errors.js";
+import {
+  InvalidCredentialsError,
+  SessionExpiredError,
+} from "../domain/errors.js";
 import type { PasswordHasher } from "../domain/ports/password-hasher.js";
 import type { AccessClaims, Tokens } from "../domain/ports/tokens.js";
 import type { UserRowsForSessions } from "../domain/ports/user-rows.js";
@@ -25,7 +28,12 @@ export interface SessionsModule {
   authenticate(accessToken: string): Promise<AccessClaims | null>;
 }
 
-export function createSessionsModule({ users, hasher, tokens, login: allowedLogin }: SessionsDeps): SessionsModule {
+export function createSessionsModule({
+  users,
+  hasher,
+  tokens,
+  login: allowedLogin,
+}: SessionsDeps): SessionsModule {
   async function issueSession(user: User): Promise<Session> {
     const [access, refresh] = await Promise.all([
       tokens.issueAccess(user.id),
@@ -43,7 +51,8 @@ export function createSessionsModule({ users, hasher, tokens, login: allowedLogi
 
   return {
     async login(login, password) {
-      const user = login === allowedLogin ? await users.findByLogin(login) : null;
+      const user =
+        login === allowedLogin ? await users.findByLogin(login) : null;
 
       if (!user) {
         await hasher.hash(password);
@@ -58,10 +67,17 @@ export function createSessionsModule({ users, hasher, tokens, login: allowedLogi
     },
 
     async refresh(refreshToken) {
-      const claims = refreshToken ? await tokens.verifyRefresh(refreshToken) : null;
+      const claims = refreshToken
+        ? await tokens.verifyRefresh(refreshToken)
+        : null;
       const user = claims ? await users.findById(claims.userId) : null;
 
-      if (!claims || !user || user.login !== allowedLogin || user.tokenVersion !== claims.version) {
+      if (
+        !claims ||
+        !user ||
+        user.login !== allowedLogin ||
+        user.tokenVersion !== claims.version
+      ) {
         throw new SessionExpiredError();
       }
 

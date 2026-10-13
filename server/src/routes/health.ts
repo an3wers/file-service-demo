@@ -14,7 +14,10 @@ export interface HealthRouterDeps {
  * client while every upload goes through another. Both checks arrive as
  * arguments for the same reason.
  */
-export function createHealthRouter({ objectStore, checkDatabase }: HealthRouterDeps): Router {
+export function createHealthRouter({
+  objectStore,
+  checkDatabase,
+}: HealthRouterDeps): Router {
   const healthRouter = Router();
 
   /** Liveness: the process is up and serving. */
@@ -32,14 +35,20 @@ export function createHealthRouter({ objectStore, checkDatabase }: HealthRouterD
         () => ({ status: "ok" as const }),
         (error: unknown) => {
           logger.error({ err: error }, "Database readiness check failed");
-          return { status: "error" as const, message: (error as Error).message };
+          return {
+            status: "error" as const,
+            message: (error as Error).message,
+          };
         },
       ),
       objectStore.checkAvailable().then(
         () => ({ status: "ok" as const }),
         (error: unknown) => {
           logger.error({ err: error }, "Object storage readiness check failed");
-          return { status: "error" as const, message: (error as Error).message };
+          return {
+            status: "error" as const,
+            message: (error as Error).message,
+          };
         },
       ),
     ]);

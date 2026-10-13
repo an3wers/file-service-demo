@@ -170,7 +170,9 @@ export async function sendRequest<T>(
 export function renewSession(): Promise<void> {
   return shareRenewal(async () => {
     try {
-      return await sendRequest<AuthSession>("/auth/refresh", { method: "POST" });
+      return await sendRequest<AuthSession>("/auth/refresh", {
+        method: "POST",
+      });
     } catch (error) {
       if (isApiError(error) && error.status === 401) {
         expireSession();
@@ -216,7 +218,10 @@ async function withSession<T>(
   }
 }
 
-export function apiRequest<T>(path: string, init: RequestInit = {}): Promise<T> {
+export function apiRequest<T>(
+  path: string,
+  init: RequestInit = {},
+): Promise<T> {
   // Content-Type здесь не выставляем никогда: JSON-вызовы ставят его сами, а у
   // FormData его должен проставить браузер — иначе потеряется boundary.
   return withSession((authorization) => {
@@ -299,11 +304,15 @@ export function xhrSend(
 
     xhr.addEventListener("error", () => {
       // Сюда же приходит непрозрачный CORS-сбой: деталей браузер не даёт.
-      settle(() => reject(new ApiError(0, "NETWORK_ERROR", "Сервер недоступен")));
+      settle(() =>
+        reject(new ApiError(0, "NETWORK_ERROR", "Сервер недоступен")),
+      );
     });
 
     xhr.addEventListener("timeout", () => {
-      settle(() => reject(new ApiError(0, "NETWORK_ERROR", "Сервер недоступен")));
+      settle(() =>
+        reject(new ApiError(0, "NETWORK_ERROR", "Сервер недоступен")),
+      );
     });
 
     xhr.addEventListener("abort", () => {
@@ -326,7 +335,9 @@ export function apiUpload<T>(
   options: UploadOptions = {},
 ): Promise<T> {
   // Content-Type не трогаем: у FormData его вместе с boundary ставит браузер.
-  return withSession((headers) => sendUpload<T>(path, body, { ...options, headers }));
+  return withSession((headers) =>
+    sendUpload<T>(path, body, { ...options, headers }),
+  );
 }
 
 async function sendUpload<T>(

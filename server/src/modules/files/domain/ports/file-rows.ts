@@ -53,8 +53,9 @@ export interface FileRowsForFiles {
   softDeleteFile(id: string): Promise<StoredFile | null>;
 
   /** One page plus the total the page was cut from. */
-  listFiles(params: ListFilesParams): Promise<{ items: StoredFile[]; total: number }>;
-
+  listFiles(
+    params: ListFilesParams,
+  ): Promise<{ items: StoredFile[]; total: number }>;
 }
 
 /** Rows as the multipart module handles them: admission, then reservation. */
@@ -92,4 +93,6 @@ export interface FileRowsForCleanup {
 }
 
 /** Everything the three modules together ask of the rows. */
-export type FileRows = FileRowsForFiles & FileRowsForMultipart & FileRowsForCleanup;
+export type FileRows = FileRowsForFiles &
+  FileRowsForMultipart &
+  FileRowsForCleanup;

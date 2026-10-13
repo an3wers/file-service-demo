@@ -30,13 +30,19 @@ export function createSqlUserRows(): UserRows {
     },
 
     async findByLogin(login) {
-      const { rows } = await query<UserRow>("select * from users where login = $1", [login]);
+      const { rows } = await query<UserRow>(
+        "select * from users where login = $1",
+        [login],
+      );
 
       return rows[0] ? toUser(rows[0]) : null;
     },
 
     async findById(id) {
-      const { rows } = await query<UserRow>("select * from users where id = $1", [id]);
+      const { rows } = await query<UserRow>(
+        "select * from users where id = $1",
+        [id],
+      );
 
       return rows[0] ? toUser(rows[0]) : null;
     },

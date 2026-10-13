@@ -1,5 +1,10 @@
 import { NoSuchKey, NotFound } from "@aws-sdk/client-s3";
-import { AppError, ERROR_CODES, badGateway, serviceUnavailable } from "../errors.js";
+import {
+  AppError,
+  ERROR_CODES,
+  badGateway,
+  serviceUnavailable,
+} from "../errors.js";
 
 /** Wrong bucket, wrong keys, wrong signature: retrying changes nothing. */
 const MISCONFIGURED = new Set([
@@ -70,7 +75,9 @@ export function isS3NotFound(error: unknown): boolean {
 export function isS3NoSuchUpload(error: unknown): boolean {
   const shape = error as AwsErrorShape | null | undefined;
 
-  return shape?.name === "NoSuchUpload" || shape?.$metadata?.httpStatusCode === 404;
+  return (
+    shape?.name === "NoSuchUpload" || shape?.$metadata?.httpStatusCode === 404
+  );
 }
 
 /**
@@ -78,7 +85,10 @@ export function isS3NoSuchUpload(error: unknown): boolean {
  * Vendor internals (error name, request id, bucket, key) go to `logContext` so
  * they reach the log without being served to the caller.
  */
-export function storageError(error: unknown, context: StorageContext): AppError {
+export function storageError(
+  error: unknown,
+  context: StorageContext,
+): AppError {
   if (error instanceof AppError) {
     return error; // Already mapped further down the call; do not re-wrap.
   }

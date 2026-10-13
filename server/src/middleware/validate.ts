@@ -50,6 +50,8 @@ export function validatedQuery<T>(res: { locals: Record<string, unknown> }): T {
   return res.locals.query as T;
 }
 
-export function validatedParams<T>(res: { locals: Record<string, unknown> }): T {
+export function validatedParams<T>(res: {
+  locals: Record<string, unknown>;
+}): T {
   return res.locals.params as T;
 }

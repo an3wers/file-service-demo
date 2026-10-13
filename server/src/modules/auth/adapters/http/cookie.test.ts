@@ -3,9 +3,12 @@ import { readCookie } from "./cookie.js";
 
 describe("чтение cookie из заголовка", () => {
   it("находит значение по имени среди нескольких cookie", () => {
-    expect(readCookie("theme=dark; refresh_token=abc.def.ghi; lang=ru", "refresh_token")).toBe(
-      "abc.def.ghi",
-    );
+    expect(
+      readCookie(
+        "theme=dark; refresh_token=abc.def.ghi; lang=ru",
+        "refresh_token",
+      ),
+    ).toBe("abc.def.ghi");
   });
 
   it("не путает имя с префиксом другого имени", () => {
@@ -20,6 +23,8 @@ describe("чтение cookie из заголовка", () => {
 
   it("раскодирует значение и переживает испорченное кодирование", () => {
     expect(readCookie("refresh_token=a%20b", "refresh_token")).toBe("a b");
-    expect(readCookie("refresh_token=%E0%A4%A", "refresh_token")).toBeUndefined();
+    expect(
+      readCookie("refresh_token=%E0%A4%A", "refresh_token"),
+    ).toBeUndefined();
   });
 });

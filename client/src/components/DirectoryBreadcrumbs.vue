@@ -6,11 +6,11 @@ import {
   BreadcrumbList,
   BreadcrumbPage,
   BreadcrumbSeparator,
-} from "@/components/ui/breadcrumb"
-import { useFileBrowser } from "@/composables/useFileBrowser"
+} from "@/components/ui/breadcrumb";
+import { useFileBrowser } from "@/composables/useFileBrowser";
 
 // Пропсов нет: состояние браузера — синглтон на страницу.
-const browser = useFileBrowser()
+const browser = useFileBrowser();
 </script>
 
 <template>
@@ -34,7 +34,9 @@ const browser = useFileBrowser()
             {{ crumb.label }}
           </BreadcrumbLink>
         </BreadcrumbItem>
-        <BreadcrumbSeparator v-if="index < browser.breadcrumbs.value.length - 1" />
+        <BreadcrumbSeparator
+          v-if="index < browser.breadcrumbs.value.length - 1"
+        />
       </template>
     </BreadcrumbList>
   </Breadcrumb>

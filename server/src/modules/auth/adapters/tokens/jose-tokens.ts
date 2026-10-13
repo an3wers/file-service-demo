@@ -26,7 +26,11 @@ export function createJoseTokens(settings: JoseTokensSettings): Tokens {
     refresh: settings.refreshTtlSeconds,
   };
 
-  async function issue(type: TokenType, userId: string, claims: JWTPayload = {}): Promise<IssuedToken> {
+  async function issue(
+    type: TokenType,
+    userId: string,
+    claims: JWTPayload = {},
+  ): Promise<IssuedToken> {
     const now = Math.floor(settings.clock.now().getTime() / 1000);
     const token = await new SignJWT({ ...claims, typ: type })
       .setProtectedHeader({ alg: ALGORITHM })
@@ -38,7 +42,10 @@ export function createJoseTokens(settings: JoseTokensSettings): Tokens {
     return { token, expiresIn: ttls[type] };
   }
 
-  async function verify(type: TokenType, token: string): Promise<JWTPayload | null> {
+  async function verify(
+    type: TokenType,
+    token: string,
+  ): Promise<JWTPayload | null> {
     try {
       const { payload } = await jwtVerify(token, keys[type], {
         algorithms: [ALGORITHM],
@@ -46,7 +53,9 @@ export function createJoseTokens(settings: JoseTokensSettings): Tokens {
         requiredClaims: ["sub", "exp"],
       });
 
-      return payload.typ === type && typeof payload.sub === "string" ? payload : null;
+      return payload.typ === type && typeof payload.sub === "string"
+        ? payload
+        : null;
     } catch {
       return null;
     }
@@ -55,7 +64,8 @@ export function createJoseTokens(settings: JoseTokensSettings): Tokens {
   return {
     issueAccess: (userId) => issue("access", userId),
 
-    issueRefresh: (userId, version) => issue("refresh", userId, { ver: version }),
+    issueRefresh: (userId, version) =>
+      issue("refresh", userId, { ver: version }),
 
     async verifyAccess(token) {
       const payload = await verify("access", token);

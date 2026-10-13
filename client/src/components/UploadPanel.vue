@@ -52,9 +52,12 @@ const upload = useUpload();
 
 const targetDirectory = ref(browser.directory.value);
 
-watch(() => props.open, (open) => {
-  if (open) targetDirectory.value = browser.directory.value;
-});
+watch(
+  () => props.open,
+  (open) => {
+    if (open) targetDirectory.value = browser.directory.value;
+  },
+);
 
 const {
   files,
@@ -208,10 +211,7 @@ async function submit(): Promise<void> {
 </script>
 
 <template>
-  <Dialog
-    :open="open"
-    @update:open="emit('update:open', $event)"
-  >
+  <Dialog :open="open" @update:open="emit('update:open', $event)">
     <DialogContent
       class="sm:max-w-lg"
       :show-close-button="!upload.uploading.value"
@@ -261,7 +261,7 @@ async function submit(): Promise<void> {
         <Field>
           <FieldLabel>Каталог загрузки</FieldLabel>
           <p class="text-sm">
-            {{ targetDirectory || 'Корень' }}
+            {{ targetDirectory || "Корень" }}
           </p>
         </Field>
 
@@ -281,23 +281,16 @@ async function submit(): Promise<void> {
               v-if="selected"
               class="flex min-w-0 items-center gap-2 text-sm"
             >
-              <span
-                class="truncate"
-                :title="selected.name"
-              >{{
+              <span class="truncate" :title="selected.name">{{
                 selected.name
               }}</span>
               <Badge variant="outline">{{ formatBytes(selected.size) }}</Badge>
             </span>
-            <span
-              v-else
-              class="text-muted-foreground text-sm"
-            >Файл не выбран</span>
+            <span v-else class="text-muted-foreground text-sm"
+              >Файл не выбран</span
+            >
           </div>
-          <FieldDescription
-            v-if="oversized"
-            class="text-destructive"
-          >
+          <FieldDescription v-if="oversized" class="text-destructive">
             Файл больше {{ MAX_UPLOAD_SIZE_MB }} МБ — сервер, скорее всего,
             ответит 413. Отправку это не блокирует.
           </FieldDescription>
@@ -318,12 +311,8 @@ async function submit(): Promise<void> {
           <FieldDescription>
             {{ formatBytes(upload.sentBytes.value) }} из
             {{ formatBytes(upload.totalBytes.value) }}
-            <template v-if="partsLabel">
-              — {{ partsLabel }}
-            </template>
-            <template v-if="waitingForServer">
-              — ждём ответ
-            </template>
+            <template v-if="partsLabel"> — {{ partsLabel }} </template>
+            <template v-if="waitingForServer"> — ждём ответ </template>
           </FieldDescription>
         </Field>
       </FieldGroup>
@@ -338,26 +327,12 @@ async function submit(): Promise<void> {
           <XIcon data-icon="inline-start" />
           Отменить
         </Button>
-        <DialogClose
-          v-else
-          as-child
-        >
-          <Button variant="outline">
-            Отмена
-          </Button>
+        <DialogClose v-else as-child>
+          <Button variant="outline"> Отмена </Button>
         </DialogClose>
-        <Button
-          :disabled="!selected || upload.uploading.value"
-          @click="submit"
-        >
-          <Spinner
-            v-if="upload.uploading.value"
-            data-icon="inline-start"
-          />
-          <UploadIcon
-            v-else
-            data-icon="inline-start"
-          />
+        <Button :disabled="!selected || upload.uploading.value" @click="submit">
+          <Spinner v-if="upload.uploading.value" data-icon="inline-start" />
+          <UploadIcon v-else data-icon="inline-start" />
           {{ submitLabel }}
         </Button>
       </DialogFooter>

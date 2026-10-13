@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { InvalidCredentialsError, SessionExpiredError } from "../domain/errors.js";
+import {
+  InvalidCredentialsError,
+  SessionExpiredError,
+} from "../domain/errors.js";
 import {
   ACCESS_TTL_SECONDS,
   LOGIN,
@@ -24,7 +27,9 @@ describe("вход", () => {
     expect(session.user).toEqual({ login: LOGIN });
     expect(session.expiresIn).toBe(ACCESS_TTL_SECONDS);
     expect(session.refreshExpiresIn).toBe(REFRESH_TTL_SECONDS);
-    expect(await auth.sessions.authenticate(session.accessToken)).toEqual({ userId: user?.id });
+    expect(await auth.sessions.authenticate(session.accessToken)).toEqual({
+      userId: user?.id,
+    });
   });
 
   it("отказывает при неверном пароле", async () => {
@@ -32,9 +37,9 @@ describe("вход", () => {
 
     await auth.sync();
 
-    await expect(auth.sessions.login(LOGIN, "wrong password")).rejects.toBeInstanceOf(
-      InvalidCredentialsError,
-    );
+    await expect(
+      auth.sessions.login(LOGIN, "wrong password"),
+    ).rejects.toBeInstanceOf(InvalidCredentialsError);
   });
 
   it("отказывает при неверном логине так же, как при неверном пароле", async () => {
@@ -42,9 +47,9 @@ describe("вход", () => {
 
     await auth.sync();
 
-    await expect(auth.sessions.login("stranger", PASSWORD)).rejects.toBeInstanceOf(
-      InvalidCredentialsError,
-    );
+    await expect(
+      auth.sessions.login("stranger", PASSWORD),
+    ).rejects.toBeInstanceOf(InvalidCredentialsError);
   });
 
   it("сравнивает логин с учётом регистра и без обрезки пробелов", async () => {
@@ -52,12 +57,12 @@ describe("вход", () => {
 
     await auth.sync();
 
-    await expect(auth.sessions.login(LOGIN.toUpperCase(), PASSWORD)).rejects.toBeInstanceOf(
-      InvalidCredentialsError,
-    );
-    await expect(auth.sessions.login(` ${LOGIN}`, PASSWORD)).rejects.toBeInstanceOf(
-      InvalidCredentialsError,
-    );
+    await expect(
+      auth.sessions.login(LOGIN.toUpperCase(), PASSWORD),
+    ).rejects.toBeInstanceOf(InvalidCredentialsError);
+    await expect(
+      auth.sessions.login(` ${LOGIN}`, PASSWORD),
+    ).rejects.toBeInstanceOf(InvalidCredentialsError);
   });
 
   it("не пускает прежний логин, оставшийся в базе после смены логина в окружении", async () => {
@@ -66,9 +71,9 @@ describe("вход", () => {
     await auth.sync();
     await auth.sync({ login: "new-operator", password: "another password" });
 
-    await expect(auth.withLogin("new-operator").login(LOGIN, PASSWORD)).rejects.toBeInstanceOf(
-      InvalidCredentialsError,
-    );
+    await expect(
+      auth.withLogin("new-operator").login(LOGIN, PASSWORD),
+    ).rejects.toBeInstanceOf(InvalidCredentialsError);
   });
 });
 
@@ -90,15 +95,17 @@ describe("продление", () => {
   it("отказывает без токена обновления", async () => {
     const { auth } = await signedIn();
 
-    await expect(auth.sessions.refresh(undefined)).rejects.toBeInstanceOf(SessionExpiredError);
+    await expect(auth.sessions.refresh(undefined)).rejects.toBeInstanceOf(
+      SessionExpiredError,
+    );
   });
 
   it("отказывает с токеном доступа вместо токена обновления", async () => {
     const { auth, session } = await signedIn();
 
-    await expect(auth.sessions.refresh(session.accessToken)).rejects.toBeInstanceOf(
-      SessionExpiredError,
-    );
+    await expect(
+      auth.sessions.refresh(session.accessToken),
+    ).rejects.toBeInstanceOf(SessionExpiredError);
   });
 
   it("отказывает, когда токен обновления истёк", async () => {
@@ -106,9 +113,9 @@ describe("продление", () => {
 
     auth.clock.advance(REFRESH_TTL_SECONDS / 3600 + 1);
 
-    await expect(auth.sessions.refresh(session.refreshToken)).rejects.toBeInstanceOf(
-      SessionExpiredError,
-    );
+    await expect(
+      auth.sessions.refresh(session.refreshToken),
+    ).rejects.toBeInstanceOf(SessionExpiredError);
   });
 
   it("отказывает по устаревшей версии после смены пароля", async () => {
@@ -116,9 +123,9 @@ describe("продление", () => {
 
     await auth.sync({ password: "a brand new password" });
 
-    await expect(auth.sessions.refresh(session.refreshToken)).rejects.toBeInstanceOf(
-      SessionExpiredError,
-    );
+    await expect(
+      auth.sessions.refresh(session.refreshToken),
+    ).rejects.toBeInstanceOf(SessionExpiredError);
   });
 
   it("отказывает пользователю, чей логин больше не указан в окружении", async () => {
@@ -126,9 +133,9 @@ describe("продление", () => {
 
     await auth.sync({ login: "new-operator", password: "another password" });
 
-    await expect(auth.withLogin("new-operator").refresh(session.refreshToken)).rejects.toBeInstanceOf(
-      SessionExpiredError,
-    );
+    await expect(
+      auth.withLogin("new-operator").refresh(session.refreshToken),
+    ).rejects.toBeInstanceOf(SessionExpiredError);
   });
 });
 

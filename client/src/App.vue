@@ -20,9 +20,7 @@ const auth = useAuth();
 const route = useRoute();
 const router = useRouter();
 
-const allowed = computed(
-  () => !route.meta.requiresAuth || auth.signedIn.value,
-);
+const allowed = computed(() => !route.meta.requiresAuth || auth.signedIn.value);
 
 function retry(): void {
   void router.replace({ path: route.fullPath, force: true });
@@ -62,9 +60,5 @@ function retry(): void {
 
   <RouterView v-else-if="allowed" />
 
-  <Toaster
-    rich-colors
-    close-button
-    position="bottom-right"
-  />
+  <Toaster rich-colors close-button position="bottom-right" />
 </template>

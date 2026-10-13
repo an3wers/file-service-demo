@@ -1,6 +1,8 @@
 import { z } from "zod";
 
-export const fileStatusSchema = z.enum(["pending", "ready", "failed"]).meta({ id: "FileStatus" });
+export const fileStatusSchema = z
+  .enum(["pending", "ready", "failed"])
+  .meta({ id: "FileStatus" });
 
 export const uploadSourceSchema = z
   .enum(["server", "presigned", "multipart"])
@@ -64,7 +66,8 @@ export const multipartPartDtoSchema = z
   .object({
     partNumber: z.number().int(),
     offset: z.number().int().meta({
-      description: "Начало части в исходном файле: клиент режет file.slice(offset, offset + size)",
+      description:
+        "Начало части в исходном файле: клиент режет file.slice(offset, offset + size)",
     }),
     size: z.number().int(),
     url: z.url(),
@@ -80,7 +83,8 @@ export const presignSingleResponseSchema = z
     uploadUrl: z.url(),
     expiresAt: z.iso.datetime(),
     requiredHeaders: z.record(z.string(), z.string()).meta({
-      description: "Заголовки, вошедшие в подпись: PUT обязан отправить их дословно",
+      description:
+        "Заголовки, вошедшие в подпись: PUT обязан отправить их дословно",
     }),
   })
   .meta({ id: "PresignSingleResponse" });
@@ -96,17 +100,22 @@ export const presignMultipartResponseSchema = z
     partSize: z.number().int(),
     partCount: z.number().int(),
     maxConcurrency: z.number().int().meta({
-      description: "Сколько частей держать в полёте одновременно; число назначает сервер",
+      description:
+        "Сколько частей держать в полёте одновременно; число назначает сервер",
     }),
     expiresAt: z.iso.datetime(),
     parts: z.array(multipartPartDtoSchema).meta({
-      description: "Первая пачка ссылок; остальные — через /multipart/part-urls",
+      description:
+        "Первая пачка ссылок; остальные — через /multipart/part-urls",
     }),
   })
   .meta({ id: "PresignMultipartResponse" });
 
 export const presignUploadResponseSchema = z
-  .discriminatedUnion("strategy", [presignSingleResponseSchema, presignMultipartResponseSchema])
+  .discriminatedUnion("strategy", [
+    presignSingleResponseSchema,
+    presignMultipartResponseSchema,
+  ])
   .meta({ id: "PresignUploadResponse" });
 
 export const partUrlsResponseSchema = z

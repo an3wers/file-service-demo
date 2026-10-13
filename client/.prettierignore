@@ -1,0 +1,12 @@
+node_modules/
+dist/
+dist-ssr/
+coverage/
+.agents/
+.codex/
+.env*
+*.local
+*.log
+package-lock.json
+skills-lock.json
+src/api/generated/

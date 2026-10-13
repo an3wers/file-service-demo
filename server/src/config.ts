@@ -5,7 +5,9 @@ const booleanish = z
   .transform((value) => value === "true" || value === "1");
 
 const envSchema = z.object({
-  NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
+  NODE_ENV: z
+    .enum(["development", "test", "production"])
+    .default("development"),
   PORT: z.coerce.number().int().positive().default(3000),
   LOG_LEVEL: z
     .enum(["fatal", "error", "warn", "info", "debug", "trace", "silent"])
@@ -13,10 +15,19 @@ const envSchema = z.object({
   LOGIN_USER_APP: z
     .string()
     .min(1, "LOGIN_USER_APP must not be empty")
-    .refine((value) => value === value.trim(), "LOGIN_USER_APP must not start or end with whitespace"),
-  PASSWORD_USER_APP: z.string().min(8, "PASSWORD_USER_APP must be at least 8 characters"),
-  JWT_ACCESS_SECRET: z.string().min(32, "JWT_ACCESS_SECRET must be at least 32 characters"),
-  JWT_REFRESH_SECRET: z.string().min(32, "JWT_REFRESH_SECRET must be at least 32 characters"),
+    .refine(
+      (value) => value === value.trim(),
+      "LOGIN_USER_APP must not start or end with whitespace",
+    ),
+  PASSWORD_USER_APP: z
+    .string()
+    .min(8, "PASSWORD_USER_APP must be at least 8 characters"),
+  JWT_ACCESS_SECRET: z
+    .string()
+    .min(32, "JWT_ACCESS_SECRET must be at least 32 characters"),
+  JWT_REFRESH_SECRET: z
+    .string()
+    .min(32, "JWT_REFRESH_SECRET must be at least 32 characters"),
   JWT_ACCESS_TTL_MINUTES: z.coerce.number().int().positive().default(15),
   JWT_REFRESH_TTL_DAYS: z.coerce.number().int().positive().default(7),
   COOKIE_SECURE: booleanish.default(false),
@@ -39,8 +50,18 @@ const envSchema = z.object({
   DATABASE_SSL: booleanish.default(false),
 
   MAX_UPLOAD_SIZE_MB: z.coerce.number().int().positive().default(50),
-  PRESIGN_UPLOAD_TTL_SECONDS: z.coerce.number().int().positive().max(604800).default(900),
-  PRESIGN_DOWNLOAD_TTL_SECONDS: z.coerce.number().int().positive().max(604800).default(300),
+  PRESIGN_UPLOAD_TTL_SECONDS: z.coerce
+    .number()
+    .int()
+    .positive()
+    .max(604800)
+    .default(900),
+  PRESIGN_DOWNLOAD_TTL_SECONDS: z.coerce
+    .number()
+    .int()
+    .positive()
+    .max(604800)
+    .default(300),
   // Zero is allowed and means "settle everything pending right now": it is how
   // the cleanup pass is exercised without waiting out a real TTL.
   PENDING_TTL_HOURS: z.coerce.number().int().nonnegative().default(24),
@@ -50,13 +71,28 @@ const envSchema = z.object({
   // turning into an S3 error on the first upload instead of a startup failure.
   MULTIPART_THRESHOLD_MB: z.coerce.number().int().min(5).default(100),
   MULTIPART_PART_SIZE_MB: z.coerce.number().int().min(5).default(16),
-  MULTIPART_MAX_PARTS: z.coerce.number().int().positive().max(10000).default(10000),
-  MULTIPART_URL_BATCH: z.coerce.number().int().positive().max(1000).default(100),
+  MULTIPART_MAX_PARTS: z.coerce
+    .number()
+    .int()
+    .positive()
+    .max(10000)
+    .default(10000),
+  MULTIPART_URL_BATCH: z.coerce
+    .number()
+    .int()
+    .positive()
+    .max(1000)
+    .default(100),
   // Not a technical ceiling: past ~6 the browser's per-origin connection limit
   // queues the rest anyway, and every extra slot is another part held in memory.
   MULTIPART_MAX_CONCURRENCY: z.coerce.number().int().min(1).max(16).default(4),
   MULTIPART_MAX_ACTIVE_UPLOADS: z.coerce.number().int().positive().default(10),
-  PRESIGN_PART_TTL_SECONDS: z.coerce.number().int().positive().max(604800).default(3600),
+  PRESIGN_PART_TTL_SECONDS: z.coerce
+    .number()
+    .int()
+    .positive()
+    .max(604800)
+    .default(3600),
   MAX_OBJECT_SIZE_GB: z.coerce.number().int().positive().max(5120).default(200),
 });
 
@@ -78,7 +114,9 @@ export const config = {
   isProduction: env.NODE_ENV === "production",
   port: env.PORT,
   logLevel: env.LOG_LEVEL,
-  corsOrigin: env.CORS_ORIGIN.split(",").map((origin) => origin.trim()).filter(Boolean),
+  corsOrigin: env.CORS_ORIGIN.split(",")
+    .map((origin) => origin.trim())
+    .filter(Boolean),
   apiDocsEnabled: env.API_DOCS_ENABLED ?? env.NODE_ENV !== "production",
 
   auth: {

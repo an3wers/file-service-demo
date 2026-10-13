@@ -25,7 +25,9 @@ describe("токены на jose", () => {
     const issued = await tokens.issueAccess("user-1");
 
     expect(issued.expiresIn).toBe(900);
-    expect(await tokens.verifyAccess(issued.token)).toEqual({ userId: "user-1" });
+    expect(await tokens.verifyAccess(issued.token)).toEqual({
+      userId: "user-1",
+    });
 
     clock.advance(1);
 
@@ -37,7 +39,10 @@ describe("токены на jose", () => {
     const issued = await tokens.issueRefresh("user-1", 3);
 
     expect(issued.expiresIn).toBe(7 * 24 * 60 * 60);
-    expect(await tokens.verifyRefresh(issued.token)).toEqual({ userId: "user-1", version: 3 });
+    expect(await tokens.verifyRefresh(issued.token)).toEqual({
+      userId: "user-1",
+      version: 3,
+    });
 
     clock.advance(7 * 24 + 1);
 

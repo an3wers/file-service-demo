@@ -1,9 +1,9 @@
-import { afterEach } from "vitest"
-import { enableAutoUnmount } from "@vue/test-utils"
+import { afterEach } from "vitest";
+import { enableAutoUnmount } from "@vue/test-utils";
 
 // Каждый mount снимается после теста: иначе висящие компоненты продолжают
 // держать watch/таймеры и текут между тест-кейсами одного файла.
-enableAutoUnmount(afterEach)
+enableAutoUnmount(afterEach);
 
 // happy-dom не реализует API, на которые опирается reka-ui (основа shadcn-vue):
 // без заглушек любой Dialog/Popover падает ещё на монтировании.
@@ -18,7 +18,7 @@ if (!globalThis.matchMedia) {
       addEventListener: () => {},
       removeEventListener: () => {},
       dispatchEvent: () => false,
-    }) as unknown as MediaQueryList
+    }) as unknown as MediaQueryList;
 }
 
 class ObserverStub {
@@ -26,15 +26,15 @@ class ObserverStub {
   unobserve() {}
   disconnect() {}
   takeRecords() {
-    return []
+    return [];
   }
 }
 
-globalThis.ResizeObserver ??= ObserverStub as unknown as typeof ResizeObserver
+globalThis.ResizeObserver ??= ObserverStub as unknown as typeof ResizeObserver;
 globalThis.IntersectionObserver ??=
-  ObserverStub as unknown as typeof IntersectionObserver
+  ObserverStub as unknown as typeof IntersectionObserver;
 
-Element.prototype.scrollIntoView ??= () => {}
-Element.prototype.hasPointerCapture ??= () => false
-Element.prototype.setPointerCapture ??= () => {}
-Element.prototype.releasePointerCapture ??= () => {}
+Element.prototype.scrollIntoView ??= () => {};
+Element.prototype.hasPointerCapture ??= () => false;
+Element.prototype.setPointerCapture ??= () => {};
+Element.prototype.releasePointerCapture ??= () => {};

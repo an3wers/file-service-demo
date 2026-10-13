@@ -17,7 +17,11 @@ export interface UserRowsForEnvironment {
 
   findByLogin(login: string): Promise<User | null>;
 
-  replacePasswordHash(id: string, expectedHash: string, newHash: string): Promise<boolean>;
+  replacePasswordHash(
+    id: string,
+    expectedHash: string,
+    newHash: string,
+  ): Promise<boolean>;
 }
 
 export type UserRows = UserRowsForSessions & UserRowsForEnvironment;

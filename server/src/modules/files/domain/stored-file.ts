@@ -37,7 +37,8 @@ export interface FailedFile extends StoredFileBase {
   kind: "failed";
 }
 
-export type StoredFile = ReservedFile | LiveMultipartUpload | ReadyFile | FailedFile;
+export type StoredFile =
+  ReservedFile | LiveMultipartUpload | ReadyFile | FailedFile;
 
 export function statusOf(file: StoredFile): FileStatus {
   switch (file.kind) {

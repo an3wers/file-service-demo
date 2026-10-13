@@ -45,8 +45,14 @@ describe("planMultipart", () => {
       partCount: 7,
       lastPartSize: 4 * MIB,
     });
-    expect(planMultipart(GIB, limits)).toMatchObject({ partSize: 16 * MIB, partCount: 64 });
-    expect(planMultipart(10 * GIB, limits)).toMatchObject({ partSize: 16 * MIB, partCount: 640 });
+    expect(planMultipart(GIB, limits)).toMatchObject({
+      partSize: 16 * MIB,
+      partCount: 64,
+    });
+    expect(planMultipart(10 * GIB, limits)).toMatchObject({
+      partSize: 16 * MIB,
+      partCount: 640,
+    });
     expect(planMultipart(160 * GIB, limits)).toMatchObject({
       partSize: 17 * MIB,
       partCount: 9638,
@@ -76,19 +82,26 @@ describe("planMultipart", () => {
   });
 
   it("never drops below the protocol minimum part size", () => {
-    const plan = planMultipart(6 * MIB, { ...limits, partSize: limits.minPartSize });
+    const plan = planMultipart(6 * MIB, {
+      ...limits,
+      partSize: limits.minPartSize,
+    });
 
     expect(plan.partSize).toBeGreaterThanOrEqual(limits.minPartSize);
   });
 
   it("keeps partCount within maxParts across a range of sizes", () => {
     for (const size of [5 * MIB, 100 * MIB, 7 * GIB, 160 * GIB, 200 * GIB]) {
-      expect(planMultipart(size, limits).partCount).toBeLessThanOrEqual(limits.maxParts);
+      expect(planMultipart(size, limits).partCount).toBeLessThanOrEqual(
+        limits.maxParts,
+      );
     }
   });
 
   it("rejects a size past the object ceiling", () => {
-    expect(thrownBy(() => planMultipart(201 * GIB, limits))).toBeInstanceOf(FileTooLargeError);
+    expect(thrownBy(() => planMultipart(201 * GIB, limits))).toBeInstanceOf(
+      FileTooLargeError,
+    );
   });
 
   it("rejects a size that is not a positive number", () => {
@@ -110,14 +123,20 @@ describe("planMultipart", () => {
     it("бросает доменную ошибку, когда верхняя граница части меньше нижней", () => {
       expect(
         thrownBy(() =>
-          planMultipart(100 * MIB, { ...limits, minPartSize: 10 * MIB, maxPartSize: 5 * MIB }),
+          planMultipart(100 * MIB, {
+            ...limits,
+            minPartSize: 10 * MIB,
+            maxPartSize: 5 * MIB,
+          }),
         ),
       ).toBeInstanceOf(InvalidPlanLimitsError);
     });
 
     it("бросает доменную ошибку, когда потолок объекта не положителен", () => {
       expect(
-        thrownBy(() => planMultipart(100 * MIB, { ...limits, maxObjectSize: 0 })),
+        thrownBy(() =>
+          planMultipart(100 * MIB, { ...limits, maxObjectSize: 0 }),
+        ),
       ).toBeInstanceOf(InvalidPlanLimitsError);
     });
   });
@@ -144,7 +163,10 @@ describe("partRange", () => {
     const plan = planMultipart(100 * MIB, limits);
 
     expect(partRange(plan, 1)).toEqual({ offset: 0, size: 16 * MIB });
-    expect(partRange(plan, 6)).toEqual({ offset: 5 * 16 * MIB, size: 16 * MIB });
+    expect(partRange(plan, 6)).toEqual({
+      offset: 5 * 16 * MIB,
+      size: 16 * MIB,
+    });
     expect(partRange(plan, 7)).toEqual({ offset: 6 * 16 * MIB, size: 4 * MIB });
   });
 });

@@ -27,7 +27,9 @@ describe("normalizeDirectory", () => {
   });
 
   it("collapses separators and trims segments", () => {
-    expect(normalizeDirectory("//docs// 2026 /reports/")).toBe("docs/2026/reports");
+    expect(normalizeDirectory("//docs// 2026 /reports/")).toBe(
+      "docs/2026/reports",
+    );
   });
 
   it("accepts backslashes as separators", () => {
@@ -36,7 +38,9 @@ describe("normalizeDirectory", () => {
 
   it("rejects traversal segments", () => {
     for (const input of ["..", "docs/../etc", "./docs"]) {
-      expect(thrownBy(() => normalizeDirectory(input))).toBeInstanceOf(InvalidDirectoryError);
+      expect(thrownBy(() => normalizeDirectory(input))).toBeInstanceOf(
+        InvalidDirectoryError,
+      );
     }
   });
 
@@ -55,7 +59,9 @@ describe("normalizeDirectory", () => {
   it("rejects a path over the byte budget", () => {
     const path = Array.from({ length: 8 }, () => "a".repeat(100)).join("/");
 
-    expect(thrownBy(() => normalizeDirectory(path))).toBeInstanceOf(InvalidDirectoryError);
+    expect(thrownBy(() => normalizeDirectory(path))).toBeInstanceOf(
+      InvalidDirectoryError,
+    );
   });
 });
 
@@ -72,7 +78,9 @@ describe("sanitizeFileName", () => {
 
   it("rejects names that carry no usable file name", () => {
     for (const input of ["", "   ", "docs/", "..", "bad\u0000name"]) {
-      expect(thrownBy(() => sanitizeFileName(input))).toBeInstanceOf(InvalidFileNameError);
+      expect(thrownBy(() => sanitizeFileName(input))).toBeInstanceOf(
+        InvalidFileNameError,
+      );
     }
   });
 });

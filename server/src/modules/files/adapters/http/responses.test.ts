@@ -2,7 +2,10 @@ import { describe, expectTypeOf, it } from "vitest";
 import type { z } from "zod";
 import type { Serialized } from "../../../../http-contract.js";
 import type { GetDownloadUrlResult } from "../../application/catalog.js";
-import type { MultipartStatus, PartUrlsResult } from "../../application/multipart.js";
+import type {
+  MultipartStatus,
+  PartUrlsResult,
+} from "../../application/multipart.js";
 import type { PresignUploadResult } from "../../application/uploads.js";
 import type { FileStatus, UploadSource } from "../../domain/stored-file.js";
 import type { DirectoryDto } from "../../domain/ports/directories.js";
@@ -42,11 +45,17 @@ describe("схемы ответов совпадают с тем, что отд�
   });
 
   it("каталог", () => {
-    expectTypeOf<DirectoryDto>().toEqualTypeOf<z.output<typeof directoryDtoSchema>>();
+    expectTypeOf<DirectoryDto>().toEqualTypeOf<
+      z.output<typeof directoryDtoSchema>
+    >();
   });
 
   it("состояние и источник файла", () => {
-    expectTypeOf<FileStatus>().toEqualTypeOf<z.output<typeof fileStatusSchema>>();
-    expectTypeOf<UploadSource>().toEqualTypeOf<z.output<typeof uploadSourceSchema>>();
+    expectTypeOf<FileStatus>().toEqualTypeOf<
+      z.output<typeof fileStatusSchema>
+    >();
+    expectTypeOf<UploadSource>().toEqualTypeOf<
+      z.output<typeof uploadSourceSchema>
+    >();
   });
 });

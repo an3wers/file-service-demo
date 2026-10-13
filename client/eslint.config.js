@@ -2,6 +2,7 @@ import js from "@eslint/js";
 import tseslint from "typescript-eslint";
 import pluginVue from "eslint-plugin-vue";
 import globals from "globals";
+import prettier from "eslint-config-prettier/flat";
 
 export default tseslint.config(
   {
@@ -37,4 +38,5 @@ export default tseslint.config(
       "vue/require-default-prop": "off",
     },
   },
+  prettier,
 );

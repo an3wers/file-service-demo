@@ -4,7 +4,10 @@ import { fileURLToPath } from "node:url";
 import { pool } from "./pool.js";
 import { logger } from "../logger.js";
 
-const migrationsDir = join(dirname(fileURLToPath(import.meta.url)), "migrations");
+const migrationsDir = join(
+  dirname(fileURLToPath(import.meta.url)),
+  "migrations",
+);
 
 export async function migrate(): Promise<void> {
   const client = await pool.connect();
@@ -28,7 +31,10 @@ export async function migrate(): Promise<void> {
 
     for (const name of files) {
       if (applied.has(name)) {
-        logger.debug({ migration: name }, "Migration already applied; skipping");
+        logger.debug(
+          { migration: name },
+          "Migration already applied; skipping",
+        );
         continue;
       }
 
@@ -38,7 +44,9 @@ export async function migrate(): Promise<void> {
 
       try {
         await client.query(sql);
-        await client.query("insert into schema_migrations (name) values ($1)", [name]);
+        await client.query("insert into schema_migrations (name) values ($1)", [
+          name,
+        ]);
         await client.query("commit");
         logger.info({ migration: name }, "Migration applied");
       } catch (error) {

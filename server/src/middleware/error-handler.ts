@@ -1,7 +1,12 @@
 import type { ErrorRequestHandler, RequestHandler } from "express";
 import { MulterError } from "multer";
 import { ZodError, z } from "zod";
-import { AppError, ERROR_CODES, badRequest, payloadTooLarge } from "../errors.js";
+import {
+  AppError,
+  ERROR_CODES,
+  badRequest,
+  payloadTooLarge,
+} from "../errors.js";
 import { config } from "../config.js";
 import { logger } from "../logger.js";
 import { mapFilesError } from "../modules/files/index.js";

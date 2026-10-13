@@ -1,5 +1,8 @@
 import { z } from "zod";
-import type { ZodOpenApiResponseObject, ZodOpenApiResponsesObject } from "zod-openapi";
+import type {
+  ZodOpenApiResponseObject,
+  ZodOpenApiResponsesObject,
+} from "zod-openapi";
 
 export const BEARER_SECURITY = "BearerAuth";
 

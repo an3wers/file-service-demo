@@ -23,7 +23,10 @@ describe("memory object store", () => {
         contentLength: 5,
       });
 
-      expect(await store.head(key)).toMatchObject({ size: 5, contentType: "text/plain" });
+      expect(await store.head(key)).toMatchObject({
+        size: 5,
+        contentType: "text/plain",
+      });
     });
 
     it("quotes etags the way completion expects to echo them back", async () => {
@@ -47,7 +50,9 @@ describe("memory object store", () => {
   describe("multipart uploads", () => {
     it("holds no object at the key until the upload is assembled", async () => {
       const store = createMemoryObjectStore();
-      const uploadId = await store.beginMultipart(key, { contentType: "text/plain" });
+      const uploadId = await store.beginMultipart(key, {
+        contentType: "text/plain",
+      });
 
       store.uploadPart(uploadId, 1, Buffer.from("one"));
 
@@ -56,36 +61,48 @@ describe("memory object store", () => {
 
     it("returns parts ascending by part number whatever order they arrived in", async () => {
       const store = createMemoryObjectStore();
-      const uploadId = await store.beginMultipart(key, { contentType: "text/plain" });
+      const uploadId = await store.beginMultipart(key, {
+        contentType: "text/plain",
+      });
 
       store.uploadPart(uploadId, 3, Buffer.from("c"));
       store.uploadPart(uploadId, 1, Buffer.from("a"));
       store.uploadPart(uploadId, 2, Buffer.from("b"));
 
-      expect((await store.listParts(key, uploadId))?.map((part) => part.partNumber)).toEqual([
-        1, 2, 3,
-      ]);
+      expect(
+        (await store.listParts(key, uploadId))?.map((part) => part.partNumber),
+      ).toEqual([1, 2, 3]);
     });
 
     it("assembles the object out of the parts in the order given", async () => {
       const store = createMemoryObjectStore();
-      const uploadId = await store.beginMultipart(key, { contentType: "text/plain" });
+      const uploadId = await store.beginMultipart(key, {
+        contentType: "text/plain",
+      });
 
       store.uploadPart(uploadId, 1, Buffer.from("Оте"));
       store.uploadPart(uploadId, 2, Buffer.from("чёт"));
 
       const parts = await store.listParts(key, uploadId);
 
-      expect(await store.completeMultipart(key, uploadId, parts!)).toBe("assembled");
+      expect(await store.completeMultipart(key, uploadId, parts!)).toBe(
+        "assembled",
+      );
       expect(store.objectAt(key)?.body.toString()).toBe("Отечёт");
     });
 
     it("answers gone once the upload has been completed", async () => {
       const store = createMemoryObjectStore();
-      const uploadId = await store.beginMultipart(key, { contentType: "text/plain" });
+      const uploadId = await store.beginMultipart(key, {
+        contentType: "text/plain",
+      });
 
       store.uploadPart(uploadId, 1, Buffer.from("one"));
-      await store.completeMultipart(key, uploadId, (await store.listParts(key, uploadId))!);
+      await store.completeMultipart(
+        key,
+        uploadId,
+        (await store.listParts(key, uploadId))!,
+      );
 
       expect(await store.listParts(key, uploadId)).toBeNull();
       expect(await store.completeMultipart(key, uploadId, [])).toBe("gone");
@@ -93,7 +110,9 @@ describe("memory object store", () => {
 
     it("answers gone once the upload has been aborted", async () => {
       const store = createMemoryObjectStore();
-      const uploadId = await store.beginMultipart(key, { contentType: "text/plain" });
+      const uploadId = await store.beginMultipart(key, {
+        contentType: "text/plain",
+      });
 
       await store.abortMultipart(key, uploadId);
 
@@ -104,12 +123,16 @@ describe("memory object store", () => {
     it("aborts without complaining about an upload that is already gone", async () => {
       const store = createMemoryObjectStore();
 
-      await expect(store.abortMultipart(key, "never-existed")).resolves.toBeUndefined();
+      await expect(
+        store.abortMultipart(key, "never-existed"),
+      ).resolves.toBeUndefined();
     });
 
     it("lists uploads still open, and only those", async () => {
       const store = createMemoryObjectStore();
-      const kept = await store.beginMultipart(key, { contentType: "text/plain" });
+      const kept = await store.beginMultipart(key, {
+        contentType: "text/plain",
+      });
       const abandoned = await store.beginMultipart("other.bin", {
         contentType: "text/plain",
       });

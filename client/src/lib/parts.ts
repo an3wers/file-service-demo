@@ -7,25 +7,25 @@
 
 /** Номера от `from` до `to` включительно: `range(1, 3)` → `[1, 2, 3]`. */
 export function range(from: number, to: number): number[] {
-  const values: number[] = []
+  const values: number[] = [];
 
   for (let value = from; value <= to; value += 1) {
-    values.push(value)
+    values.push(value);
   }
 
-  return values
+  return values;
 }
 
 /** Нарезает список на куски не длиннее `size`, сохраняя порядок. */
 export function chunk<T>(items: readonly T[], size: number): T[][] {
-  const step = Math.max(1, Math.floor(size))
-  const chunks: T[][] = []
+  const step = Math.max(1, Math.floor(size));
+  const chunks: T[][] = [];
 
   for (let start = 0; start < items.length; start += step) {
-    chunks.push(items.slice(start, start + step))
+    chunks.push(items.slice(start, start + step));
   }
 
-  return chunks
+  return chunks;
 }
 
 /**
@@ -42,34 +42,34 @@ export async function runPool<T>(
   limit: number,
   worker: (item: T) => Promise<void>,
 ): Promise<void> {
-  const queue = [...items]
-  let stopped = false
+  const queue = [...items];
+  let stopped = false;
 
   const drain = async (): Promise<void> => {
     while (!stopped && queue.length > 0) {
       // Очередь одна на всех воркеров, и `shift` в JS атомарен относительно них:
       // между проверкой длины и сдвигом чужой код выполниться не может.
-      const item = queue.shift() as T
+      const item = queue.shift() as T;
 
       try {
-        await worker(item)
+        await worker(item);
       } catch (error) {
-        stopped = true
+        stopped = true;
 
-        throw error
+        throw error;
       }
     }
-  }
+  };
 
-  const width = Math.min(Math.max(1, Math.floor(limit)), items.length)
+  const width = Math.min(Math.max(1, Math.floor(limit)), items.length);
   const results = await Promise.allSettled(
     Array.from({ length: width }, () => drain()),
-  )
+  );
   const failed = results.find(
     (result): result is PromiseRejectedResult => result.status === "rejected",
-  )
+  );
 
   if (failed) {
-    throw failed.reason
+    throw failed.reason;
   }
 }

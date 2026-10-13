@@ -1,0 +1,10 @@
+node_modules/
+dist/
+coverage/
+.agents/
+.codex/
+.env*
+*.log
+package-lock.json
+skills-lock.json
+openapi.json

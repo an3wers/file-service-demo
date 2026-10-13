@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { FileNotReadyError } from "../domain/errors.js";
-import { buildHarnessWithDirectories, thrownBy } from "../testing/files-module.harness.js";
+import {
+  buildHarnessWithDirectories,
+  thrownBy,
+} from "../testing/files-module.harness.js";
 import type { UploadsModule, PresignSingleResult } from "./uploads.js";
 
 /**
@@ -10,7 +13,10 @@ import type { UploadsModule, PresignSingleResult } from "./uploads.js";
  */
 
 /** Резервирование под один подписанный PUT: размер ниже порога составной. */
-async function reserveSingle(files: UploadsModule, size?: number): Promise<PresignSingleResult> {
+async function reserveSingle(
+  files: UploadsModule,
+  size?: number,
+): Promise<PresignSingleResult> {
   const reserved = await files.createPresignedUpload({
     filename: "report.bin",
     directory: "docs",
@@ -56,8 +62,13 @@ describe("handing out a signed download link", () => {
     objectStore.uploadObject(reserved.key, Buffer.from("four"), "text/plain");
     await files.completeUpload(reserved.id);
 
-    const link = await files.getDownloadUrl(reserved.id, { disposition: "attachment" });
+    const link = await files.getDownloadUrl(reserved.id, {
+      disposition: "attachment",
+    });
 
-    expect(link).toMatchObject({ url: expect.stringContaining(reserved.key), name: "report.bin" });
+    expect(link).toMatchObject({
+      url: expect.stringContaining(reserved.key),
+      name: "report.bin",
+    });
   });
 });

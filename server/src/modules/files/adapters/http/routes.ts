@@ -46,7 +46,11 @@ export interface FilesRouterDeps {
  * object store or which database is behind them, which is what keeps a route
  * about HTTP: validate, call one method, choose a status.
  */
-export function createFilesRouter({ uploads, catalog, uploadSingleFile }: FilesRouterDeps): Router {
+export function createFilesRouter({
+  uploads,
+  catalog,
+  uploadSingleFile,
+}: FilesRouterDeps): Router {
   const filesRouter = Router();
 
   // Upload proxied through the server (multipart/form-data).
@@ -76,16 +80,20 @@ export function createFilesRouter({ uploads, catalog, uploadSingleFile }: FilesR
 
   // Step 1 of the direct-to-storage flow: reserve the key and hand out a signed URL —
   // or, past the multipart threshold, a split plan with the first batch of them.
-  filesRouter.post("/presign-upload", validateBody(presignUploadSchema), async (req, res) => {
-    res.status(201).json(
-      await uploads.createPresignedUpload({
-        filename: req.body.filename,
-        directory: req.body.directory,
-        contentType: req.body.contentType,
-        size: req.body.size,
-      }),
-    );
-  });
+  filesRouter.post(
+    "/presign-upload",
+    validateBody(presignUploadSchema),
+    async (req, res) => {
+      res.status(201).json(
+        await uploads.createPresignedUpload({
+          filename: req.body.filename,
+          directory: req.body.directory,
+          contentType: req.body.contentType,
+          size: req.body.size,
+        }),
+      );
+    },
+  );
 
   // A further batch of part URLs, and the way an expired one gets reissued.
   filesRouter.post(
@@ -95,32 +103,42 @@ export function createFilesRouter({ uploads, catalog, uploadSingleFile }: FilesR
     async (req, res) => {
       const { id } = validatedParams<IdParams>(res);
 
-      res.json(await uploads.getPartUrls(id, { partNumbers: req.body.partNumbers }));
+      res.json(
+        await uploads.getPartUrls(id, { partNumbers: req.body.partNumbers }),
+      );
     },
   );
 
   // What storage already holds, so an interrupted upload can pick up where it
   // stopped.
-  filesRouter.get("/:id/multipart", validateParams(idParamsSchema), async (_req, res) => {
-    const { id } = validatedParams<IdParams>(res);
+  filesRouter.get(
+    "/:id/multipart",
+    validateParams(idParamsSchema),
+    async (_req, res) => {
+      const { id } = validatedParams<IdParams>(res);
 
-    res.json(await uploads.getMultipartStatus(id));
-  });
+      res.json(await uploads.getMultipartStatus(id));
+    },
+  );
 
-  filesRouter.get("/", validateQuery(listFilesQuerySchema), async (_req, res) => {
-    const query = validatedQuery<ListFilesQuery>(res);
-    const { items, total } = await catalog.listFiles(query);
+  filesRouter.get(
+    "/",
+    validateQuery(listFilesQuerySchema),
+    async (_req, res) => {
+      const query = validatedQuery<ListFilesQuery>(res);
+      const { items, total } = await catalog.listFiles(query);
 
-    res.json({
-      items: items.map((file) => toFileDto(file)),
-      pagination: {
-        page: query.page,
-        limit: query.limit,
-        total,
-        totalPages: Math.ceil(total / query.limit),
-      },
-    });
-  });
+      res.json({
+        items: items.map((file) => toFileDto(file)),
+        pagination: {
+          page: query.page,
+          limit: query.limit,
+          total,
+          totalPages: Math.ceil(total / query.limit),
+        },
+      });
+    },
+  );
 
   filesRouter.get(
     "/:id",
@@ -139,11 +157,15 @@ export function createFilesRouter({ uploads, catalog, uploadSingleFile }: FilesR
   // real size.
   // Multipart uploads are assembled here too, so the client confirms the same way
   // whichever strategy it used.
-  filesRouter.post("/:id/complete", validateParams(idParamsSchema), async (_req, res) => {
-    const { id } = validatedParams<IdParams>(res);
+  filesRouter.post(
+    "/:id/complete",
+    validateParams(idParamsSchema),
+    async (_req, res) => {
+      const { id } = validatedParams<IdParams>(res);
 
-    res.json(toFileDto(await uploads.completeUpload(id)));
-  });
+      res.json(toFileDto(await uploads.completeUpload(id)));
+    },
+  );
 
   filesRouter.get(
     "/:id/download-url",
@@ -157,12 +179,16 @@ export function createFilesRouter({ uploads, catalog, uploadSingleFile }: FilesR
     },
   );
 
-  filesRouter.delete("/:id", validateParams(idParamsSchema), async (_req, res) => {
-    const { id } = validatedParams<IdParams>(res);
+  filesRouter.delete(
+    "/:id",
+    validateParams(idParamsSchema),
+    async (_req, res) => {
+      const { id } = validatedParams<IdParams>(res);
 
-    await catalog.deleteFile(id);
-    res.status(204).end();
-  });
+      await catalog.deleteFile(id);
+      res.status(204).end();
+    },
+  );
 
   return filesRouter;
 }
@@ -170,15 +196,28 @@ export function createFilesRouter({ uploads, catalog, uploadSingleFile }: FilesR
 export function createDirectoriesRouter(catalog: CatalogModule): Router {
   const directoriesRouter = Router();
 
-  directoriesRouter.get("/", validateQuery(directoriesQuerySchema), async (_req, res) => {
-    const { parent } = validatedQuery<DirectoriesQuery>(res);
+  directoriesRouter.get(
+    "/",
+    validateQuery(directoriesQuerySchema),
+    async (_req, res) => {
+      const { parent } = validatedQuery<DirectoriesQuery>(res);
 
-    res.json(await catalog.listDirectories(parent));
-  });
+      res.json(await catalog.listDirectories(parent));
+    },
+  );
 
-  directoriesRouter.post("/", validateBody(createDirectorySchema), async (req, res) => {
-    res.status(201).json(await catalog.createDirectory({ parent: req.body.parent, name: req.body.name }));
-  });
+  directoriesRouter.post(
+    "/",
+    validateBody(createDirectorySchema),
+    async (req, res) => {
+      res.status(201).json(
+        await catalog.createDirectory({
+          parent: req.body.parent,
+          name: req.body.name,
+        }),
+      );
+    },
+  );
 
   return directoriesRouter;
 }

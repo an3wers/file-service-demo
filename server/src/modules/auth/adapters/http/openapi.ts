@@ -13,7 +13,10 @@ const setsRefreshCookie = z.object({
 });
 
 const refreshCookie = z.object({
-  [REFRESH_COOKIE]: z.string().optional().meta({ description: "Токен обновления из входа или продления" }),
+  [REFRESH_COOKIE]: z
+    .string()
+    .optional()
+    .meta({ description: "Токен обновления из входа или продления" }),
 });
 
 export const authPaths: ZodOpenApiPathsObject = {

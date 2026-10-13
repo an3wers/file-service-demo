@@ -22,7 +22,10 @@ export interface AuthHarness {
   tokens: Tokens;
   clock: TestClock;
   sessions: SessionsModule;
-  sync(credentials?: { login?: string; password?: string }): Promise<EnvironmentUserSync>;
+  sync(credentials?: {
+    login?: string;
+    password?: string;
+  }): Promise<EnvironmentUserSync>;
   withLogin(login: string): SessionsModule;
 }
 
@@ -37,7 +40,8 @@ export function createAuthHarness(): AuthHarness {
     refreshTtlSeconds: REFRESH_TTL_SECONDS,
     clock,
   });
-  const withLogin = (login: string) => createSessionsModule({ users, hasher, tokens, login });
+  const withLogin = (login: string) =>
+    createSessionsModule({ users, hasher, tokens, login });
 
   return {
     users,
@@ -48,7 +52,10 @@ export function createAuthHarness(): AuthHarness {
     sync: (credentials = {}) =>
       syncEnvironmentUser(
         { users, hasher },
-        { login: credentials.login ?? LOGIN, password: credentials.password ?? PASSWORD },
+        {
+          login: credentials.login ?? LOGIN,
+          password: credentials.password ?? PASSWORD,
+        },
       ),
     withLogin,
   };

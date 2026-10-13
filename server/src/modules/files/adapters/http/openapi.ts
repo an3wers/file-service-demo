@@ -54,8 +54,14 @@ export const filesPaths: ZodOpenApiPathsObject = {
       operationId: "listFiles",
       requestParams: { query: listFilesQuerySchema },
       responses: {
-        200: { description: "Страница списка", content: json(listFilesResponseSchema) },
-        ...apiErrors({ 400: "Недопустимый каталог", 404: "Директория не найдена" }),
+        200: {
+          description: "Страница списка",
+          content: json(listFilesResponseSchema),
+        },
+        ...apiErrors({
+          400: "Недопустимый каталог",
+          404: "Директория не найдена",
+        }),
       },
     },
   },
@@ -69,7 +75,10 @@ export const filesPaths: ZodOpenApiPathsObject = {
       operationId: "presignUpload",
       requestBody: { required: true, content: json(presignUploadSchema) },
       responses: {
-        201: { description: "Файл зарезервирован", content: json(presignUploadResponseSchema) },
+        201: {
+          description: "Файл зарезервирован",
+          content: json(presignUploadResponseSchema),
+        },
         ...apiErrors({
           400: "Недопустимое имя или каталог",
           404: "Директория не найдена",
@@ -83,12 +92,16 @@ export const filesPaths: ZodOpenApiPathsObject = {
     post: {
       tags: ["uploads"],
       summary: "Следующая пачка ссылок на части",
-      description: "Этим же вызовом перевыпускаются ссылки, срок которых истёк.",
+      description:
+        "Этим же вызовом перевыпускаются ссылки, срок которых истёк.",
       operationId: "getPartUrls",
       requestParams: { path: idParamsSchema },
       requestBody: { required: true, content: json(partUrlsSchema) },
       responses: {
-        200: { description: "Ссылки на запрошенные части", content: json(partUrlsResponseSchema) },
+        200: {
+          description: "Ссылки на запрошенные части",
+          content: json(partUrlsResponseSchema),
+        },
         ...apiErrors({
           400: "Номеров больше, чем подписывается за раз, или номер вне плана",
           404: FILE_NOT_FOUND,
@@ -105,7 +118,10 @@ export const filesPaths: ZodOpenApiPathsObject = {
       operationId: "getMultipartStatus",
       requestParams: { path: idParamsSchema },
       responses: {
-        200: { description: "Загруженные части", content: json(multipartStatusResponseSchema) },
+        200: {
+          description: "Загруженные части",
+          content: json(multipartStatusResponseSchema),
+        },
         ...apiErrors({
           404: FILE_NOT_FOUND,
           409: "У файла нет живой составной загрузки",
@@ -121,7 +137,8 @@ export const filesPaths: ZodOpenApiPathsObject = {
       requestParams: { path: idParamsSchema, query: fileCardQuerySchema },
       responses: {
         200: {
-          description: "Карточка файла; downloadUrl есть только у готового файла при withUrl=true",
+          description:
+            "Карточка файла; downloadUrl есть только у готового файла при withUrl=true",
           content: json(fileDtoSchema),
         },
         ...apiErrors({ 404: FILE_NOT_FOUND }),
@@ -163,7 +180,10 @@ export const filesPaths: ZodOpenApiPathsObject = {
       operationId: "getDownloadUrl",
       requestParams: { path: idParamsSchema, query: downloadUrlQuerySchema },
       responses: {
-        200: { description: "Ссылка на скачивание", content: json(downloadUrlResponseSchema) },
+        200: {
+          description: "Ссылка на скачивание",
+          content: json(downloadUrlResponseSchema),
+        },
         ...apiErrors({
           404: FILE_NOT_FOUND,
           409: "Файл ещё не готов",
@@ -181,8 +201,15 @@ export const directoriesPaths: ZodOpenApiPathsObject = {
       operationId: "createDirectory",
       requestBody: { required: true, content: json(createDirectorySchema) },
       responses: {
-        201: { description: "Каталог создан", content: json(directoryDtoSchema) },
-        ...apiErrors({ 400: "Недопустимое имя или каталог", 404: "Директория не найдена", 409: "Директория уже существует" }),
+        201: {
+          description: "Каталог создан",
+          content: json(directoryDtoSchema),
+        },
+        ...apiErrors({
+          400: "Недопустимое имя или каталог",
+          404: "Директория не найдена",
+          409: "Директория уже существует",
+        }),
       },
     },
     get: {
@@ -191,8 +218,14 @@ export const directoriesPaths: ZodOpenApiPathsObject = {
       operationId: "listDirectories",
       requestParams: { query: directoriesQuerySchema },
       responses: {
-        200: { description: "Подкаталоги", content: json(directoriesResponseSchema) },
-        ...apiErrors({ 400: "Недопустимый каталог", 404: "Директория не найдена" }),
+        200: {
+          description: "Подкаталоги",
+          content: json(directoriesResponseSchema),
+        },
+        ...apiErrors({
+          400: "Недопустимый каталог",
+          404: "Директория не найдена",
+        }),
       },
     },
   },

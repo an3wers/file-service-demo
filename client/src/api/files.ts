@@ -8,8 +8,8 @@ import type {
   PresignUploadResponse,
   SortField,
   SortOrder,
-} from "@/types/api"
-import type { UploadOptions } from "./client"
+} from "@/types/api";
+import type { UploadOptions } from "./client";
 import {
   ApiError,
   apiRequest,
@@ -18,28 +18,30 @@ import {
   isAbortError,
   parseErrorBody,
   xhrSend,
-} from "./client"
+} from "./client";
 
 export interface ListFilesParams {
-  directory?: string
-  recursive?: boolean
-  search?: string
-  status?: ListStatusFilter
-  page?: number
-  limit?: number
-  sort?: SortField
-  order?: SortOrder
+  directory?: string;
+  recursive?: boolean;
+  search?: string;
+  status?: ListStatusFilter;
+  page?: number;
+  limit?: number;
+  sort?: SortField;
+  order?: SortOrder;
 }
 
 export function listFiles(
   params: ListFilesParams,
   signal?: AbortSignal,
 ): Promise<ListFilesResponse> {
-  return apiRequest<ListFilesResponse>(`/files${buildQuery({ ...params })}`, { signal })
+  return apiRequest<ListFilesResponse>(`/files${buildQuery({ ...params })}`, {
+    signal,
+  });
 }
 
 export function getFile(id: string, withUrl = false): Promise<FileDto> {
-  return apiRequest<FileDto>(`/files/${id}${buildQuery({ withUrl })}`)
+  return apiRequest<FileDto>(`/files/${id}${buildQuery({ withUrl })}`);
 }
 
 /** `options` даёт прогресс отправки и отмену: тело уходит через XHR, а не fetch. */
@@ -48,22 +50,22 @@ export function uploadViaServer(
   directory: string,
   options?: UploadOptions,
 ): Promise<FileDto> {
-  const form = new FormData()
+  const form = new FormData();
 
   // Имя поля ровно "file" — его ждёт `upload.single("file")` на сервере.
-  form.append("file", file)
-  form.append("directory", directory)
+  form.append("file", file);
+  form.append("directory", directory);
 
   // Content-Type намеренно не задаём: его вместе с boundary проставит браузер.
-  return apiUpload<FileDto>("/files", form, options)
+  return apiUpload<FileDto>("/files", form, options);
 }
 
 export function presignUpload(
   body: {
-    filename: string
-    directory?: string
-    contentType?: string
-    size?: number
+    filename: string;
+    directory?: string;
+    contentType?: string;
+    size?: number;
   },
   signal?: AbortSignal,
 ): Promise<PresignUploadResponse> {
@@ -72,7 +74,7 @@ export function presignUpload(
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
     signal,
-  })
+  });
 }
 
 /**
@@ -86,23 +88,27 @@ async function putToS3(
   headers: Record<string, string>,
   options: UploadOptions,
 ): Promise<void> {
-  let response: { status: number; text: string }
+  let response: { status: number; text: string };
 
   try {
-    response = await xhrSend("PUT", url, body, { ...options, headers })
+    response = await xhrSend("PUT", url, body, { ...options, headers });
   } catch (error) {
     if (isAbortError(error)) {
-      throw error
+      throw error;
     }
 
     // Непрозрачный CORS-сбой приходит сюда же: подсказка про порт лежит в errors.ts.
-    throw new ApiError(0, "S3_UPLOAD_FAILED", "Не удалось отправить файл в хранилище")
+    throw new ApiError(
+      0,
+      "S3_UPLOAD_FAILED",
+      "Не удалось отправить файл в хранилище",
+    );
   }
 
   if (response.status < 200 || response.status >= 300) {
-    const { message, details } = parseErrorBody(response.status, response.text)
+    const { message, details } = parseErrorBody(response.status, response.text);
 
-    throw new ApiError(response.status, "S3_UPLOAD_FAILED", message, details)
+    throw new ApiError(response.status, "S3_UPLOAD_FAILED", message, details);
   }
 }
 
@@ -113,7 +119,7 @@ export function putToPresignedUrl(
   headers: Record<string, string>,
   options: UploadOptions = {},
 ): Promise<void> {
-  return putToS3(url, file, headers, options)
+  return putToS3(url, file, headers, options);
 }
 
 /**
@@ -128,7 +134,7 @@ export function putPart(
   part: Blob,
   options: UploadOptions = {},
 ): Promise<void> {
-  return putToS3(url, part, {}, options)
+  return putToS3(url, part, {}, options);
 }
 
 /**
@@ -146,7 +152,7 @@ export function fetchPartUrls(
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ partNumbers }),
     signal,
-  })
+  });
 }
 
 /** Что из частей реально долетело: ответ строится по `ListParts`, а не по базе. */
@@ -154,11 +160,13 @@ export function getMultipartStatus(
   id: string,
   signal?: AbortSignal,
 ): Promise<MultipartStatusResponse> {
-  return apiRequest<MultipartStatusResponse>(`/files/${id}/multipart`, { signal })
+  return apiRequest<MultipartStatusResponse>(`/files/${id}/multipart`, {
+    signal,
+  });
 }
 
 export function completeUpload(id: string): Promise<FileDto> {
-  return apiRequest<FileDto>(`/files/${id}/complete`, { method: "POST" })
+  return apiRequest<FileDto>(`/files/${id}/complete`, { method: "POST" });
 }
 
 export function getDownloadUrl(
@@ -167,10 +175,10 @@ export function getDownloadUrl(
 ): Promise<DownloadUrlResponse> {
   return apiRequest<DownloadUrlResponse>(
     `/files/${id}/download-url${buildQuery({ disposition })}`,
-  )
+  );
 }
 
 export function deleteFile(id: string): Promise<void> {
   // 204 без тела — `apiRequest` возвращает undefined, не пытаясь его парсить.
-  return apiRequest<void>(`/files/${id}`, { method: "DELETE" })
+  return apiRequest<void>(`/files/${id}`, { method: "DELETE" });
 }

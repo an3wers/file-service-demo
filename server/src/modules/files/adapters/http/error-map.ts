@@ -1,4 +1,12 @@
-import { AppError, ERROR_CODES, badRequest, conflict, notFound, payloadTooLarge, tooManyRequests } from "../../../../errors.js";
+import {
+  AppError,
+  ERROR_CODES,
+  badRequest,
+  conflict,
+  notFound,
+  payloadTooLarge,
+  tooManyRequests,
+} from "../../../../errors.js";
 import {
   DirectoryAlreadyExistsError,
   DirectoryNotFoundError,
@@ -21,39 +29,84 @@ export function mapFilesError(error: unknown): AppError | undefined {
   const options = { cause: error };
 
   if (error instanceof DirectoryNotFoundError) {
-    return notFound(ERROR_CODES.DIRECTORY_NOT_FOUND, error.message, error.details, options);
+    return notFound(
+      ERROR_CODES.DIRECTORY_NOT_FOUND,
+      error.message,
+      error.details,
+      options,
+    );
   }
 
   if (error instanceof DirectoryAlreadyExistsError) {
-    return conflict(ERROR_CODES.DIRECTORY_ALREADY_EXISTS, error.message, error.details, options);
+    return conflict(
+      ERROR_CODES.DIRECTORY_ALREADY_EXISTS,
+      error.message,
+      error.details,
+      options,
+    );
   }
 
   if (error instanceof FileNotFoundError) {
-    return notFound(ERROR_CODES.FILE_NOT_FOUND, error.message, error.details, options);
+    return notFound(
+      ERROR_CODES.FILE_NOT_FOUND,
+      error.message,
+      error.details,
+      options,
+    );
   }
 
   if (error instanceof FileNotReadyError) {
-    return conflict(ERROR_CODES.FILE_NOT_READY, error.message, error.details, options);
+    return conflict(
+      ERROR_CODES.FILE_NOT_READY,
+      error.message,
+      error.details,
+      options,
+    );
   }
 
   if (error instanceof UploadNotCompletedError) {
-    return conflict(ERROR_CODES.UPLOAD_NOT_COMPLETED, error.message, error.details, options);
+    return conflict(
+      ERROR_CODES.UPLOAD_NOT_COMPLETED,
+      error.message,
+      error.details,
+      options,
+    );
   }
 
   if (error instanceof MultipartNotFoundError) {
-    return conflict(ERROR_CODES.MULTIPART_NOT_FOUND, error.message, error.details, options);
+    return conflict(
+      ERROR_CODES.MULTIPART_NOT_FOUND,
+      error.message,
+      error.details,
+      options,
+    );
   }
 
   if (error instanceof TooManyActiveUploadsError) {
-    return tooManyRequests(ERROR_CODES.TOO_MANY_ACTIVE_UPLOADS, error.message, error.details, options);
+    return tooManyRequests(
+      ERROR_CODES.TOO_MANY_ACTIVE_UPLOADS,
+      error.message,
+      error.details,
+      options,
+    );
   }
 
   if (error instanceof InvalidDirectoryError) {
-    return badRequest(ERROR_CODES.INVALID_DIRECTORY, error.message, error.details, options);
+    return badRequest(
+      ERROR_CODES.INVALID_DIRECTORY,
+      error.message,
+      error.details,
+      options,
+    );
   }
 
   if (error instanceof InvalidFileNameError) {
-    return badRequest(ERROR_CODES.INVALID_FILE_NAME, error.message, error.details, options);
+    return badRequest(
+      ERROR_CODES.INVALID_FILE_NAME,
+      error.message,
+      error.details,
+      options,
+    );
   }
 
   if (error instanceof FileTooLargeError) {

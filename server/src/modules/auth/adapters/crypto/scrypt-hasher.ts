@@ -13,7 +13,12 @@ export const DEFAULT_SCRYPT_PARAMS: ScryptParams = { N: 16384, r: 8, p: 1 };
 const SALT_BYTES = 16;
 const KEY_BYTES = 64;
 
-function derive(password: string, salt: Buffer, keylen: number, params: ScryptParams): Promise<Buffer> {
+function derive(
+  password: string,
+  salt: Buffer,
+  keylen: number,
+  params: ScryptParams,
+): Promise<Buffer> {
   const options: ScryptOptions = {
     N: params.N,
     r: params.r,
@@ -22,7 +27,9 @@ function derive(password: string, salt: Buffer, keylen: number, params: ScryptPa
   };
 
   return new Promise((resolve, reject) => {
-    scrypt(password, salt, keylen, options, (error, key) => (error ? reject(error) : resolve(key)));
+    scrypt(password, salt, keylen, options, (error, key) =>
+      error ? reject(error) : resolve(key),
+    );
   });
 }
 
@@ -41,7 +48,11 @@ function parse(stored: string): ParsedHash | null {
 
   const params = { N: Number(n), r: Number(r), p: Number(p) };
 
-  if (!Object.values(params).every((value) => Number.isSafeInteger(value) && value > 0)) {
+  if (
+    !Object.values(params).every(
+      (value) => Number.isSafeInteger(value) && value > 0,
+    )
+  ) {
     return null;
   }
 
@@ -53,7 +64,9 @@ function parse(stored: string): ParsedHash | null {
     : null;
 }
 
-export function createScryptHasher(params: ScryptParams = DEFAULT_SCRYPT_PARAMS): PasswordHasher {
+export function createScryptHasher(
+  params: ScryptParams = DEFAULT_SCRYPT_PARAMS,
+): PasswordHasher {
   return {
     async hash(password) {
       const salt = randomBytes(SALT_BYTES);
@@ -77,7 +90,12 @@ export function createScryptHasher(params: ScryptParams = DEFAULT_SCRYPT_PARAMS)
       }
 
       try {
-        const candidate = await derive(password, parsed.salt, parsed.key.length, parsed.params);
+        const candidate = await derive(
+          password,
+          parsed.salt,
+          parsed.key.length,
+          parsed.params,
+        );
 
         return timingSafeEqual(candidate, parsed.key);
       } catch {

@@ -1,12 +1,12 @@
-import { createRouter } from "vue-router"
-import type { RouteRecordRaw, RouterHistory } from "vue-router"
-import type { Auth, SignOutReason } from "@/composables/useAuth"
-import LoginPage from "@/pages/LoginPage.vue"
+import { createRouter } from "vue-router";
+import type { RouteRecordRaw, RouterHistory } from "vue-router";
+import type { Auth, SignOutReason } from "@/composables/useAuth";
+import LoginPage from "@/pages/LoginPage.vue";
 
 declare module "vue-router" {
   interface RouteMeta {
-    requiresAuth?: boolean
-    guestOnly?: boolean
+    requiresAuth?: boolean;
+    guestOnly?: boolean;
   }
 }
 
@@ -24,19 +24,19 @@ const routes: RouteRecordRaw[] = [
     meta: { requiresAuth: true },
   },
   { path: "/:pathMatch(.*)*", redirect: "/" },
-]
+];
 
 const SIGN_OUT_NOTICES: Partial<Record<SignOutReason, string>> = {
   expired: "Сессия истекла — войдите снова",
   elsewhere: "Вы вышли в другой вкладке",
-}
+};
 
 export interface AppRouterOptions {
-  history: RouterHistory
-  auth: Auth
-  upload: { cancel(): void }
-  browser: { reset(): void }
-  notify: (message: string) => void
+  history: RouterHistory;
+  auth: Auth;
+  upload: { cancel(): void };
+  browser: { reset(): void };
+  notify: (message: string) => void;
 }
 
 export function createAppRouter({
@@ -46,51 +46,51 @@ export function createAppRouter({
   browser,
   notify,
 }: AppRouterOptions) {
-  const router = createRouter({ history, routes })
+  const router = createRouter({ history, routes });
 
   router.beforeEach(async (to) => {
-    await auth.ensureSession()
+    await auth.ensureSession();
 
     if (auth.status.value === "failed") {
-      return true
+      return true;
     }
 
     if (to.meta.requiresAuth && !auth.signedIn.value) {
-      return { name: "login" }
+      return { name: "login" };
     }
 
     if (to.meta.guestOnly && auth.signedIn.value) {
-      return { name: "files" }
+      return { name: "files" };
     }
 
-    return true
-  })
+    return true;
+  });
 
   auth.onSignOut((reason) => {
-    upload.cancel()
+    upload.cancel();
 
     if (reason !== "expired") {
-      browser.reset()
+      browser.reset();
     }
 
-    const notice = SIGN_OUT_NOTICES[reason]
+    const notice = SIGN_OUT_NOTICES[reason];
 
     if (notice) {
-      notify(notice)
+      notify(notice);
     }
 
-    void router.push({ name: "login" })
-  })
+    void router.push({ name: "login" });
+  });
 
   auth.onSignInElsewhere(async () => {
     if (router.currentRoute.value.name !== "login") {
-      return
+      return;
     }
 
     if (await auth.renew()) {
-      await router.push({ name: "files" })
+      await router.push({ name: "files" });
     }
-  })
+  });
 
-  return router
+  return router;
 }

@@ -23,7 +23,11 @@ import type {
 
 /** Storage as the files module handles it: put, confirm, sign, remove. */
 export interface ObjectStoreForFiles {
-  put(key: string, body: Buffer, options: PutOptions): Promise<{ etag: string | null }>;
+  put(
+    key: string,
+    body: Buffer,
+    options: PutOptions,
+  ): Promise<{ etag: string | null }>;
 
   /** `null` when no object exists at the key. */
   head(key: string): Promise<StoredObject | null>;
@@ -41,7 +45,10 @@ export interface ObjectStoreForFiles {
 
 /** Storage as the multipart module handles it: open, sign, assemble, cancel. */
 export interface ObjectStoreForMultipart {
-  beginMultipart(key: string, options: { contentType: string }): Promise<string>;
+  beginMultipart(
+    key: string,
+    options: { contentType: string },
+  ): Promise<string>;
 
   signPart(
     key: string,

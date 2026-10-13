@@ -7,7 +7,10 @@ import { createCatalogModule } from "./application/catalog.js";
 import { createMultipartModule } from "./application/multipart.js";
 import { createCleanupModule } from "./application/cleanup.js";
 import type { CleanupModule } from "./application/cleanup.js";
-import { createFilesRouter, createDirectoriesRouter } from "./adapters/http/routes.js";
+import {
+  createFilesRouter,
+  createDirectoriesRouter,
+} from "./adapters/http/routes.js";
 import { systemClock } from "./domain/ports/clock.js";
 import type { Clock } from "./domain/ports/clock.js";
 import type {
@@ -30,7 +33,9 @@ export { filesPaths, directoriesPaths } from "./adapters/http/openapi.js";
  */
 export interface FilesModuleDependencies {
   /** The one object store instance, structurally wide enough for all three scenarios. */
-  objectStore: ObjectStoreForFiles & ObjectStoreForMultipart & ObjectStoreForCleanup;
+  objectStore: ObjectStoreForFiles &
+    ObjectStoreForMultipart &
+    ObjectStoreForCleanup;
   /** Filled onto every row by the adapter that writes it, not by a scenario. */
   bucket: string;
   policy: UploadPolicy;
@@ -78,17 +83,28 @@ export function createFilesHttp(
   });
 
   return {
-    filesRouter: createFilesRouter({ uploads, catalog, uploadSingleFile: deps.uploadSingleFile }),
+    filesRouter: createFilesRouter({
+      uploads,
+      catalog,
+      uploadSingleFile: deps.uploadSingleFile,
+    }),
     directoriesRouter: createDirectoriesRouter(catalog),
   };
 }
 
 /** The cleanup script's assembly: the sweep, built on the same three parts. */
-export function createFilesCleanup(deps: FilesModuleDependencies): CleanupModule {
+export function createFilesCleanup(
+  deps: FilesModuleDependencies,
+): CleanupModule {
   assertValidPlanLimits(deps.policy.planLimits);
 
   const clock = deps.clock ?? systemClock;
   const fileRows = createSqlFileRows(deps.bucket);
 
-  return createCleanupModule({ objectStore: deps.objectStore, fileRows, policy: deps.policy, clock });
+  return createCleanupModule({
+    objectStore: deps.objectStore,
+    fileRows,
+    policy: deps.policy,
+    clock,
+  });
 }

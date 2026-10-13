@@ -1,5 +1,9 @@
 import { AppError, ERROR_CODES } from "../../../../errors.js";
-import type { StoredFile, FileStatus, UploadSource } from "../../domain/stored-file.js";
+import type {
+  StoredFile,
+  FileStatus,
+  UploadSource,
+} from "../../domain/stored-file.js";
 
 export interface FileRow {
   id: string;
@@ -60,16 +64,28 @@ function base(row: FileRow) {
 
 export function toStoredFile(row: FileRow): StoredFile {
   if (row.status === "ready") {
-    if (row.upload_id !== null || row.part_size !== null || row.part_count !== null) {
+    if (
+      row.upload_id !== null ||
+      row.part_size !== null ||
+      row.part_count !== null
+    ) {
       throw impossibleRow(row, "A ready file still carries a multipart upload");
     }
 
-    return { ...base(row), kind: "ready", size: row.size_bytes, etag: row.etag };
+    return {
+      ...base(row),
+      kind: "ready",
+      size: row.size_bytes,
+      etag: row.etag,
+    };
   }
 
   if (row.status === "failed") {
     if (row.upload_id !== null) {
-      throw impossibleRow(row, "A failed file still carries a live multipart upload");
+      throw impossibleRow(
+        row,
+        "A failed file still carries a live multipart upload",
+      );
     }
 
     return { ...base(row), kind: "failed" };
@@ -77,17 +93,27 @@ export function toStoredFile(row: FileRow): StoredFile {
 
   if (row.upload_id === null) {
     if (row.part_size !== null || row.part_count !== null) {
-      throw impossibleRow(row, "A reservation carries a multipart plan without an upload id");
+      throw impossibleRow(
+        row,
+        "A reservation carries a multipart plan without an upload id",
+      );
     }
 
     if (row.etag !== null) {
-      throw impossibleRow(row, "A reservation carries an etag before any upload completed");
+      throw impossibleRow(
+        row,
+        "A reservation carries an etag before any upload completed",
+      );
     }
 
     return { ...base(row), kind: "reserved", size: row.size_bytes };
   }
 
-  if (row.size_bytes === null || row.part_size === null || row.part_count === null) {
+  if (
+    row.size_bytes === null ||
+    row.part_size === null ||
+    row.part_count === null
+  ) {
     throw impossibleRow(row, "A live multipart upload carries no plan");
   }
 

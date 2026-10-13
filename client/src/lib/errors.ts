@@ -1,5 +1,5 @@
-import type { ValidationDetails } from "@/types/api"
-import { ApiError } from "@/api/client"
+import type { ValidationDetails } from "@/types/api";
+import { ApiError } from "@/api/client";
 
 /**
  * Единственное место, где коды API превращаются в текст для пользователя.
@@ -27,11 +27,14 @@ const MESSAGES: Record<string, string> = {
 
   FILE_NOT_FOUND: "Файл не найден — возможно, он уже удалён",
   FILE_NOT_READY: "Файл ещё не готов к скачиванию",
-  UPLOAD_NOT_COMPLETED: "Объект не найден в хранилище: загрузка в S3 не завершилась",
+  UPLOAD_NOT_COMPLETED:
+    "Объект не найден в хранилище: загрузка в S3 не завершилась",
   DUPLICATE_RESOURCE: "Такая запись уже существует",
 
-  INVALID_UPLOAD_SIZE: "Сервер не смог составить план загрузки: некорректный размер файла",
-  INVALID_PART_NUMBER: "Сервер отверг запрошенные номера частей — клиент и сервер разошлись",
+  INVALID_UPLOAD_SIZE:
+    "Сервер не смог составить план загрузки: некорректный размер файла",
+  INVALID_PART_NUMBER:
+    "Сервер отверг запрошенные номера частей — клиент и сервер разошлись",
   MULTIPART_NOT_FOUND:
     "Незавершённой загрузки частями больше нет — начните загрузку заново",
   MULTIPART_INCOMPLETE: "В хранилище долетели не все части файла",
@@ -48,9 +51,10 @@ const MESSAGES: Record<string, string> = {
 
   // Коды самого клиента: сервер их не отдаёт.
   NETWORK_ERROR: "Сервер недоступен",
-  S3_UPLOAD_FAILED: "Хранилище отклонило загрузку (проверьте CORS бакета и порт 5173)",
+  S3_UPLOAD_FAILED:
+    "Хранилище отклонило загрузку (проверьте CORS бакета и порт 5173)",
   UNKNOWN: "Непонятный ответ сервера — попробуйте ещё раз",
-}
+};
 
 function isValidationDetails(details: unknown): details is ValidationDetails {
   return (
@@ -58,40 +62,44 @@ function isValidationDetails(details: unknown): details is ValidationDetails {
     details !== null &&
     "fieldErrors" in details &&
     typeof (details as ValidationDetails).fieldErrors === "object"
-  )
+  );
 }
 
 /** Плоский список сообщений из `details` 422-ответа (результат `z.flattenError()`). */
 export function validationFieldErrors(error: unknown): string[] {
   if (!(error instanceof ApiError) || !isValidationDetails(error.details)) {
-    return []
+    return [];
   }
 
-  const { formErrors, fieldErrors } = error.details
-  const fields = Object.entries(fieldErrors ?? {}).flatMap(([field, messages]) =>
-    (messages ?? []).map((message) => `${field}: ${message}`),
-  )
+  const { formErrors, fieldErrors } = error.details;
+  const fields = Object.entries(fieldErrors ?? {}).flatMap(
+    ([field, messages]) =>
+      (messages ?? []).map((message) => `${field}: ${message}`),
+  );
 
-  return [...(formErrors ?? []), ...fields]
+  return [...(formErrors ?? []), ...fields];
 }
 
-export function errorMessage(error: unknown, fallback = "Что-то пошло не так"): string {
+export function errorMessage(
+  error: unknown,
+  fallback = "Что-то пошло не так",
+): string {
   if (error instanceof ApiError) {
-    const base = MESSAGES[error.code]
+    const base = MESSAGES[error.code];
 
     if (error.code === "VALIDATION_ERROR") {
-      const fields = validationFieldErrors(error)
+      const fields = validationFieldErrors(error);
 
       return fields.length > 0
         ? `${MESSAGES.VALIDATION_ERROR}: ${fields.join("; ")}`
-        : MESSAGES.VALIDATION_ERROR
+        : MESSAGES.VALIDATION_ERROR;
     }
 
     // Сообщение сервера — осмысленный запасной вариант для кодов, которых нет в таблице.
-    return base ?? error.message ?? fallback
+    return base ?? error.message ?? fallback;
   }
 
-  return error instanceof Error ? error.message : fallback
+  return error instanceof Error ? error.message : fallback;
 }
 
 /**
@@ -106,10 +114,10 @@ export function errorMessage(error: unknown, fallback = "Что-то пошло 
  */
 export function isRetryable(error: unknown): boolean {
   if (!(error instanceof ApiError)) {
-    return false
+    return false;
   }
 
-  return error.status === 503 || error.status === 0
+  return error.status === 503 || error.status === 0;
 }
 
 /**
@@ -118,8 +126,10 @@ export function isRetryable(error: unknown): boolean {
  */
 export function requestReference(error: unknown): string | null {
   if (!(error instanceof ApiError) || error.status < 500) {
-    return null
+    return null;
   }
 
-  return error.requestId === undefined ? null : `Код обращения: ${error.requestId}`
+  return error.requestId === undefined
+    ? null
+    : `Код обращения: ${error.requestId}`;
 }

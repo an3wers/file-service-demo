@@ -13,7 +13,9 @@ describe("пользователь из окружения при старте",
     expect(user?.login).toBe(LOGIN);
     expect(user?.tokenVersion).toBe(0);
     expect(user?.passwordHash).not.toContain(PASSWORD);
-    expect(await auth.hasher.verify(PASSWORD, user?.passwordHash ?? "")).toBe(true);
+    expect(await auth.hasher.verify(PASSWORD, user?.passwordHash ?? "")).toBe(
+      true,
+    );
   });
 
   it("повторный старт не создаёт дубль и не трогает версию", async () => {
@@ -45,8 +47,15 @@ describe("пользователь из окружения при старте",
 
     expect(result).toEqual({ created: false, sessionsRevoked: true });
     expect(user?.tokenVersion).toBe(1);
-    expect(await auth.hasher.verify("a brand new password", user?.passwordHash ?? "")).toBe(true);
-    expect(await auth.hasher.verify(PASSWORD, user?.passwordHash ?? "")).toBe(false);
+    expect(
+      await auth.hasher.verify(
+        "a brand new password",
+        user?.passwordHash ?? "",
+      ),
+    ).toBe(true);
+    expect(await auth.hasher.verify(PASSWORD, user?.passwordHash ?? "")).toBe(
+      false,
+    );
   });
 
   it("два одновременных старта с новым паролем поднимают версию один раз", async () => {
@@ -60,7 +69,12 @@ describe("пользователь из окружения при старте",
     const [user] = auth.users.all();
 
     expect(user?.tokenVersion).toBe(1);
-    expect(await auth.hasher.verify("a brand new password", user?.passwordHash ?? "")).toBe(true);
+    expect(
+      await auth.hasher.verify(
+        "a brand new password",
+        user?.passwordHash ?? "",
+      ),
+    ).toBe(true);
   });
 
   it("смена логина заводит новую строку и не трогает старую", async () => {

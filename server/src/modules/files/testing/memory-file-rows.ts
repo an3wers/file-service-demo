@@ -62,7 +62,11 @@ const HOUR_MS = 60 * 60 * 1000;
  * sits is a rule of its own: Postgres puts nulls last ascending and first
  * descending, while the direction applies to the values.
  */
-function compareSizes(a: number | null, b: number | null, order: "asc" | "desc"): number {
+function compareSizes(
+  a: number | null,
+  b: number | null,
+  order: "asc" | "desc",
+): number {
   const direction = order === "asc" ? 1 : -1;
 
   if (a === b) {
@@ -106,7 +110,10 @@ export function createMemoryFileRows(
       failures.check("insertFile");
 
       if (rows.has(input.id)) {
-        throw conflict(ERROR_CODES.DUPLICATE_RESOURCE, `File ${input.id} already exists`);
+        throw conflict(
+          ERROR_CODES.DUPLICATE_RESOURCE,
+          `File ${input.id} already exists`,
+        );
       }
 
       const takenKey = [...rows.values()].some(
@@ -154,7 +161,10 @@ export function createMemoryFileRows(
       return row && live(row) ? toStoredFile(copy(row)) : null;
     },
 
-    async markFileReady(id: string, values: ReadyValues): Promise<StoredFile | null> {
+    async markFileReady(
+      id: string,
+      values: ReadyValues,
+    ): Promise<StoredFile | null> {
       failures.check("markFileReady");
 
       const row = rows.get(id);
@@ -193,11 +203,15 @@ export function createMemoryFileRows(
       failures.check("countActiveMultipart");
 
       return [...rows.values()].filter(
-        (row) => row.status === "pending" && row.upload_id !== null && live(row),
+        (row) =>
+          row.status === "pending" && row.upload_id !== null && live(row),
       ).length;
     },
 
-    async claimExpiredMultipart(id: string, ttlHours: number): Promise<string | null> {
+    async claimExpiredMultipart(
+      id: string,
+      ttlHours: number,
+    ): Promise<string | null> {
       failures.check("claimExpiredMultipart");
 
       if (interleaved) {
@@ -244,7 +258,9 @@ export function createMemoryFileRows(
       return toStoredFile(copy(row));
     },
 
-    async listFiles(params: ListFilesParams): Promise<{ items: StoredFile[]; total: number }> {
+    async listFiles(
+      params: ListFilesParams,
+    ): Promise<{ items: StoredFile[]; total: number }> {
       failures.check("listFiles");
 
       const matched = [...rows.values()].filter((row) => {
@@ -294,7 +310,11 @@ export function createMemoryFileRows(
           ordered = direction * (ages === 0 ? 0 : ages < 0 ? -1 : 1);
         } else if (params.sort === "original_name") {
           ordered =
-            direction * compareText(a.original_name.toLowerCase(), b.original_name.toLowerCase());
+            direction *
+            compareText(
+              a.original_name.toLowerCase(),
+              b.original_name.toLowerCase(),
+            );
         } else {
           ordered = compareSizes(a.size_bytes, b.size_bytes, params.order);
         }
@@ -307,7 +327,10 @@ export function createMemoryFileRows(
 
       // The total rides along with the page in SQL, so a page past the end
       // reports no total at all. Callers see the same number here.
-      return { items: items.map(toStoredFile), total: items.length > 0 ? matched.length : 0 };
+      return {
+        items: items.map(toStoredFile),
+        total: items.length > 0 ? matched.length : 0,
+      };
     },
 
     async findKnownUploadIds(ids: string[]): Promise<Set<string>> {
@@ -323,7 +346,10 @@ export function createMemoryFileRows(
       return new Set(
         [...rows.values()]
           .map((row) => row.upload_id)
-          .filter((uploadId): uploadId is string => uploadId !== null && wanted.has(uploadId)),
+          .filter(
+            (uploadId): uploadId is string =>
+              uploadId !== null && wanted.has(uploadId),
+          ),
       );
     },
 
@@ -331,13 +357,14 @@ export function createMemoryFileRows(
       failures.check("listExpiredPending");
 
       return [...rows.values()]
-        .filter((row) => row.status === "pending" && live(row) && expired(row, ttlHours))
+        .filter(
+          (row) =>
+            row.status === "pending" && live(row) && expired(row, ttlHours),
+        )
         .sort((a, b) => a.created_at.getTime() - b.created_at.getTime())
         .map(copy)
         .map(toStoredFile);
     },
-
-
   };
 
   return {

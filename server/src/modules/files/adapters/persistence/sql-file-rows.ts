@@ -1,5 +1,10 @@
 import { query } from "../../../../db/pool.js";
-import type { FileRows, ReadyValues, InsertFileInput, ListFilesParams } from "../../domain/ports/file-rows.js";
+import type {
+  FileRows,
+  ReadyValues,
+  InsertFileInput,
+  ListFilesParams,
+} from "../../domain/ports/file-rows.js";
 import { toStoredFile } from "./row-mapper.js";
 import type { FileRow } from "./row-mapper.js";
 import type { StoredFile } from "../../domain/stored-file.js";
@@ -47,9 +52,10 @@ export async function markFileReady(
 }
 
 export async function markFileFailed(id: string): Promise<void> {
-  await query("update files set status = 'failed', updated_at = now() where id = $1", [
-    id,
-  ]);
+  await query(
+    "update files set status = 'failed', updated_at = now() where id = $1",
+    [id],
+  );
 }
 
 /** Slots taken by multipart uploads that have neither completed nor been abandoned. */
@@ -130,7 +136,9 @@ export async function listFiles(
       // "" with recursive means the whole bucket, so no condition is needed.
       const exact = addParam(params.directory);
       const prefix = addParam(`${escapeLike(params.directory)}/%`);
-      conditions.push(`(directory = ${exact} or directory like ${prefix} escape '\\')`);
+      conditions.push(
+        `(directory = ${exact} or directory like ${prefix} escape '\\')`,
+      );
     }
   }
 
@@ -175,7 +183,9 @@ export async function findKnownUploadIds(ids: string[]): Promise<Set<string>> {
   return new Set(rows.map((row) => row.upload_id));
 }
 
-export async function listExpiredPending(ttlHours: number): Promise<StoredFile[]> {
+export async function listExpiredPending(
+  ttlHours: number,
+): Promise<StoredFile[]> {
   const { rows } = await query<FileRow>(
     `select * from files
       where status = 'pending'

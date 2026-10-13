@@ -23,12 +23,18 @@ export async function syncEnvironmentUser(
 ): Promise<EnvironmentUserSync> {
   const id = randomUUID();
 
-  await users.insertIfAbsent({ id, login, passwordHash: await hasher.hash(password) });
+  await users.insertIfAbsent({
+    id,
+    login,
+    passwordHash: await hasher.hash(password),
+  });
 
   const user = await users.findByLogin(login);
 
   if (!user) {
-    throw new Error(`The row for user "${login}" vanished right after it was ensured`);
+    throw new Error(
+      `The row for user "${login}" vanished right after it was ensured`,
+    );
   }
 
   const created = user.id === id;

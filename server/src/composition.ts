@@ -6,7 +6,10 @@ import { createUploadMiddleware } from "./middleware/upload.js";
 import { createHealthRouter } from "./routes/health.js";
 import { buildOpenApiDocument } from "./openapi.js";
 import { createS3Client } from "./storage/s3-client.js";
-import { createS3ObjectStore, PROTOCOL_LIMITS } from "./storage/s3-object-store.js";
+import {
+  createS3ObjectStore,
+  PROTOCOL_LIMITS,
+} from "./storage/s3-object-store.js";
 import type { ObjectStore } from "./storage/object-store.js";
 import { createFilesHttp } from "./modules/files/index.js";
 import { createAuthHttp } from "./modules/auth/index.js";
@@ -47,7 +50,10 @@ export function uploadPolicy(): UploadPolicy {
       minPartSize: PROTOCOL_LIMITS.minPartSize,
       maxPartSize: PROTOCOL_LIMITS.maxPartSize,
       // The configured ceilings are wishes; the protocol's are not negotiable.
-      maxParts: Math.min(config.uploads.multipartMaxParts, PROTOCOL_LIMITS.maxParts),
+      maxParts: Math.min(
+        config.uploads.multipartMaxParts,
+        PROTOCOL_LIMITS.maxParts,
+      ),
       maxObjectSize: Math.min(
         config.uploads.maxObjectSizeBytes,
         PROTOCOL_LIMITS.maxObjectSize,

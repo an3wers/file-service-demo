@@ -91,15 +91,36 @@ export interface Harness {
   rowCount(): Promise<number>;
 }
 
-export function buildHarness(policyOverrides: Partial<UploadPolicy> = {}): Harness {
+export function buildHarness(
+  policyOverrides: Partial<UploadPolicy> = {},
+): Harness {
   const clock = createTestClock();
   const objectStore = createMemoryObjectStore({ clock });
   const fileRows = createMemoryFileRows({ clock, bucket: BUCKET });
   const policy = testPolicy(policyOverrides);
   const directories = createMemoryDirectories(fileRows);
-  const multipart = createMultipartModule({ objectStore, fileRows, directories, policy, clock });
-  const uploads = createUploadsModule({ objectStore, fileRows, directories, policy, multipart, clock });
-  const catalog = createCatalogModule({ objectStore, fileRows, directories, policy, clock });
+  const multipart = createMultipartModule({
+    objectStore,
+    fileRows,
+    directories,
+    policy,
+    clock,
+  });
+  const uploads = createUploadsModule({
+    objectStore,
+    fileRows,
+    directories,
+    policy,
+    multipart,
+    clock,
+  });
+  const catalog = createCatalogModule({
+    objectStore,
+    fileRows,
+    directories,
+    policy,
+    clock,
+  });
 
   return {
     multipart,
@@ -148,7 +169,9 @@ export async function thrownBy(run: () => Promise<unknown>): Promise<Error> {
   throw new Error("Expected the call to reject, but it resolved");
 }
 
-export async function buildHarnessWithDirectories(policyOverrides: Partial<UploadPolicy> = {}): Promise<Harness> {
+export async function buildHarnessWithDirectories(
+  policyOverrides: Partial<UploadPolicy> = {},
+): Promise<Harness> {
   const harness = buildHarness(policyOverrides);
   await harness.files.createDirectory({ name: "docs" });
   return harness;

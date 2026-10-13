@@ -3,10 +3,20 @@ import { requireDirectory } from "../domain/directories.js";
 import type { DirectoriesForUpload } from "../domain/ports/directories.js";
 import { logger } from "../../../logger.js";
 import type { Clock } from "../domain/ports/clock.js";
-import { FileNotFoundError, MultipartNotFoundError, UploadNotCompletedError } from "../domain/errors.js";
+import {
+  FileNotFoundError,
+  MultipartNotFoundError,
+  UploadNotCompletedError,
+} from "../domain/errors.js";
 import type { FileRowsForFiles } from "../domain/ports/file-rows.js";
 import type { ObjectStoreForFiles } from "../domain/ports/object-storage.js";
-import type { MultipartModule, MultipartStatus, PartUrlsInput, PartUrlsResult, PresignMultipartResult } from "./multipart.js";
+import type {
+  MultipartModule,
+  MultipartStatus,
+  PartUrlsInput,
+  PartUrlsResult,
+  PresignMultipartResult,
+} from "./multipart.js";
 import { expiresAt, reserveKey } from "../domain/reservation.js";
 import { needsMultipart } from "../domain/upload-plan.js";
 import type { StoredFile } from "../domain/stored-file.js";
@@ -52,7 +62,9 @@ export type PresignUploadResult = PresignSingleResult | PresignMultipartResult;
 
 export interface UploadsModule {
   uploadThroughServer(input: UploadThroughServerInput): Promise<StoredFile>;
-  createPresignedUpload(input: CreatePresignedUploadInput): Promise<PresignUploadResult>;
+  createPresignedUpload(
+    input: CreatePresignedUploadInput,
+  ): Promise<PresignUploadResult>;
   getPartUrls(id: string, input: PartUrlsInput): Promise<PartUrlsResult>;
   getMultipartStatus(id: string): Promise<MultipartStatus>;
   completeUpload(id: string): Promise<StoredFile>;
@@ -84,11 +96,12 @@ export function createUploadsModule({
     /** Upload proxied through the server: the request body is already in memory. */
     async uploadThroughServer(input): Promise<StoredFile> {
       await requireDirectory(directories, normalizeDirectory(input.directory));
-      const { id, key, directory, originalName, extension, contentType } = reserveKey({
-        filename: input.filename,
-        directory: input.directory,
-        contentType: input.contentType,
-      });
+      const { id, key, directory, originalName, extension, contentType } =
+        reserveKey({
+          filename: input.filename,
+          directory: input.directory,
+          contentType: input.contentType,
+        });
 
       const { etag } = await objectStore.put(key, input.bytes, {
         contentType,
@@ -146,7 +159,8 @@ export function createUploadsModule({
         });
       }
 
-      const { id, key, directory, originalName, extension, contentType } = reserveKey(input);
+      const { id, key, directory, originalName, extension, contentType } =
+        reserveKey(input);
       const ttl = policy.presignUploadTtlSeconds;
 
       // Sign before recording anything: the key is already fixed, and a signing
@@ -230,7 +244,8 @@ export function createUploadsModule({
       const stored = await objectStore.head(file.key);
 
       if (!stored) {
-        const message = "No object was found at the reserved key; upload the file before confirming";
+        const message =
+          "No object was found at the reserved key; upload the file before confirming";
         const details = { key: file.key };
 
         throw file.kind === "multipart"

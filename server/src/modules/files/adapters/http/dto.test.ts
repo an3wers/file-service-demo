@@ -43,7 +43,9 @@ describe("toFileDto", () => {
 
   it("не отдаёт downloadUrl, пока он не построен", () => {
     expect(toFileDto(readyFile)).not.toHaveProperty("downloadUrl");
-    expect(toFileDto(readyFile, "https://storage.test.local/signed")).toMatchObject({
+    expect(
+      toFileDto(readyFile, "https://storage.test.local/signed"),
+    ).toMatchObject({
       downloadUrl: "https://storage.test.local/signed",
     });
   });
@@ -57,13 +59,25 @@ describe("toFileDto", () => {
       plan: { size: 12, partSize: 5, partCount: 3, lastPartSize: 2 },
     };
 
-    expect(toFileDto(reserved)).toMatchObject({ status: "pending", size: null, etag: null });
-    expect(toFileDto(multipart)).toMatchObject({ status: "pending", size: 12, etag: null });
+    expect(toFileDto(reserved)).toMatchObject({
+      status: "pending",
+      size: null,
+      etag: null,
+    });
+    expect(toFileDto(multipart)).toMatchObject({
+      status: "pending",
+      size: 12,
+      etag: null,
+    });
   });
 
   it("неудавшийся файл отвечает без размера и etag", () => {
     const failed: StoredFile = { ...base, kind: "failed" };
 
-    expect(toFileDto(failed)).toMatchObject({ status: "failed", size: null, etag: null });
+    expect(toFileDto(failed)).toMatchObject({
+      status: "failed",
+      size: null,
+      etag: null,
+    });
   });
 });

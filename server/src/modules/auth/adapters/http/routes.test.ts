@@ -25,7 +25,9 @@ async function start(options: { cookieSecure?: boolean } = {}) {
   });
   const app = createApp({
     healthRouter: Router(),
-    authRouter: createAuthRouter(auth.sessions, { cookieSecure: options.cookieSecure ?? false }),
+    authRouter: createAuthRouter(auth.sessions, {
+      cookieSecure: options.cookieSecure ?? false,
+    }),
     requireAuth: createRequireAuth(auth.sessions),
     filesRouter,
     directoriesRouter: Router(),
@@ -36,15 +38,23 @@ async function start(options: { cookieSecure?: boolean } = {}) {
     const listening = app.listen(0, () => resolve(listening));
   });
 
-  return { auth, base: `http://127.0.0.1:${(server.address() as AddressInfo).port}` };
+  return {
+    auth,
+    base: `http://127.0.0.1:${(server.address() as AddressInfo).port}`,
+  };
 }
 
 afterEach(async () => {
-  await new Promise<void>((resolve) => (server ? server.close(() => resolve()) : resolve()));
+  await new Promise<void>((resolve) =>
+    server ? server.close(() => resolve()) : resolve(),
+  );
   server = undefined;
 });
 
-function login(base: string, body: unknown = { login: LOGIN, password: PASSWORD }) {
+function login(
+  base: string,
+  body: unknown = { login: LOGIN, password: PASSWORD },
+) {
   return fetch(`${base}/api/auth/login`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -60,7 +70,9 @@ function refresh(base: string, cookie?: string) {
 }
 
 function refreshCookie(response: Response): string {
-  const header = response.headers.getSetCookie().find((value) => value.startsWith("refresh_token="));
+  const header = response.headers
+    .getSetCookie()
+    .find((value) => value.startsWith("refresh_token="));
 
   return header?.split(";")[0] ?? "";
 }
@@ -76,7 +88,8 @@ async function errorCode(response: Response): Promise<string> {
 }
 
 async function accessTokenOf(base: string): Promise<string> {
-  return ((await (await login(base)).json()) as { accessToken: string }).accessToken;
+  return ((await (await login(base)).json()) as { accessToken: string })
+    .accessToken;
 }
 
 describe("POST /api/auth/login", () => {
@@ -112,13 +125,22 @@ describe("POST /api/auth/login", () => {
   it("отвечает одинаковым 401 INVALID_CREDENTIALS на неверный логин и неверный пароль", async () => {
     const { base } = await start();
 
-    const wrongLogin = await login(base, { login: "stranger", password: PASSWORD });
-    const wrongPassword = await login(base, { login: LOGIN, password: "wrong password" });
+    const wrongLogin = await login(base, {
+      login: "stranger",
+      password: PASSWORD,
+    });
+    const wrongPassword = await login(base, {
+      login: LOGIN,
+      password: "wrong password",
+    });
 
     expect(wrongLogin.status).toBe(401);
     expect(wrongPassword.status).toBe(401);
 
-    const [loginBody, passwordBody] = await Promise.all([wrongLogin.json(), wrongPassword.json()]);
+    const [loginBody, passwordBody] = await Promise.all([
+      wrongLogin.json(),
+      wrongPassword.json(),
+    ]);
 
     expect(loginBody.error.code).toBe(ERROR_CODES.INVALID_CREDENTIALS);
     expect(passwordBody.error.code).toBe(ERROR_CODES.INVALID_CREDENTIALS);
@@ -137,7 +159,10 @@ describe("POST /api/auth/refresh", () => {
     const second = refreshCookie(response);
 
     expect(response.status).toBe(200);
-    expect(await response.json()).toMatchObject({ user: { login: LOGIN }, expiresIn: ACCESS_TTL_SECONDS });
+    expect(await response.json()).toMatchObject({
+      user: { login: LOGIN },
+      expiresIn: ACCESS_TTL_SECONDS,
+    });
     expect(second).not.toBe("");
     expect(second).not.toBe(first);
     expect((await refresh(base, second)).status).toBe(200);
@@ -161,7 +186,9 @@ describe("POST /api/auth/refresh", () => {
 
     expect(response.status).toBe(401);
     expect(await errorCode(response)).toBe(ERROR_CODES.SESSION_EXPIRED);
-    expect(response.headers.getSetCookie()[0]).toMatch(/^refresh_token=;.*Expires=Thu, 01 Jan 1970/);
+    expect(response.headers.getSetCookie()[0]).toMatch(
+      /^refresh_token=;.*Expires=Thu, 01 Jan 1970/,
+    );
   });
 });
 
@@ -169,10 +196,16 @@ describe("POST /api/auth/logout", () => {
   it("отвечает 204 и очищает cookie, в том числе без неё", async () => {
     const { base } = await start();
 
-    const withCookie: Record<string, string>[] = [{ Cookie: refreshCookie(await login(base)) }, {}];
+    const withCookie: Record<string, string>[] = [
+      { Cookie: refreshCookie(await login(base)) },
+      {},
+    ];
 
     for (const headers of withCookie) {
-      const response = await fetch(`${base}/api/auth/logout`, { method: "POST", headers });
+      const response = await fetch(`${base}/api/auth/logout`, {
+        method: "POST",
+        headers,
+      });
       const [cookie] = response.headers.getSetCookie();
 
       expect(response.status).toBe(204);
@@ -213,7 +246,10 @@ describe("requireAuth", () => {
 
   it("отвечает 401 UNAUTHORIZED на токен обновления вместо токена доступа", async () => {
     const { base } = await start();
-    const refreshToken = refreshCookie(await login(base)).replace("refresh_token=", "");
+    const refreshToken = refreshCookie(await login(base)).replace(
+      "refresh_token=",
+      "",
+    );
 
     const response = await listFiles(base, `Bearer ${refreshToken}`);
 

@@ -30,7 +30,9 @@ export function normalizeDirectory(input: string | undefined | null): string {
 
   for (const segment of segments) {
     if (segment === "." || segment === "..") {
-      throw new InvalidDirectoryError(`Directory segment "${segment}" is not allowed`);
+      throw new InvalidDirectoryError(
+        `Directory segment "${segment}" is not allowed`,
+      );
     }
 
     if (CONTROL_CHARS.test(segment)) {
@@ -38,14 +40,18 @@ export function normalizeDirectory(input: string | undefined | null): string {
     }
 
     if (segment.length > MAX_SEGMENT_LENGTH) {
-      throw new InvalidDirectoryError(`Directory segment exceeds ${MAX_SEGMENT_LENGTH} characters`);
+      throw new InvalidDirectoryError(
+        `Directory segment exceeds ${MAX_SEGMENT_LENGTH} characters`,
+      );
     }
   }
 
   const directory = segments.join("/");
 
   if (Buffer.byteLength(directory, "utf8") > MAX_DIRECTORY_BYTES) {
-    throw new InvalidDirectoryError(`Directory path exceeds ${MAX_DIRECTORY_BYTES} bytes`);
+    throw new InvalidDirectoryError(
+      `Directory path exceeds ${MAX_DIRECTORY_BYTES} bytes`,
+    );
   }
 
   return directory;
@@ -94,8 +100,15 @@ export function buildObjectKey(
 
 export function normalizeDirectoryName(input: string): string {
   const name = input.normalize("NFC").trim();
-  if (!name || name.includes("/") || name.includes("\\") || CONTROL_CHARS.test(input)) {
-    throw new InvalidDirectoryError("Directory name must be one non-empty segment");
+  if (
+    !name ||
+    name.includes("/") ||
+    name.includes("\\") ||
+    CONTROL_CHARS.test(input)
+  ) {
+    throw new InvalidDirectoryError(
+      "Directory name must be one non-empty segment",
+    );
   }
   return normalizeDirectory(name);
 }

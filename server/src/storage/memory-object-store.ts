@@ -74,9 +74,13 @@ export function createMemoryObjectStore(
   const failures = createFailureSwitch<keyof ObjectStore>();
 
   /** Storage is reached by id, not by key: a stale key would still find it. */
-  const openUpload = (uploadId: string): OpenUpload | undefined => uploads.get(uploadId);
+  const openUpload = (uploadId: string): OpenUpload | undefined =>
+    uploads.get(uploadId);
 
-  const sign = (key: string, params: Record<string, string | number>): string => {
+  const sign = (
+    key: string,
+    params: Record<string, string | number>,
+  ): string => {
     const url = new URL(`https://memory.storage.test/${key}`);
 
     for (const [name, value] of Object.entries(params)) {
@@ -94,7 +98,10 @@ export function createMemoryObjectStore(
     async put(key, body, options) {
       failures.check("put");
 
-      const stored = { body: Buffer.from(body), contentType: options.contentType };
+      const stored = {
+        body: Buffer.from(body),
+        contentType: options.contentType,
+      };
 
       objects.set(key, stored);
 
@@ -125,7 +132,11 @@ export function createMemoryObjectStore(
     async signUpload(key, options): Promise<string> {
       failures.check("signUpload");
 
-      return sign(key, { op: "put", contentType: options.contentType, expiresIn: options.expiresIn });
+      return sign(key, {
+        op: "put",
+        contentType: options.contentType,
+        expiresIn: options.expiresIn,
+      });
     },
 
     async signDownload(key, options): Promise<string> {
@@ -157,7 +168,12 @@ export function createMemoryObjectStore(
     async signPart(key, uploadId, partNumber, options): Promise<string> {
       failures.check("signPart");
 
-      return sign(key, { op: "part", uploadId, partNumber, expiresIn: options.expiresIn });
+      return sign(key, {
+        op: "part",
+        uploadId,
+        partNumber,
+        expiresIn: options.expiresIn,
+      });
     },
 
     async listParts(_key, uploadId): Promise<UploadedPart[] | null> {

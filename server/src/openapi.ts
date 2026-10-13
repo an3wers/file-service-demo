@@ -8,12 +8,17 @@ import { authPaths } from "./modules/auth/index.js";
 import { directoriesPaths, filesPaths } from "./modules/files/index.js";
 import { healthPaths } from "./routes/health.openapi.js";
 
-export const OPENAPI_FILE = fileURLToPath(new URL("../openapi.json", import.meta.url));
+export const OPENAPI_FILE = fileURLToPath(
+  new URL("../openapi.json", import.meta.url),
+);
 
 export type OpenApiDocument = ReturnType<typeof createDocument>;
 
 function packageVersion(): string {
-  const packageJson = readFileSync(new URL("../package.json", import.meta.url), "utf8");
+  const packageJson = readFileSync(
+    new URL("../package.json", import.meta.url),
+    "utf8",
+  );
 
   return (JSON.parse(packageJson) as { version: string }).version;
 }
@@ -22,7 +27,10 @@ export function toOpenApiPath(expressPath: string): string {
   return expressPath.replace(/:(\w+)/g, "{$1}");
 }
 
-function mount(prefix: string, paths: ZodOpenApiPathsObject): ZodOpenApiPathsObject {
+function mount(
+  prefix: string,
+  paths: ZodOpenApiPathsObject,
+): ZodOpenApiPathsObject {
   return Object.fromEntries(
     Object.entries(paths).map(([path, item]) => [
       path === "/" ? prefix : `${prefix}${path}`,
@@ -45,13 +53,23 @@ export function buildOpenApiDocument(): OpenApiDocument {
     security: [{ [BEARER_SECURITY]: [] }],
     components: {
       securitySchemes: {
-        [BEARER_SECURITY]: { type: "http", scheme: "bearer", bearerFormat: "JWT" },
+        [BEARER_SECURITY]: {
+          type: "http",
+          scheme: "bearer",
+          bearerFormat: "JWT",
+        },
       },
     },
     tags: [
-      { name: "auth", description: "Вход, продление и выход, без токена доступа" },
+      {
+        name: "auth",
+        description: "Вход, продление и выход, без токена доступа",
+      },
       { name: "files", description: "Каталог файлов и загрузка через сервер" },
-      { name: "uploads", description: "Загрузка в обход сервера по подписанным ссылкам" },
+      {
+        name: "uploads",
+        description: "Загрузка в обход сервера по подписанным ссылкам",
+      },
       { name: "directories", description: "Каталоги" },
       { name: "health", description: "Пробы живости и готовности, без токена" },
     ],

@@ -2,7 +2,10 @@ import { describe, expect, it } from "vitest";
 import { AppError } from "../../../errors.js";
 import { createMemoryFileRows } from "./memory-file-rows.js";
 import type { MemoryFileRows } from "./memory-file-rows.js";
-import type { InsertFileInput, ListFilesParams } from "../domain/ports/file-rows.js";
+import type {
+  InsertFileInput,
+  ListFilesParams,
+} from "../domain/ports/file-rows.js";
 
 /**
  * Every later test believes whatever this implementation says about a row, so
@@ -14,7 +17,9 @@ describe("memory file rows", () => {
   function reserve(overrides: Partial<InsertFileInput> = {}): InsertFileInput {
     nextId += 1;
 
-    const id = overrides.id ?? `00000000-0000-4000-8000-${String(nextId).padStart(12, "0")}`;
+    const id =
+      overrides.id ??
+      `00000000-0000-4000-8000-${String(nextId).padStart(12, "0")}`;
 
     return {
       id,
@@ -31,7 +36,10 @@ describe("memory file rows", () => {
     };
   }
 
-  async function multipartRow(store: MemoryFileRows, overrides: Partial<InsertFileInput> = {}) {
+  async function multipartRow(
+    store: MemoryFileRows,
+    overrides: Partial<InsertFileInput> = {},
+  ) {
     return store.insertFile(
       reserve({
         uploadSource: "multipart",
@@ -44,7 +52,9 @@ describe("memory file rows", () => {
     );
   }
 
-  const listing = (overrides: Partial<ListFilesParams> = {}): ListFilesParams => ({
+  const listing = (
+    overrides: Partial<ListFilesParams> = {},
+  ): ListFilesParams => ({
     recursive: false,
     page: 1,
     limit: 10,
@@ -80,9 +90,9 @@ describe("memory file rows", () => {
 
       await store.insertFile(first);
 
-      await expect(store.insertFile(reserve({ objectKey: first.objectKey }))).rejects.toBeInstanceOf(
-        AppError,
-      );
+      await expect(
+        store.insertFile(reserve({ objectKey: first.objectKey })),
+      ).rejects.toBeInstanceOf(AppError);
     });
 
     it("hides a soft-deleted row from reads", async () => {
@@ -128,7 +138,11 @@ describe("memory file rows", () => {
     it("leaves the row ready when it is confirmed twice", async () => {
       const store = createMemoryFileRows();
       const row = await multipartRow(store);
-      const values = { sizeBytes: 16, etag: '"abc"', contentType: "text/plain" };
+      const values = {
+        sizeBytes: 16,
+        etag: '"abc"',
+        contentType: "text/plain",
+      };
 
       await store.markFileReady(row.id, values);
       const again = await store.markFileReady(row.id, values);
@@ -144,7 +158,11 @@ describe("memory file rows", () => {
       await store.softDeleteFile(row.id);
 
       expect(
-        await store.markFileReady(row.id, { sizeBytes: 1, etag: null, contentType: "text/plain" }),
+        await store.markFileReady(row.id, {
+          sizeBytes: 1,
+          etag: null,
+          contentType: "text/plain",
+        }),
       ).toBeNull();
     });
 
@@ -154,7 +172,9 @@ describe("memory file rows", () => {
 
       await store.markFileFailed(row.id);
 
-      expect(await store.findFileById(row.id)).toMatchObject({ kind: "failed" });
+      expect(await store.findFileById(row.id)).toMatchObject({
+        kind: "failed",
+      });
     });
   });
 
@@ -185,7 +205,9 @@ describe("memory file rows", () => {
 
       await multipartRow(store, { uploadId: "known" });
 
-      expect(await store.findKnownUploadIds(["known", "orphan"])).toEqual(new Set(["known"]));
+      expect(await store.findKnownUploadIds(["known", "orphan"])).toEqual(
+        new Set(["known"]),
+      );
       expect(await store.findKnownUploadIds([])).toEqual(new Set());
     });
   });
@@ -203,12 +225,18 @@ describe("memory file rows", () => {
 
       const ready = await store.insertFile(reserve());
 
-      await store.markFileReady(ready.id, { sizeBytes: 1, etag: null, contentType: "text/plain" });
+      await store.markFileReady(ready.id, {
+        sizeBytes: 1,
+        etag: null,
+        contentType: "text/plain",
+      });
 
       const expired = await store.listExpiredPending(3);
 
       expect(expired.map((row) => row.id)).toEqual([old.id]);
-      expect(recent.createdAt.getTime()).toBeGreaterThan(old.createdAt.getTime());
+      expect(recent.createdAt.getTime()).toBeGreaterThan(
+        old.createdAt.getTime(),
+      );
     });
 
     it("hands the claimed upload id back exactly once when two sweeps race", async () => {
@@ -225,7 +253,9 @@ describe("memory file rows", () => {
       ]);
 
       expect(claims.filter((claim) => claim !== null)).toEqual(["upload-race"]);
-      expect(await store.findFileById(row.id)).toMatchObject({ kind: "failed" });
+      expect(await store.findFileById(row.id)).toMatchObject({
+        kind: "failed",
+      });
     });
 
     it("claims nothing while the row is still within its ttl", async () => {
@@ -235,7 +265,9 @@ describe("memory file rows", () => {
       store.advance(1);
 
       expect(await store.claimExpiredMultipart(row.id, 3)).toBeNull();
-      expect(await store.findFileById(row.id)).toMatchObject({ kind: "multipart" });
+      expect(await store.findFileById(row.id)).toMatchObject({
+        kind: "multipart",
+      });
     });
   });
 
@@ -248,20 +280,29 @@ describe("memory file rows", () => {
         store.advance(1);
       }
 
-      const page = await store.listFiles(listing({ directory: "docs", limit: 2 }));
+      const page = await store.listFiles(
+        listing({ directory: "docs", limit: 2 }),
+      );
 
       expect(page.total).toBe(3);
-      expect(page.items.map((row) => row.originalName)).toEqual(["file-2.bin", "file-1.bin"]);
+      expect(page.items.map((row) => row.originalName)).toEqual([
+        "file-2.bin",
+        "file-1.bin",
+      ]);
     });
 
     it("keeps a nested directory out of a non-recursive listing and in a recursive one", async () => {
       const store = createMemoryFileRows();
 
       await store.insertFile(reserve({ directory: "docs" }));
-      await store.insertFile(reserve({ directory: "docs/2026", objectKey: "docs/2026/a.bin" }));
+      await store.insertFile(
+        reserve({ directory: "docs/2026", objectKey: "docs/2026/a.bin" }),
+      );
 
       const flat = await store.listFiles(listing({ directory: "docs" }));
-      const deep = await store.listFiles(listing({ directory: "docs", recursive: true }));
+      const deep = await store.listFiles(
+        listing({ directory: "docs", recursive: true }),
+      );
 
       expect(flat.items).toHaveLength(1);
       expect(deep.items).toHaveLength(2);
@@ -269,8 +310,12 @@ describe("memory file rows", () => {
 
     it("matches the search case-insensitively and skips deleted rows", async () => {
       const store = createMemoryFileRows();
-      const kept = await store.insertFile(reserve({ originalName: "Quarterly Report.pdf" }));
-      const dropped = await store.insertFile(reserve({ originalName: "quarterly draft.pdf" }));
+      const kept = await store.insertFile(
+        reserve({ originalName: "Quarterly Report.pdf" }),
+      );
+      const dropped = await store.insertFile(
+        reserve({ originalName: "quarterly draft.pdf" }),
+      );
 
       await store.softDeleteFile(dropped.id);
 
@@ -290,14 +335,22 @@ describe("memory file rows", () => {
         contentType: "text/plain",
       });
 
-      const ascending = await store.listFiles(listing({ sort: "size_bytes", order: "asc" }));
-      const descending = await store.listFiles(listing({ sort: "size_bytes", order: "desc" }));
+      const ascending = await store.listFiles(
+        listing({ sort: "size_bytes", order: "asc" }),
+      );
+      const descending = await store.listFiles(
+        listing({ sort: "size_bytes", order: "desc" }),
+      );
 
-      expect(ascending.items.map((row) => row.id)).toEqual([sized.id, pending.id]);
-      expect(descending.items.map((row) => row.id)).toEqual([pending.id, sized.id]);
+      expect(ascending.items.map((row) => row.id)).toEqual([
+        sized.id,
+        pending.id,
+      ]);
+      expect(descending.items.map((row) => row.id)).toEqual([
+        pending.id,
+        sized.id,
+      ]);
     });
-
-
   });
   describe("failNext", () => {
     it("fails the next call to that method and only that one", async () => {
@@ -308,7 +361,9 @@ describe("memory file rows", () => {
       store.failNext("insertFile", boom);
 
       await expect(store.insertFile(input)).rejects.toBe(boom);
-      await expect(store.insertFile(input)).resolves.toMatchObject({ id: input.id });
+      await expect(store.insertFile(input)).resolves.toMatchObject({
+        id: input.id,
+      });
     });
   });
 });

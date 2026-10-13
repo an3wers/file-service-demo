@@ -13,18 +13,18 @@ npm run s3:cors        # один раз на бакет, необходимо �
 npm run dev
 ```
 
-| Скрипт | Что делает |
-|---|---|
-| `npm run dev` | сервер в watch-режиме |
-| `npm run build` / `npm start` | сборка в `dist/` и запуск |
-| `npm run typecheck` | `tsc` по `tsconfig.test.json` — исходники и тесты одним проходом |
-| `npm test` | один прогон vitest |
-| `npm run test:watch` | vitest в watch-режиме |
-| `npm run test:coverage` | покрытие (нужен `@vitest/coverage-v8`) |
-| `npm run db:migrate` | применяет `src/db/migrations/*.sql`, история в `schema_migrations` |
-| `npm run db:cleanup` | разбирает presigned-загрузки, которые так и не подтвердили |
-| `npm run s3:cors` | применяет CORS-правила бакета для `CORS_ORIGIN` |
-| `npm run openapi` | пересобирает `openapi.json` из Zod-схем; после него — `npm run api:generate` в `client/` |
+| Скрипт                        | Что делает                                                                               |
+| ----------------------------- | ---------------------------------------------------------------------------------------- |
+| `npm run dev`                 | сервер в watch-режиме                                                                    |
+| `npm run build` / `npm start` | сборка в `dist/` и запуск                                                                |
+| `npm run typecheck`           | `tsc` по `tsconfig.test.json` — исходники и тесты одним проходом                         |
+| `npm test`                    | один прогон vitest                                                                       |
+| `npm run test:watch`          | vitest в watch-режиме                                                                    |
+| `npm run test:coverage`       | покрытие (нужен `@vitest/coverage-v8`)                                                   |
+| `npm run db:migrate`          | применяет `src/db/migrations/*.sql`, история в `schema_migrations`                       |
+| `npm run db:cleanup`          | разбирает presigned-загрузки, которые так и не подтвердили                               |
+| `npm run s3:cors`             | применяет CORS-правила бакета для `CORS_ORIGIN`                                          |
+| `npm run openapi`             | пересобирает `openapi.json` из Zod-схем; после него — `npm run api:generate` в `client/` |
 
 ## Конфигурация
 
@@ -34,31 +34,31 @@ npm run dev
 резолвится только через **path-style** эндпоинт (`forcePathStyle: true`), но не через
 `<bucket>.s3.cloud.ru`.
 
-| Переменная | По умолчанию | Примечания |
-|---|---|---|
-| `PORT` | `3000` | |
-| `LOGIN_USER_APP` | — | логин единственного пользователя; непустой, без пробелов по краям |
-| `PASSWORD_USER_APP` | — | его пароль, ≥ 8 символов; смена + рестарт завершают все сессии |
-| `JWT_ACCESS_SECRET` | — | ключ подписи токенов доступа, ≥ 32 символов |
-| `JWT_REFRESH_SECRET` | — | ключ подписи токенов обновления, ≥ 32 символов, отличный от предыдущего |
-| `JWT_ACCESS_TTL_MINUTES` | `15` | срок токена доступа |
-| `JWT_REFRESH_TTL_DAYS` | `7` | срок токена обновления и `Max-Age` его cookie |
-| `COOKIE_SECURE` | `false` | флаг `Secure` у cookie; `true` только за HTTPS |
-| `CORS_ORIGIN` | `http://localhost:5173` | через запятую; используется и в `npm run s3:cors` |
-| `API_DOCS_ENABLED` | `true` вне production, `false` в production | Swagger UI на `/api/docs` и спецификация на `/api/openapi.json` |
-| `MAX_UPLOAD_SIZE_MB` | `50` | только для загрузок через сервер |
-| `PRESIGN_UPLOAD_TTL_SECONDS` | `900` | |
-| `PRESIGN_DOWNLOAD_TTL_SECONDS` | `300` | |
-| `PENDING_TTL_HOURS` | `24` | возраст, при котором `db:cleanup` разбирает запись в статусе pending; `0` — разобрать всё прямо сейчас |
-| `MULTIPART_THRESHOLD_MB` | `100` | от какого размера `presign-upload` отвечает multipart-планом |
-| `MULTIPART_PART_SIZE_MB` | `16` | желаемый размер части; не меньше 5 — это floor самого S3 |
-| `MULTIPART_MAX_PARTS` | `10000` | потолок S3; часть растёт, лишь бы уложиться в него |
-| `MULTIPART_URL_BATCH` | `100` | ссылок за один запрос: размер ответа и длина всплеска на подписи |
-| `MULTIPART_MAX_CONCURRENCY` | `4` | уезжает клиенту как `maxConcurrency` |
-| `MULTIPART_MAX_ACTIVE_UPLOADS` | `10` | незакрытых multipart-загрузок во всём сервисе |
-| `PRESIGN_PART_TTL_SECONDS` | `3600` | TTL ссылки на часть |
-| `MAX_OBJECT_SIZE_GB` | `200` | потолок размера одного объекта |
-| `DATABASE_SSL` | `false` | |
+| Переменная                     | По умолчанию                                | Примечания                                                                                             |
+| ------------------------------ | ------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
+| `PORT`                         | `3000`                                      |                                                                                                        |
+| `LOGIN_USER_APP`               | —                                           | логин единственного пользователя; непустой, без пробелов по краям                                      |
+| `PASSWORD_USER_APP`            | —                                           | его пароль, ≥ 8 символов; смена + рестарт завершают все сессии                                         |
+| `JWT_ACCESS_SECRET`            | —                                           | ключ подписи токенов доступа, ≥ 32 символов                                                            |
+| `JWT_REFRESH_SECRET`           | —                                           | ключ подписи токенов обновления, ≥ 32 символов, отличный от предыдущего                                |
+| `JWT_ACCESS_TTL_MINUTES`       | `15`                                        | срок токена доступа                                                                                    |
+| `JWT_REFRESH_TTL_DAYS`         | `7`                                         | срок токена обновления и `Max-Age` его cookie                                                          |
+| `COOKIE_SECURE`                | `false`                                     | флаг `Secure` у cookie; `true` только за HTTPS                                                         |
+| `CORS_ORIGIN`                  | `http://localhost:5173`                     | через запятую; используется и в `npm run s3:cors`                                                      |
+| `API_DOCS_ENABLED`             | `true` вне production, `false` в production | Swagger UI на `/api/docs` и спецификация на `/api/openapi.json`                                        |
+| `MAX_UPLOAD_SIZE_MB`           | `50`                                        | только для загрузок через сервер                                                                       |
+| `PRESIGN_UPLOAD_TTL_SECONDS`   | `900`                                       |                                                                                                        |
+| `PRESIGN_DOWNLOAD_TTL_SECONDS` | `300`                                       |                                                                                                        |
+| `PENDING_TTL_HOURS`            | `24`                                        | возраст, при котором `db:cleanup` разбирает запись в статусе pending; `0` — разобрать всё прямо сейчас |
+| `MULTIPART_THRESHOLD_MB`       | `100`                                       | от какого размера `presign-upload` отвечает multipart-планом                                           |
+| `MULTIPART_PART_SIZE_MB`       | `16`                                        | желаемый размер части; не меньше 5 — это floor самого S3                                               |
+| `MULTIPART_MAX_PARTS`          | `10000`                                     | потолок S3; часть растёт, лишь бы уложиться в него                                                     |
+| `MULTIPART_URL_BATCH`          | `100`                                       | ссылок за один запрос: размер ответа и длина всплеска на подписи                                       |
+| `MULTIPART_MAX_CONCURRENCY`    | `4`                                         | уезжает клиенту как `maxConcurrency`                                                                   |
+| `MULTIPART_MAX_ACTIVE_UPLOADS` | `10`                                        | незакрытых multipart-загрузок во всём сервисе                                                          |
+| `PRESIGN_PART_TTL_SECONDS`     | `3600`                                      | TTL ссылки на часть                                                                                    |
+| `MAX_OBJECT_SIZE_GB`           | `200`                                       | потолок размера одного объекта                                                                         |
+| `DATABASE_SSL`                 | `false`                                     |                                                                                                        |
 
 ## API
 
@@ -74,11 +74,11 @@ npm run dev
 окружения. Без применённой миграции `004_users.sql` сервер не стартует. Почему так —
 [ADR-0007](../docs/adr/0007-autentifikatsiya-polzovatelya-iz-okruzheniya.md).
 
-| Эндпоинт | Успех | Ошибка |
-|---|---|---|
+| Эндпоинт                                     | Успех                                                      | Ошибка                    |
+| -------------------------------------------- | ---------------------------------------------------------- | ------------------------- |
 | `POST /api/auth/login` `{ login, password }` | `200 { accessToken, expiresIn, user: { login } }` + cookie | `401 INVALID_CREDENTIALS` |
-| `POST /api/auth/refresh` (по cookie) | тот же ответ и новая cookie | `401 SESSION_EXPIRED` |
-| `POST /api/auth/logout` | `204`, cookie очищена; ничего не отзывает | — |
+| `POST /api/auth/refresh` (по cookie)         | тот же ответ и новая cookie                                | `401 SESSION_EXPIRED`     |
+| `POST /api/auth/logout`                      | `204`, cookie очищена; ничего не отзывает                  | —                         |
 
 Токен обновления живёт в cookie `refresh_token` (`HttpOnly`, `SameSite=Strict`, `Path=/api/auth`,
 `Max-Age` = `JWT_REFRESH_TTL_DAYS`, `Secure` = `COOKIE_SECURE`). Пароли хешируются `scrypt` из
@@ -99,11 +99,11 @@ Swagger UI — `/api/docs` (через vite-прокси: `http://localhost:5173
 ```jsonc
 {
   "error": {
-    "code": "STORAGE_UNAVAILABLE",  // стабильный код, по нему клиент выбирает текст
+    "code": "STORAGE_UNAVAILABLE", // стабильный код, по нему клиент выбирает текст
     "message": "Object storage is unreachable right now; please try again shortly",
-    "details": { "operation": "PutObject" },   // необязательное, зависит от кода
-    "requestId": 42                            // тот же id, что и в строке лога
-  }
+    "details": { "operation": "PutObject" }, // необязательное, зависит от кода
+    "requestId": 42, // тот же id, что и в строке лога
+  },
 }
 ```
 
@@ -112,32 +112,32 @@ Swagger UI — `/api/docs` (через vite-прокси: `http://localhost:5173
 зависимостей (имя ошибки AWS, ключ объекта, SQLSTATE, имя констрейнта) в ответ не попадают: они
 уходят только в лог.
 
-| Код | Статус | Когда |
-|---|---|---|
-| `UNAUTHORIZED` | 401 | нет токена доступа, он истёк или недействителен |
-| `INVALID_CREDENTIALS` | 401 | вход не удался; не говорит, что именно неверно — логин или пароль |
-| `SESSION_EXPIRED` | 401 | продление не удалось: нет cookie, токен истёк или сессии отозваны — нужен вход |
-| `ROUTE_NOT_FOUND` | 404 | такого маршрута нет |
-| `VALIDATION_ERROR` | 422 | не прошла zod-схема; `details` — `{ formErrors, fieldErrors }` |
-| `FILE_REQUIRED` | 400 | в `multipart/form-data` нет поля `file` |
-| `INVALID_DIRECTORY`, `INVALID_FILE_NAME` | 400 | путь или имя не пережили нормализацию |
-| `UPLOAD_REJECTED` | 400 | multer отверг форму (лишнее поле, больше одного файла) |
-| `PAYLOAD_TOO_LARGE` | 413 | файл больше `MAX_UPLOAD_SIZE_MB` — нужен presigned-сценарий |
-| `FILE_NOT_FOUND` | 404 | записи нет или она уже удалена |
-| `FILE_NOT_READY` | 409 | файл ещё не `ready`, скачивать нечего |
-| `UPLOAD_NOT_COMPLETED` | 409 | по зарезервированному ключу так и не появился объект |
-| `INVALID_UPLOAD_SIZE` | 400 | `size` не положительное число |
-| `INVALID_PART_NUMBER` | 400 | номер части вне `1..partCount` либо в запросе больше `MULTIPART_URL_BATCH` номеров |
-| `MULTIPART_NOT_FOUND` | 409 | у записи нет незавершённой multipart-загрузки |
-| `MULTIPART_INCOMPLETE` | 409 | при завершении в хранилище лежат не все части |
-| `TOO_MANY_ACTIVE_UPLOADS` | 429 | исчерпан `MULTIPART_MAX_ACTIVE_UPLOADS` |
-| `DUPLICATE_RESOURCE` | 409 | нарушен уникальный индекс |
-| `STORAGE_MISCONFIGURED` | 502 | S3 отверг запрос: не тот бакет или ключи |
-| `STORAGE_ERROR` | 502 | S3 ответил тем, с чем сервис работать не может |
-| `STORAGE_UNAVAILABLE` | 503 | до S3 не достучаться |
-| `DATABASE_TIMEOUT` | 503 | запрос снят по `statement_timeout` |
-| `DATABASE_UNAVAILABLE` | 503 | БД недоступна |
-| `INTERNAL_SERVER_ERROR` | 500 | всё остальное; вне production в `details` кладётся стек |
+| Код                                      | Статус | Когда                                                                              |
+| ---------------------------------------- | ------ | ---------------------------------------------------------------------------------- |
+| `UNAUTHORIZED`                           | 401    | нет токена доступа, он истёк или недействителен                                    |
+| `INVALID_CREDENTIALS`                    | 401    | вход не удался; не говорит, что именно неверно — логин или пароль                  |
+| `SESSION_EXPIRED`                        | 401    | продление не удалось: нет cookie, токен истёк или сессии отозваны — нужен вход     |
+| `ROUTE_NOT_FOUND`                        | 404    | такого маршрута нет                                                                |
+| `VALIDATION_ERROR`                       | 422    | не прошла zod-схема; `details` — `{ formErrors, fieldErrors }`                     |
+| `FILE_REQUIRED`                          | 400    | в `multipart/form-data` нет поля `file`                                            |
+| `INVALID_DIRECTORY`, `INVALID_FILE_NAME` | 400    | путь или имя не пережили нормализацию                                              |
+| `UPLOAD_REJECTED`                        | 400    | multer отверг форму (лишнее поле, больше одного файла)                             |
+| `PAYLOAD_TOO_LARGE`                      | 413    | файл больше `MAX_UPLOAD_SIZE_MB` — нужен presigned-сценарий                        |
+| `FILE_NOT_FOUND`                         | 404    | записи нет или она уже удалена                                                     |
+| `FILE_NOT_READY`                         | 409    | файл ещё не `ready`, скачивать нечего                                              |
+| `UPLOAD_NOT_COMPLETED`                   | 409    | по зарезервированному ключу так и не появился объект                               |
+| `INVALID_UPLOAD_SIZE`                    | 400    | `size` не положительное число                                                      |
+| `INVALID_PART_NUMBER`                    | 400    | номер части вне `1..partCount` либо в запросе больше `MULTIPART_URL_BATCH` номеров |
+| `MULTIPART_NOT_FOUND`                    | 409    | у записи нет незавершённой multipart-загрузки                                      |
+| `MULTIPART_INCOMPLETE`                   | 409    | при завершении в хранилище лежат не все части                                      |
+| `TOO_MANY_ACTIVE_UPLOADS`                | 429    | исчерпан `MULTIPART_MAX_ACTIVE_UPLOADS`                                            |
+| `DUPLICATE_RESOURCE`                     | 409    | нарушен уникальный индекс                                                          |
+| `STORAGE_MISCONFIGURED`                  | 502    | S3 отверг запрос: не тот бакет или ключи                                           |
+| `STORAGE_ERROR`                          | 502    | S3 ответил тем, с чем сервис работать не может                                     |
+| `STORAGE_UNAVAILABLE`                    | 503    | до S3 не достучаться                                                               |
+| `DATABASE_TIMEOUT`                       | 503    | запрос снят по `statement_timeout`                                                 |
+| `DATABASE_UNAVAILABLE`                   | 503    | БД недоступна                                                                      |
+| `INTERNAL_SERVER_ERROR`                  | 500    | всё остальное; вне production в `details` кладётся стек                            |
 
 Разделение 502 и 503 намеренное: 502 повторять бессмысленно (сломана конфигурация — это чинится
 деплоем), 503 — стоит, зависимость может ответить через секунду. `TOO_MANY_ACTIVE_UPLOADS` — про
@@ -202,12 +202,12 @@ DELETE /api/files/:id            → 204 (отменяет незавершён�
 `ceil(size / maxParts)`, округлённого вверх до мегабайта. Клиент получает готовые `offset`/`size` и
 ничего не пересчитывает.
 
-| Размер файла | `partSize` | `partCount` |
-|---|---|---|
-| 80 МиБ | — | `strategy: "single"` |
-| 100 МиБ | 16 МиБ | 7 (последняя — 4 МиБ) |
-| 1 ГиБ | 16 МиБ | 64 |
-| 160 ГиБ | **17 МиБ** | 9 638 |
+| Размер файла | `partSize` | `partCount`           |
+| ------------ | ---------- | --------------------- |
+| 80 МиБ       | —          | `strategy: "single"`  |
+| 100 МиБ      | 16 МиБ     | 7 (последняя — 4 МиБ) |
+| 1 ГиБ        | 16 МиБ     | 64                    |
+| 160 ГиБ      | **17 МиБ** | 9 638                 |
 
 Последняя часть почти всегда меньше 5 МиБ — правило минимума на неё не распространяется.
 
@@ -249,19 +249,19 @@ GET /api/directories?parent=docs         → { parent, items: [{ name, path, fil
 
 ```jsonc
 {
-  "id": "a5e1ee53-…",              // он же — базовое имя ключа S3
-  "name": "Отчёт за Q3.pdf",       // исходное имя, сохраняется в БД
-  "directory": "docs/reports",     // нормализовано: без ведущих/конечных/повторяющихся слэшей
+  "id": "a5e1ee53-…", // он же — базовое имя ключа S3
+  "name": "Отчёт за Q3.pdf", // исходное имя, сохраняется в БД
+  "directory": "docs/reports", // нормализовано: без ведущих/конечных/повторяющихся слэшей
   "extension": "pdf",
   "contentType": "application/pdf",
-  "size": 74,                      // null, пока presigned-загрузка не подтверждена
+  "size": 74, // null, пока presigned-загрузка не подтверждена
   "etag": "\"9020e7b4…\"",
-  "status": "ready",               // pending | ready | failed
-  "uploadSource": "server",        // server | presigned | multipart
+  "status": "ready", // pending | ready | failed
+  "uploadSource": "server", // server | presigned | multipart
   "bucket": "bucket-4f84ee",
   "key": "docs/reports/a5e1ee53-….pdf",
   "createdAt": "2026-08-27T12:45:43.437Z",
-  "updatedAt": "2026-08-27T12:45:43.437Z"
+  "updatedAt": "2026-08-27T12:45:43.437Z",
 }
 ```
 

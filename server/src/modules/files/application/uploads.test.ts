@@ -1,8 +1,19 @@
 import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
-import { MultipartNotFoundError, UploadNotCompletedError } from "../domain/errors.js";
-import { THREE_PART_SIZE, buildHarnessWithDirectories, thrownBy } from "../testing/files-module.harness.js";
-import type { UploadsModule, UploadThroughServerInput, PresignSingleResult } from "./uploads.js";
+import {
+  MultipartNotFoundError,
+  UploadNotCompletedError,
+} from "../domain/errors.js";
+import {
+  THREE_PART_SIZE,
+  buildHarnessWithDirectories,
+  thrownBy,
+} from "../testing/files-module.harness.js";
+import type {
+  UploadsModule,
+  UploadThroughServerInput,
+  PresignSingleResult,
+} from "./uploads.js";
 import type { PresignMultipartResult } from "./multipart.js";
 
 /**
@@ -22,7 +33,10 @@ function etagOf(body: Buffer): string {
 }
 
 /** Резервирование под один подписанный PUT: размер ниже порога составной. */
-async function reserveSingle(files: UploadsModule, size?: number): Promise<PresignSingleResult> {
+async function reserveSingle(
+  files: UploadsModule,
+  size?: number,
+): Promise<PresignSingleResult> {
   const reserved = await files.createPresignedUpload({
     filename: "report.bin",
     directory: "docs",
@@ -156,7 +170,10 @@ describe("confirming an upload", () => {
       ]);
 
       expect(second).toEqual(first);
-      expect(first).toMatchObject({ kind: "ready", size: Buffer.concat(PARTS).byteLength });
+      expect(first).toMatchObject({
+        kind: "ready",
+        size: Buffer.concat(PARTS).byteLength,
+      });
       // Объект собран один раз, и второй сборки под тем же ключом не случилось.
       expect(objectStore.objectKeys()).toEqual([reserved.key]);
     });
@@ -207,21 +224,23 @@ describe("uploading through the server", () => {
   });
 
   it("removes the bytes it wrote when the metadata row cannot be inserted", async () => {
-    const { files, objectStore, fileRows, rowCount } = await buildHarnessWithDirectories();
+    const { files, objectStore, fileRows, rowCount } =
+      await buildHarnessWithDirectories();
     const failure = new Error("the metadata table is down");
 
     fileRows.failNext("insertFile", failure);
 
-    await expect(files.uploadThroughServer(uploadInput(Buffer.from("orphan")))).rejects.toBe(
-      failure,
-    );
+    await expect(
+      files.uploadThroughServer(uploadInput(Buffer.from("orphan"))),
+    ).rejects.toBe(failure);
     // Ни строки, ни объекта: сироты, за которую хранилище тарифицирует, нет.
     expect(await rowCount()).toBe(0);
     expect(objectStore.objectKeys()).toEqual([]);
   });
 
   it("had written those bytes first, so it is the rollback that removes them", async () => {
-    const { files, objectStore, fileRows } = await buildHarnessWithDirectories();
+    const { files, objectStore, fileRows } =
+      await buildHarnessWithDirectories();
     const failure = new Error("the metadata table is down");
 
     fileRows.failNext("insertFile", failure);
@@ -229,9 +248,9 @@ describe("uploading through the server", () => {
     // были записаны до строки и убирает их именно откат, а не их отсутствие.
     objectStore.failNext("remove", new Error("storage is down"));
 
-    await expect(files.uploadThroughServer(uploadInput(Buffer.from("orphan")))).rejects.toBe(
-      failure,
-    );
+    await expect(
+      files.uploadThroughServer(uploadInput(Buffer.from("orphan"))),
+    ).rejects.toBe(failure);
     expect(objectStore.objectKeys()).toHaveLength(1);
   });
 });

@@ -70,7 +70,9 @@ export function createApp({
     app.use(
       API_DOCS_PATH,
       swaggerUi.serve,
-      swaggerUi.setup(apiDocs, { swaggerOptions: { persistAuthorization: true } }),
+      swaggerUi.setup(apiDocs, {
+        swaggerOptions: { persistAuthorization: true },
+      }),
     );
   }
 

@@ -1,9 +1,9 @@
-import { toast } from "vue-sonner"
-import type { FileDto } from "@/types/api"
-import { deleteFile, getDownloadUrl } from "@/api/files"
-import { isApiError } from "@/api/client"
-import { errorMessage, isRetryable, requestReference } from "@/lib/errors"
-import { useFileBrowser } from "./useFileBrowser"
+import { toast } from "vue-sonner";
+import type { FileDto } from "@/types/api";
+import { deleteFile, getDownloadUrl } from "@/api/files";
+import { isApiError } from "@/api/client";
+import { errorMessage, isRetryable, requestReference } from "@/lib/errors";
+import { useFileBrowser } from "./useFileBrowser";
 
 /**
  * Общая обвязка тоста ошибки: номер обращения для 5xx (по нему причина ищется в
@@ -16,7 +16,7 @@ function errorToast(error: unknown, fallback: string, retry: () => void): void {
     action: isRetryable(error)
       ? { label: "Повторить", onClick: () => retry() }
       : undefined,
-  })
+  });
 }
 
 /**
@@ -28,51 +28,53 @@ function errorToast(error: unknown, fallback: string, retry: () => void): void {
  * браузер всё равно игнорирует.
  */
 function navigateToDownload(url: string): void {
-  window.location.assign(url)
+  window.location.assign(url);
 }
 
 async function download(file: FileDto): Promise<void> {
   try {
     // Ссылка живёт 300 секунд, поэтому её всегда берут заново, а не кэшируют.
-    const { url } = await getDownloadUrl(file.id, "attachment")
+    const { url } = await getDownloadUrl(file.id, "attachment");
 
-    navigateToDownload(url)
+    navigateToDownload(url);
   } catch (error) {
-    errorToast(error, "Не удалось получить ссылку на скачивание", () =>
-      void download(file),
-    )
+    errorToast(
+      error,
+      "Не удалось получить ссылку на скачивание",
+      () => void download(file),
+    );
   }
 }
 
 /** В карточке `downloadUrl` уже получен через `?withUrl=true` — лишний запрос не делаем. */
 function downloadByUrl(url: string): void {
-  navigateToDownload(url)
+  navigateToDownload(url);
 }
 
 async function remove(file: FileDto): Promise<void> {
-  const browser = useFileBrowser()
+  const browser = useFileBrowser();
 
   try {
-    await deleteFile(file.id)
-    toast.success(`Файл «${file.name}» удалён`)
-    browser.refresh()
+    await deleteFile(file.id);
+    toast.success(`Файл «${file.name}» удалён`);
+    browser.refresh();
   } catch (error) {
     // 404 означает «уже удалён» — список всё равно надо обновить.
     if (isApiError(error) && error.status === 404) {
-      toast.info(`Файл «${file.name}» уже был удалён`)
-      browser.refresh()
-      return
+      toast.info(`Файл «${file.name}» уже был удалён`);
+      browser.refresh();
+      return;
     }
 
     // Повтор из тоста идёт мимо диалога, поэтому проброс наверх здесь гасим:
     // ошибку второй попытки покажет тот же `errorToast`.
     errorToast(error, "Не удалось удалить файл", () => {
-      void remove(file).catch(() => undefined)
-    })
-    throw error
+      void remove(file).catch(() => undefined);
+    });
+    throw error;
   }
 }
 
 export function useFileActions() {
-  return { download, downloadByUrl, remove }
+  return { download, downloadByUrl, remove };
 }
