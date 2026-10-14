@@ -1,5 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Mock } from "vitest";
+import { flushPromises } from "@vue/test-utils";
+import type { UploadOptions } from "@/api/client";
 import type {
   FileDto,
   MultipartPartDto,
@@ -26,8 +28,11 @@ import {
   getMultipartStatus,
   presignUpload,
   putPart,
+  putToPresignedUrl,
+  uploadViaServer,
 } from "@/api/files";
 import { useUpload } from "./useUpload";
+import { createUploadOperation } from "./createUploadOperation";
 
 const PART_SIZE = 8;
 
@@ -273,5 +278,145 @@ describe("single-загрузка", () => {
 
     expect(mocked(putPart)).not.toHaveBeenCalled();
     expect(mocked(completeUpload)).toHaveBeenCalledWith("file-2");
+  });
+});
+
+describe("независимая операция загрузки", () => {
+  it("сохраняет прогресс и контроллер второй операции после завершения первой", async () => {
+    const requests: {
+      options: UploadOptions;
+      resolve: (file: FileDto) => void;
+    }[] = [];
+    vi.mocked(uploadViaServer).mockImplementation(
+      (_file, _directory, options = {}) =>
+        new Promise((resolve, reject) => {
+          requests.push({ options, resolve });
+          options.signal?.addEventListener("abort", () =>
+            reject(new DOMException("Отменено", "AbortError")),
+          );
+        }),
+    );
+    const first = createUploadOperation(bigFile(2), "docs", "server");
+    const second = createUploadOperation(bigFile(3), "other", "server");
+    const firstRun = first.start();
+    const secondRun = second.start();
+    const cancelled = expect(secondRun).rejects.toThrow(DOMException);
+
+    requests[0]!.options.onProgress?.({ loaded: 16, total: 16 });
+    requests[1]!.options.onProgress?.({ loaded: 6, total: 24 });
+    requests[0]!.resolve(readyFile());
+    await firstRun;
+
+    expect(first.outcome.value).toEqual({
+      status: "succeeded",
+      file: readyFile(),
+    });
+    expect(second.percent.value).toBe(25);
+    expect(second.stage.value).toBe("sending");
+    expect(second.uploading.value).toBe(true);
+    expect(second.outcome.value).toBeNull();
+    second.cancel();
+    await cancelled;
+    expect(requests[1]!.options.signal?.aborted).toBe(true);
+    expect(second.outcome.value).toEqual({ status: "cancelled" });
+    expect(first.outcome.value?.status).toBe("succeeded");
+    expect(first.percent.value).toBe(100);
+  });
+
+  it("отменяет только свою подготовку и не меняет подтверждение другой операции", async () => {
+    let finish!: (file: FileDto) => void;
+    vi.mocked(completeUpload).mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve;
+        }),
+    );
+    vi.mocked(presignUpload)
+      .mockResolvedValueOnce(plan(1))
+      .mockImplementationOnce(
+        (_body, signal) =>
+          new Promise((_resolve, reject) => {
+            signal?.addEventListener("abort", () =>
+              reject(new DOMException("Отменено", "AbortError")),
+            );
+          }),
+      );
+    const first = createUploadOperation(bigFile(1), "docs", "presigned");
+    const second = createUploadOperation(bigFile(2), "docs", "presigned");
+    const firstRun = first.start();
+    await flushPromises();
+    const secondRun = second.start();
+    const cancelled = expect(secondRun).rejects.toThrow(DOMException);
+    second.cancel();
+    await cancelled;
+
+    expect(first.stage.value).toBe("completing");
+    expect(first.uploading.value).toBe(true);
+    expect(first.partsDone.value).toBe(1);
+    expect(first.percent.value).toBe(100);
+    expect(first.outcome.value).toBeNull();
+    expect(first.cancellable.value).toBe(false);
+    first.cancel();
+    finish(readyFile());
+    await firstRun;
+    expect(first.outcome.value?.status).toBe("succeeded");
+  });
+
+  it("сохраняет резервирование, стадию и причину ошибки подтверждения", async () => {
+    const failure = new ApiError(502, "STORAGE_ERROR", "Ошибка хранилища");
+    vi.mocked(presignUpload).mockResolvedValue(plan(2));
+    vi.mocked(completeUpload).mockRejectedValue(failure);
+    const operation = createUploadOperation(bigFile(2), "docs", "presigned");
+
+    await expect(operation.start()).rejects.toBe(failure);
+
+    expect(operation.stage.value).toBe("completing");
+    expect(operation.reservation.value).toEqual(plan(2));
+    expect(operation.outcome.value).toEqual({
+      status: "failed",
+      error: failure,
+      message: "Ошибка хранилища — операция не выполнена",
+    });
+    expect(operation.file.name).toBe("big.bin");
+    expect(operation.directory).toBe("docs");
+    expect(operation.mode).toBe("presigned");
+    expect(operation.uploading.value).toBe(false);
+  });
+
+  it("не создаёт вторую передачу при повторном запуске той же операции", async () => {
+    vi.mocked(uploadViaServer).mockResolvedValue(readyFile());
+    const operation = createUploadOperation(bigFile(1), "docs", "server");
+
+    await Promise.all([operation.start(), operation.start()]);
+    await operation.start();
+
+    expect(uploadViaServer).toHaveBeenCalledOnce();
+  });
+
+  it("повторяет подтверждение после временной ошибки без новой передачи", async () => {
+    vi.useFakeTimers();
+    vi.mocked(presignUpload).mockResolvedValue({
+      strategy: "single",
+      id: "file-2",
+      key: "docs/file-2.bin",
+      directory: "docs",
+      uploadUrl: "https://s3.test/put",
+      expiresAt: "2026-08-30T13:00:00.000Z",
+      requiredHeaders: { "Content-Type": "application/octet-stream" },
+    });
+    vi.mocked(completeUpload)
+      .mockRejectedValueOnce(
+        new ApiError(409, "UPLOAD_NOT_COMPLETED", "Пока не видно"),
+      )
+      .mockResolvedValue(readyFile());
+    const operation = createUploadOperation(bigFile(1), "docs", "presigned");
+    const running = operation.start();
+
+    await vi.advanceTimersByTimeAsync(800);
+    await running;
+
+    expect(completeUpload).toHaveBeenCalledTimes(2);
+    expect(putToPresignedUrl).toHaveBeenCalledOnce();
+    expect(operation.outcome.value?.status).toBe("succeeded");
   });
 });

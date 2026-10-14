@@ -82,8 +82,12 @@ JSON; файл отправляется через XHR (`apiUpload` / `xhrSend`)
 - **`useFileBrowser`** — список: директория, поиск (дебаунс 350 мс), пагинация, сортировка, крошки.
   `load()` отменяемый и защищён инкрементным id от гонок ответов; первый запрос уходит при монтировании
   `FileBrowser`, `reset()` при выходе возвращает к корню.
-- **`useUpload`** — загрузка: режим (`server` / `presigned`), стадии, прогресс, отмена через
-  `AbortController`. В presigned-режиме выбор single / multipart делает сервер (поле `strategy`),
+- **`useUpload`** — выбор файла, режим (`server` / `presigned`) и текущая операция для одиночного
+  интерфейса. **`createUploadOperation(file, directory, mode)`** создаёт независимую операцию:
+  фиксирует входные данные, хранит стадии, прогресс, резервирование, итог и свой `AbortController`.
+  `start()` запускает её один раз; повторный вызов возвращает ту же попытку. Результат, ошибка
+  или отмена сохраняются после завершения и не зависят от содержимого диалога.
+  В presigned-режиме выбор single / multipart делает сервер (поле `strategy`),
   клиент исполняет присланный план. Multipart: параллельность по `maxConcurrency` сервера, повтор
   части со свежей ссылкой, догрузка недостающих частей по `GET /:id/multipart`, уборка (`DELETE`) за
   сорвавшейся загрузкой.
@@ -140,7 +144,8 @@ Vitest + happy-dom, тесты лежат рядом с кодом (`src/**/*.te
 tailwind-плагин, ни dev-proxy. `src/test/setup.ts` доставляет браузерные API, которых нет в
 happy-dom, но которые нужны reka-ui (`matchMedia`, `ResizeObserver`, pointer-capture).
 
-Покрыты оркестровка `useUpload` (модуль API замокан целиком), продление сессии в `api/client`,
+Покрыты изоляция операций и оркестровка загрузки (модуль API замокан целиком), три пути загрузки
+через страницу с проверкой стадий и отмены, продление сессии в `api/client`,
 guard и синхронизация вкладок в `router/`, форма входа, помощники `parts.ts` и `format.ts`, плюс
 дымовой mount SFC через алиас `@`.
 
@@ -156,7 +161,8 @@ src/
   pages/        LoginPage.vue, FilesPage.vue
   composables/  useAuth.ts        — сессия для UI, BroadcastChannel между вкладками
                 useFileBrowser.ts — состояние списка
-                useUpload.ts       — оркестровка загрузки (server / presigned / multipart)
+                useUpload.ts       — выбор файла и текущая операция одиночного интерфейса
+                createUploadOperation.ts — независимая загрузка (server / presigned / multipart)
                 useFileActions.ts  — скачивание и удаление
   components/   FileBrowser.vue — точка сборки
                 FileTable.vue, DirectoryBreadcrumbs.vue, UploadPanel.vue,

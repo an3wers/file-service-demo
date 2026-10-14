@@ -95,6 +95,7 @@ const STAGE_LABELS: Record<string, string> = {
   sending: "Отправляем…",
   processing: "Обрабатываем…",
   completing: "Подтверждаем…",
+  cancelling: "Отменяем…",
 };
 
 const stageLabel = computed(
