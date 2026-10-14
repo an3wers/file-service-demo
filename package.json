@@ -1,0 +1,33 @@
+{
+  "name": "file-service-demo",
+  "private": true,
+  "workspaces": [
+    "server",
+    "client"
+  ],
+  "scripts": {
+    "dev": "concurrently --kill-others --names server,client \"npm run dev -w server\" \"npm run dev -w client\"",
+    "dev:server": "npm run dev -w server",
+    "dev:client": "npm run dev -w client",
+    "build": "npm run build --workspaces",
+    "start": "npm run start -w server",
+    "preview": "npm run preview -w client",
+    "typecheck": "npm run typecheck --workspaces",
+    "lint": "npm run lint --workspaces",
+    "lint:fix": "npm run lint:fix --workspaces",
+    "test": "npm run test --workspaces",
+    "test:watch": "concurrently --kill-others --names server,client \"npm run test:watch -w server -- --watch\" \"npm run test:watch -w client -- --watch\"",
+    "test:postgres": "npm run test:postgres -w server",
+    "format": "npm run format --workspaces",
+    "format:check": "npm run format:check --workspaces",
+    "check": "npm run typecheck && npm run lint && npm test",
+    "db:migrate": "npm run db:migrate -w server",
+    "db:cleanup": "npm run db:cleanup -w server",
+    "s3:cors": "npm run s3:cors -w server",
+    "openapi": "npm run openapi -w server",
+    "api:generate": "npm run openapi && npm run api:generate -w client"
+  },
+  "devDependencies": {
+    "concurrently": "^9.2.1"
+  }
+}

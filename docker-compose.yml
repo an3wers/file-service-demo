@@ -7,7 +7,8 @@ name: file-storage-demo
 services:
   server:
     build:
-      context: ./server
+      context: .
+      dockerfile: server/Dockerfile
     image: file-storage-server:latest
     container_name: file-storage-server
     restart: unless-stopped
@@ -24,7 +25,8 @@ services:
 
   client:
     build:
-      context: ./client
+      context: .
+      dockerfile: client/Dockerfile
     image: file-storage-client:latest
     container_name: file-storage-client
     restart: unless-stopped

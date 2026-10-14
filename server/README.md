@@ -6,12 +6,20 @@ REST API для хранения файлов в Cloud.ru Object Storage (S3-с�
 
 ## Запуск
 
+Все команды запуска ниже выполняются из корня репозитория. Зависимости устанавливаются
+для обоих npm workspaces через единый lock-файл; серверные пакеты остаются в `server/node_modules`.
+Создайте `server/.env` по таблице конфигурации ниже.
+
 ```bash
-npm install
+npm ci
 npm run db:migrate     # создать схему (идемпотентно)
 npm run s3:cors        # один раз на бакет, необходимо для presigned-загрузок из браузера
-npm run dev
+npm run dev:server
 ```
+
+`npm run dev` из корня запускает оба сервиса. Таблица ниже описывает локальные скрипты сервера:
+из корня используйте `npm run <script> -w server`, из `server/` — команды таблицы.
+Добавление зависимости из корня: `npm install <package> -w server`, для devDependency — с `-D`.
 
 | Скрипт                        | Что делает                                                                               |
 | ----------------------------- | ---------------------------------------------------------------------------------------- |
@@ -24,7 +32,7 @@ npm run dev
 | `npm run db:migrate`          | применяет `src/db/migrations/*.sql`, история в `schema_migrations`                       |
 | `npm run db:cleanup`          | разбирает presigned-загрузки, которые так и не подтвердили                               |
 | `npm run s3:cors`             | применяет CORS-правила бакета для `CORS_ORIGIN`                                          |
-| `npm run openapi`             | пересобирает `openapi.json` из Zod-схем; после него — `npm run api:generate` в `client/` |
+| `npm run openapi`             | пересобирает `openapi.json` из Zod-схем; корневой `npm run api:generate` также обновляет клиентские типы |
 
 ## Конфигурация
 

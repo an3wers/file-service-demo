@@ -48,29 +48,103 @@ requestId } }`; клиент переводит `code` в текст и пока
 
 Нужны PostgreSQL, бакет в Cloud.ru Object Storage и Node 20.19+ / 22.12+ (в репозитории — 24).
 
-```bash
-# сервер → http://localhost:3000
-cd server && npm install
-# создать .env — полный список ключей в server/README.md
-npm run db:migrate         # схема, идемпотентно
-npm run s3:cors            # один раз на бакет, иначе presigned-загрузки из браузера не пройдут
-npm run dev
+Все команды ниже выполняются из корня репозитория.
 
-# клиент → http://localhost:5173
-cd client && npm install
-cp .env.example .env
+```bash
+npm ci
+cp client/.env.example client/.env
+```
+
+Создайте `server/.env` по [server/README.md](server/README.md), затем подготовьте окружение:
+
+```bash
+npm run db:migrate
+npm run s3:cors
 npm run dev
 ```
+
+Миграции применяются идемпотентно; `s3:cors` нужен один раз на бакет. Сервер доступен на
+`http://localhost:3000`, клиент — на `http://localhost:5173`. `npm run dev` запускает их
+параллельно с префиксами логов `server` и `client`. Ctrl+C останавливает оба дерева процессов;
+если один процесс завершается, второй также останавливается.
 
 Порт клиента закреплён: CORS бакета настроен ровно на `http://localhost:5173`, и молчаливый сдвиг на
 5174 сломал бы presigned-загрузку. Запросы к API идут через vite-прокси, так что CORS сервера в
 разработке не участвует.
 
+## Управление из корня
+
+`server/` и `client/` — npm workspaces с единым корневым `package-lock.json`.
+Зависимости объявляются в `package.json` соответствующего сервиса. Корневой `.npmrc` задаёт
+`install-strategy=nested`: зависимости сервисов устанавливаются в их `node_modules`,
+без hoisting в корень. Это допускает дублирование пакетов и увеличивает объём установки.
+В корне объявлен только служебный `concurrently`; корневой `node_modules` также содержит
+ссылки на workspace-пакеты.
+
+| Команда | Действие |
+| --- | --- |
+| `npm run dev` | Параллельный запуск сервера и клиента |
+| `npm run dev:server` / `npm run dev:client` | Запуск одного сервиса |
+| `npm run build` | Сборка обоих пакетов в их `dist/` |
+| `npm start` / `npm run preview` | Запуск собранного сервера / предпросмотр клиента |
+| `npm run typecheck` | Проверка типов обоих пакетов |
+| `npm run lint` / `npm run lint:fix` | Проверка / исправление ESLint в обоих пакетах |
+| `npm test` / `npm run test:watch` | Обычный прогон / параллельный watch-режим тестов |
+| `npm run format` / `npm run format:check` | Форматирование / проверка файлов обоих пакетов |
+| `npm run check` | Последовательно проверка типов, линтер и тесты; остановка при ошибке |
+| `npm run test:postgres` | Отдельные серверные тесты с PostgreSQL |
+| `npm run db:migrate` / `npm run db:cleanup` | Миграции / уборка незавершённых загрузок |
+| `npm run s3:cors` | Настройка CORS бакета |
+| `npm run openapi` | Генерация серверного OpenAPI-контракта |
+| `npm run api:generate` | Генерация OpenAPI, затем клиентских типов |
+
+Конечные общие команды выполняются последовательно: сначала `server`, затем `client`.
+Команды пакетов работают в своих каталогах и используют локальные `.env` и конфигурации.
+Чтобы выполнить проверку для одного пакета или передать ему параметры, используйте
+`npm run <script> -w server` или `-w client`, например `npm run test -w client -- src/lib/parts.test.ts`.
+
+Установка и управление зависимостями выполняются из корня:
+
+```bash
+npm ci
+npm install <package> -w server
+npm install -D <package> -w client
+npm uninstall <package> -w server
+npm update -w client
+npm outdated --workspaces
+```
+
+Изменённые `package.json` пакета и корневой `package-lock.json` коммитятся вместе.
+После перехода с отдельных пакетов выполните `npm ci`, чтобы заменить старое дерево зависимостей.
+
+## Docker
+
+Сборки используют корень репозитория как контекст и единый lock-файл. Каждая устанавливает
+зависимости только своего workspace; серверный runtime устанавливает только production-зависимости.
+Сервер получает переменные окружения через Compose из `server/.env`. Клиентский `client/.env`
+читается при сборке, поэтому изменение его значений требует пересборки клиента.
+`server/.env` исключён из обоих Docker-контекстов; для клиентской сборки разрешён `client/.env`.
+
+```bash
+docker compose build
+docker compose up -d
+```
+
+Для сборки отдельных образов команды также запускаются из корня:
+
+```bash
+docker build -f server/Dockerfile -t file-storage-server .
+docker build -f client/Dockerfile -t file-storage-client .
+```
+
+Для запуска Compose нужна внешняя сеть `postgres_docker_db_network` с PostgreSQL.
+Клиент доступен на порту `5173` и проксирует API на сервер во внутренней сети Compose.
+
 ## Стек
 
 Сервер — Express 5, TypeScript, `pg`, AWS SDK v3, zod, pino, multer. Клиент — Vue 3
 (`<script setup>`), TypeScript, Vite, Tailwind CSS v4, shadcn-vue, `vue-router`, `vue-sonner`, `@vueuse/core`.
-Тесты с обеих сторон — Vitest (`npm test` в каждой папке).
+Тесты с обеих сторон — Vitest (`npm test` из корня запускает оба пакета).
 
 ## Границы демо
 
