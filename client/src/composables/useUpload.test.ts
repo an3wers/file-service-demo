@@ -31,7 +31,6 @@ import {
   putToPresignedUrl,
   uploadViaServer,
 } from "@/api/files";
-import { useUpload } from "./useUpload";
 import { createUploadOperation } from "./createUploadOperation";
 
 const PART_SIZE = 8;
@@ -101,10 +100,7 @@ function sentPartNumbers(): number[] {
   );
 }
 
-const upload = useUpload();
-
 beforeEach(() => {
-  upload.mode.value = "presigned";
   mocked(putPart).mockResolvedValue(undefined);
   mocked(completeUpload).mockResolvedValue(readyFile());
   mocked(deleteFile).mockResolvedValue(undefined);
@@ -118,7 +114,8 @@ describe("multipart-загрузка", () => {
   it("заливает все части плана и подтверждает загрузку", async () => {
     mocked(presignUpload).mockResolvedValue(plan(3));
 
-    const result = await upload.upload(bigFile(3), "docs");
+    const operation = createUploadOperation(bigFile(3), "docs", "presigned");
+    const result = await operation.start();
 
     expect(sentPartNumbers().sort()).toEqual([1, 2, 3]);
     // Тело каждой части — срез ровно по `offset`/`size` из плана.
@@ -127,8 +124,8 @@ describe("multipart-загрузка", () => {
     }
     expect(mocked(completeUpload)).toHaveBeenCalledWith("file-1");
     expect(result.status).toBe("ready");
-    expect(upload.percent.value).toBe(100);
-    expect(upload.partsDone.value).toBe(3);
+    expect(operation.percent.value).toBe(100);
+    expect(operation.partsDone.value).toBe(3);
     // Ссылок на все части хватило — за добавкой не ходили.
     expect(mocked(fetchPartUrls)).not.toHaveBeenCalled();
   });
@@ -142,7 +139,7 @@ describe("multipart-загрузка", () => {
       }),
     );
 
-    await upload.upload(bigFile(5), "docs");
+    await createUploadOperation(bigFile(5), "docs", "presigned").start();
 
     expect(mocked(fetchPartUrls).mock.calls.map((call) => call[1])).toEqual([
       [3, 4],
@@ -164,7 +161,7 @@ describe("multipart-загрузка", () => {
       inFlight -= 1;
     });
 
-    await upload.upload(bigFile(6), "docs");
+    await createUploadOperation(bigFile(6), "docs", "presigned").start();
 
     expect(peak).toBe(2);
   });
@@ -180,7 +177,11 @@ describe("multipart-загрузка", () => {
       parts: [{ ...part(1), url: "https://s3.test/part-1-fresh" }],
     });
 
-    const running = upload.upload(bigFile(1), "docs");
+    const running = createUploadOperation(
+      bigFile(1),
+      "docs",
+      "presigned",
+    ).start();
 
     await vi.advanceTimersByTimeAsync(2000);
     await running;
@@ -203,9 +204,9 @@ describe("multipart-загрузка", () => {
       new DOMException("The operation was aborted.", "AbortError"),
     );
 
-    await expect(upload.upload(bigFile(2), "docs")).rejects.toThrow(
-      DOMException,
-    );
+    await expect(
+      createUploadOperation(bigFile(2), "docs", "presigned").start(),
+    ).rejects.toThrow(DOMException);
 
     // Без DELETE загрузка осталась бы открытой: S3 берёт деньги за залитые части.
     expect(mocked(deleteFile)).toHaveBeenCalledWith("file-1");
@@ -236,7 +237,8 @@ describe("multipart-загрузка", () => {
       parts: [part(3)],
     });
 
-    const result = await upload.upload(bigFile(3), "docs");
+    const operation = createUploadOperation(bigFile(3), "docs", "presigned");
+    const result = await operation.start();
 
     // Чего не хватает, знает S3, а не клиент: досылается ровно третья часть.
     expect(mocked(fetchPartUrls)).toHaveBeenCalledWith(
@@ -255,7 +257,9 @@ describe("multipart-загрузка", () => {
       new ApiError(502, "STORAGE_ERROR", "S3 отказал"),
     );
 
-    await expect(upload.upload(bigFile(2), "docs")).rejects.toThrow(ApiError);
+    await expect(
+      createUploadOperation(bigFile(2), "docs", "presigned").start(),
+    ).rejects.toThrow(ApiError);
 
     // Части на месте — повторный complete ещё соберёт объект, DELETE их бы снёс.
     expect(mocked(deleteFile)).not.toHaveBeenCalled();
@@ -274,7 +278,7 @@ describe("single-загрузка", () => {
       requiredHeaders: { "Content-Type": "application/octet-stream" },
     });
 
-    await upload.upload(bigFile(1), "docs");
+    await createUploadOperation(bigFile(1), "docs", "presigned").start();
 
     expect(mocked(putPart)).not.toHaveBeenCalled();
     expect(mocked(completeUpload)).toHaveBeenCalledWith("file-2");

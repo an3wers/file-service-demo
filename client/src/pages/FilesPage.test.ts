@@ -31,7 +31,7 @@ async function mountPage(url = "/") {
 
 beforeEach(() => {
   useFileBrowser().reset();
-  useUpload().selectedFile.value = null;
+  useUpload().reset();
   useUpload().mode.value = "server";
   startSession({
     accessToken: "token",
@@ -155,6 +155,8 @@ describe("создание каталога на странице файлов",
     expect(sent).toHaveLength(1);
     expect(sent[0]?.get("directory")).toBe("Документы");
     expect(wrapper.text()).toContain("report.txt");
+    await fireEvent.click(screen.getByRole("button", { name: "Отмена" }));
+    await flushPromises();
     await fireEvent.click(screen.getByText("Все файлы"));
     await flushPromises();
     expect(wrapper.text()).toContain("Документы");

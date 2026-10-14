@@ -1,10 +1,10 @@
-import { computed, ref, shallowReadonly, shallowRef } from "vue";
-import type { FileDto } from "@/types/api";
+import { computed, ref, shallowReadonly, shallowRef, type Ref } from "vue";
 import {
   createUploadOperation,
   type UploadMode,
   type UploadOperation,
 } from "./createUploadOperation";
+import { useFileBrowser } from "./useFileBrowser";
 
 export type { UploadMode, UploadStage } from "./createUploadOperation";
 
@@ -13,45 +13,107 @@ export const MAX_UPLOAD_SIZE_MB = Number(
 );
 export const MAX_UPLOAD_SIZE_BYTES = MAX_UPLOAD_SIZE_MB * 1024 * 1024;
 
+export interface UploadRow {
+  id: number;
+  file: File;
+  state: Ref<"selected" | "queued" | "active" | "finished" | "cancelled">;
+  operation: Ref<UploadOperation | null>;
+}
+
 const mode = ref<UploadMode>("server");
-const selectedFile = shallowRef<File | null>(null);
-const operation = shallowRef<UploadOperation | null>(null);
-const uploading = computed(() => operation.value?.uploading.value ?? false);
-const stage = computed(() => operation.value?.stage.value ?? "idle");
-const sentBytes = computed(() => operation.value?.sentBytes.value ?? 0);
-const totalBytes = computed(() => operation.value?.totalBytes.value ?? 0);
-const partsTotal = computed(() => operation.value?.partsTotal.value ?? 0);
-const partsDone = computed(() => operation.value?.partsDone.value ?? 0);
-const percent = computed(() => operation.value?.percent.value ?? 100);
-const cancellable = computed(() => operation.value?.cancellable.value ?? false);
+const rows = shallowRef<UploadRow[]>([]);
+let nextId = 0;
+const active = new Set<UploadRow>();
+const MAX_CONCURRENT_UPLOADS = 3;
+const uploading = computed(() =>
+  rows.value.some(
+    (row) => row.state.value === "active" || row.state.value === "queued",
+  ),
+);
+const hasSelected = computed(() =>
+  rows.value.some((row) => row.state.value === "selected"),
+);
 
-function upload(file: File, directory: string): Promise<FileDto> {
-  if (uploading.value) {
-    return Promise.reject(new Error("Загрузка уже выполняется"));
+function addFiles(files: readonly File[]): void {
+  rows.value = [
+    ...rows.value,
+    ...files.map((file): UploadRow => ({
+      id: ++nextId,
+      file,
+      state: ref("selected"),
+      operation: shallowRef(null),
+    })),
+  ];
+}
+
+function remove(row: UploadRow): void {
+  if (row.state.value === "selected") {
+    rows.value = rows.value.filter((item) => item !== row);
   }
+}
 
-  operation.value = createUploadOperation(file, directory, mode.value);
-  return operation.value.start();
+async function run(row: UploadRow): Promise<void> {
+  const operation = row.operation.value!;
+  row.state.value = "active";
+  active.add(row);
+  try {
+    await operation.start();
+    if (rows.value.includes(row)) useFileBrowser().refresh();
+  } catch {
+    return;
+  } finally {
+    row.state.value = "finished";
+    active.delete(row);
+    drain();
+  }
+}
+
+function drain(): void {
+  for (const row of rows.value) {
+    if (active.size >= MAX_CONCURRENT_UPLOADS) return;
+    if (row.state.value === "queued") void run(row);
+  }
+}
+
+function submit(directory: string): void {
+  for (const row of rows.value) {
+    if (row.state.value !== "selected") continue;
+    row.operation.value = createUploadOperation(
+      row.file,
+      directory,
+      mode.value,
+    );
+    row.state.value = "queued";
+  }
+  drain();
+}
+
+function cancelRow(row: UploadRow): void {
+  if (row.state.value === "queued") row.state.value = "cancelled";
+  else if (row.state.value === "active") row.operation.value?.cancel();
 }
 
 function cancel(): void {
-  operation.value?.cancel();
+  for (const row of rows.value) cancelRow(row);
+}
+
+function reset(): void {
+  cancel();
+  rows.value = [];
+  mode.value = "server";
 }
 
 export function useUpload() {
   return {
     mode,
-    selectedFile,
-    operation: shallowReadonly(operation),
+    rows: shallowReadonly(rows),
     uploading,
-    stage,
-    sentBytes,
-    totalBytes,
-    partsTotal,
-    partsDone,
-    percent,
-    cancellable,
-    upload,
+    hasSelected,
+    addFiles,
+    remove,
+    submit,
+    cancelRow,
     cancel,
+    reset,
   };
 }
