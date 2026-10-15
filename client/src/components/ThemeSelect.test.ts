@@ -30,6 +30,12 @@ describe("выбор темы", () => {
       expect(useTheme().mode.value).toBe(mode);
       expect(localStorage.getItem("file-service-theme")).toBe(mode);
       expect(screen.getByRole("combobox").textContent).toContain(label);
+      expect(
+        screen
+          .getByRole("combobox")
+          .querySelector("svg[data-theme]")
+          ?.getAttribute("data-theme"),
+      ).toBe(mode);
     }
   });
 
