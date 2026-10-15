@@ -25,6 +25,7 @@ import {
   InputGroupInput,
 } from "@/components/ui/input-group";
 import { Spinner } from "@/components/ui/spinner";
+import ThemeSelect from "@/components/ThemeSelect.vue";
 import { useAuth } from "@/composables/useAuth";
 import { errorMessage } from "@/lib/errors";
 
@@ -73,69 +74,74 @@ async function submit(): Promise<void> {
 </script>
 
 <template>
-  <main class="flex min-h-svh items-center justify-center bg-background p-6">
-    <Card class="w-full max-w-sm">
-      <CardHeader class="items-center text-center">
-        <HardDriveIcon class="mx-auto size-8 text-muted-foreground" />
-        <CardTitle class="text-lg"> Файловое хранилище </CardTitle>
-        <CardDescription>Войдите, чтобы продолжить</CardDescription>
-      </CardHeader>
+  <div class="flex min-h-svh flex-col bg-background">
+    <header class="flex justify-end p-6 pb-0">
+      <ThemeSelect />
+    </header>
+    <main class="flex flex-1 items-center justify-center p-6">
+      <Card class="w-full max-w-sm">
+        <CardHeader class="items-center text-center">
+          <HardDriveIcon class="mx-auto size-8 text-muted-foreground" />
+          <CardTitle class="text-lg"> Файловое хранилище </CardTitle>
+          <CardDescription>Войдите, чтобы продолжить</CardDescription>
+        </CardHeader>
 
-      <CardContent>
-        <form novalidate @submit.prevent="submit">
-          <FieldGroup>
-            <Field>
-              <FieldLabel for="login"> Логин </FieldLabel>
-              <Input
-                id="login"
-                v-model="login"
-                name="login"
-                autocomplete="username"
-                autofocus
-                :disabled="pending"
-              />
-            </Field>
-
-            <Field>
-              <FieldLabel for="password"> Пароль </FieldLabel>
-              <InputGroup>
-                <InputGroupInput
-                  id="password"
-                  ref="passwordInput"
-                  v-model="password"
-                  name="password"
-                  :type="passwordVisible ? 'text' : 'password'"
-                  autocomplete="current-password"
+        <CardContent>
+          <form novalidate @submit.prevent="submit">
+            <FieldGroup>
+              <Field>
+                <FieldLabel for="login"> Логин </FieldLabel>
+                <Input
+                  id="login"
+                  v-model="login"
+                  name="login"
+                  autocomplete="username"
+                  autofocus
                   :disabled="pending"
                 />
-                <InputGroupAddon align="inline-end">
-                  <InputGroupButton
-                    size="icon-xs"
-                    type="button"
-                    :aria-label="
-                      passwordVisible ? 'Скрыть пароль' : 'Показать пароль'
-                    "
-                    :aria-pressed="passwordVisible"
-                    @click="passwordVisible = !passwordVisible"
-                  >
-                    <EyeOffIcon v-if="passwordVisible" />
-                    <EyeIcon v-else />
-                  </InputGroupButton>
-                </InputGroupAddon>
-              </InputGroup>
-            </Field>
+              </Field>
 
-            <FieldError v-if="failure">
-              {{ failure }}
-            </FieldError>
+              <Field>
+                <FieldLabel for="password"> Пароль </FieldLabel>
+                <InputGroup>
+                  <InputGroupInput
+                    id="password"
+                    ref="passwordInput"
+                    v-model="password"
+                    name="password"
+                    :type="passwordVisible ? 'text' : 'password'"
+                    autocomplete="current-password"
+                    :disabled="pending"
+                  />
+                  <InputGroupAddon align="inline-end">
+                    <InputGroupButton
+                      size="icon-xs"
+                      type="button"
+                      :aria-label="
+                        passwordVisible ? 'Скрыть пароль' : 'Показать пароль'
+                      "
+                      :aria-pressed="passwordVisible"
+                      @click="passwordVisible = !passwordVisible"
+                    >
+                      <EyeOffIcon v-if="passwordVisible" />
+                      <EyeIcon v-else />
+                    </InputGroupButton>
+                  </InputGroupAddon>
+                </InputGroup>
+              </Field>
 
-            <Button type="submit" class="w-full" :disabled="!canSubmit">
-              <Spinner v-if="pending" data-icon="inline-start" />
-              Войти
-            </Button>
-          </FieldGroup>
-        </form>
-      </CardContent>
-    </Card>
-  </main>
+              <FieldError v-if="failure">
+                {{ failure }}
+              </FieldError>
+
+              <Button type="submit" class="w-full" :disabled="!canSubmit">
+                <Spinner v-if="pending" data-icon="inline-start" />
+                Войти
+              </Button>
+            </FieldGroup>
+          </form>
+        </CardContent>
+      </Card>
+    </main>
+  </div>
 </template>
