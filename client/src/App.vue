@@ -14,9 +14,11 @@ import {
 import { Toaster } from "@/components/ui/sonner";
 import { Spinner } from "@/components/ui/spinner";
 import { useAuth } from "@/composables/useAuth";
+import { useTheme } from "@/composables/useTheme";
 import { errorMessage } from "@/lib/errors";
 
 const auth = useAuth();
+const { resolvedTheme } = useTheme();
 const route = useRoute();
 const router = useRouter();
 
@@ -60,5 +62,10 @@ function retry(): void {
 
   <RouterView v-else-if="allowed" />
 
-  <Toaster rich-colors close-button position="bottom-right" />
+  <Toaster
+    :theme="resolvedTheme"
+    rich-colors
+    close-button
+    position="bottom-right"
+  />
 </template>

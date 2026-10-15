@@ -6,9 +6,12 @@ import "./style.css";
 import "vue-sonner/style.css";
 import App from "./App.vue";
 import { useAuth } from "./composables/useAuth";
+import { useTheme } from "./composables/useTheme";
 import { useFileBrowser } from "./composables/useFileBrowser";
 import { useUpload } from "./composables/useUpload";
 import { createAppRouter } from "./router";
+
+useTheme();
 
 const router = createAppRouter({
   history: createWebHistory(),

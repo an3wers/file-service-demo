@@ -15,6 +15,7 @@ import { Button, buttonVariants } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
 import FeaturesSection from "@/components/FeaturesSection.vue";
 import FileBrowser from "@/components/FileBrowser.vue";
+import ThemeSelect from "@/components/ThemeSelect.vue";
 import { useAuth } from "@/composables/useAuth";
 import { useUpload } from "@/composables/useUpload";
 import { cn } from "@/lib/utils";
@@ -52,15 +53,16 @@ function confirmLogout(): void {
 <template>
   <div class="min-h-svh bg-background">
     <header class="border-b">
-      <div class="mx-auto flex max-w-6xl items-center gap-3 p-6">
+      <div class="mx-auto flex max-w-6xl flex-wrap items-center gap-3 p-6">
         <HardDriveIcon class="size-6 text-muted-foreground" />
-        <div class="flex-1">
+        <div class="min-w-0 flex-1 basis-48">
           <h1 class="text-lg font-semibold">Файловое хранилище</h1>
           <p class="text-muted-foreground text-sm">
             Загрузка, просмотр и скачивание файлов в объектном хранилище
           </p>
         </div>
-        <span class="text-muted-foreground text-sm">{{
+        <ThemeSelect />
+        <span class="max-w-full break-all text-muted-foreground text-sm">{{
           auth.user.value?.login
         }}</span>
         <Button variant="outline" :disabled="loggingOut" @click="requestLogout">
