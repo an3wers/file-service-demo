@@ -42,9 +42,11 @@ import UploadPanel from "./UploadPanel.vue";
 import { useFileActions } from "@/composables/useFileActions";
 import { useFileBrowser } from "@/composables/useFileBrowser";
 import { useFileBrowserRoute } from "@/composables/useFileBrowserRoute";
+import { useUpload } from "@/composables/useUpload";
 
 const browser = useFileBrowser();
 const actions = useFileActions();
+const upload = useUpload();
 
 useFileBrowserRoute();
 
@@ -107,6 +109,15 @@ function onDeleted(file: FileDto): void {
     </CardHeader>
 
     <CardContent class="flex flex-col gap-4">
+      <Button
+        v-if="upload.rows.value.length"
+        variant="outline"
+        class="h-auto justify-start whitespace-normal text-left"
+        @click="uploadOpen = true"
+      >
+        <UploadIcon data-icon="inline-start" />
+        <span role="status">Загрузки: {{ upload.summary.value }}</span>
+      </Button>
       <div class="flex flex-wrap items-center gap-3">
         <InputGroup class="max-w-sm flex-1">
           <InputGroupAddon>

@@ -35,6 +35,25 @@ const uploading = computed(() =>
 const hasSelected = computed(() =>
   rows.value.some((row) => row.state.value === "selected"),
 );
+const summary = computed(() => {
+  let uploading = 0;
+  let waiting = 0;
+  let succeeded = 0;
+  let cancelled = 0;
+  let failed = 0;
+  for (const row of rows.value) {
+    const outcome = row.operation.value?.outcome.value;
+    if (row.state.value === "active" || row.operation.value?.uploading.value)
+      uploading++;
+    else if (row.state.value === "selected" || row.state.value === "queued")
+      waiting++;
+    else if (outcome?.status === "succeeded") succeeded++;
+    else if (row.state.value === "cancelled" || outcome?.status === "cancelled")
+      cancelled++;
+    else if (outcome?.status === "failed") failed++;
+  }
+  return `Загружаются: ${uploading} · Ожидают: ${waiting} · Готовы: ${succeeded} · Отменены: ${cancelled} · Ошибки: ${failed}`;
+});
 
 function addFiles(files: readonly File[]): void {
   rows.value = [
@@ -127,6 +146,7 @@ export function useUpload() {
     rows: shallowReadonly(rows),
     uploading,
     hasSelected,
+    summary,
     addFiles,
     remove,
     submit,

@@ -125,7 +125,15 @@ async function setup(
         return json({ parent: "", items: [] });
       const query = new URL(url, "http://localhost").searchParams;
       return json({
-        items: [...ready],
+        items: ready.filter((file) => {
+          const directory = query.get("directory") ?? "";
+          const search = query.get("search") ?? "";
+          return (
+            (file.directory === directory ||
+              (!!search && file.directory.startsWith(`${directory}/`))) &&
+            file.name.includes(search)
+          );
+        }),
         pagination: {
           page: Number(query.get("page") ?? 1),
           limit: 20,
@@ -388,6 +396,7 @@ describe("очередь загрузки файлов", () => {
     requests.slice(2).forEach((request) => request.finish());
     await flushPromises();
     expect(screen.getAllByText("Готово")).toHaveLength(5);
+    expect(screen.getByRole("dialog")).toBeTruthy();
     expect(
       screen
         .getAllByTestId("upload-row")
@@ -577,13 +586,11 @@ describe("независимость операций очереди", () => {
   });
 
   it("сохраняет назначение ожидающих файлов при навигации и обновляет текущее представление после близких успехов", async () => {
-    const { requests, router, wrapper, fetchMock, ready } = await setup(
-      "server",
-      5,
-      { url: "/?directory=docs" },
-    );
+    const { requests, router, fetchMock, ready } = await setup("server", 5, {
+      url: "/?directory=docs",
+    });
     await launch();
-    wrapper.getComponent(UploadPanel).vm.$emit("update:open", false);
+    await fireEvent.click(screen.getByRole("button", { name: "Отмена" }));
     await flushPromises();
     await router.push("/?directory=other&search=report&page=2");
     await flushPromises();
@@ -601,7 +608,7 @@ describe("независимость операций очереди", () => {
         return new Promise((resolve) =>
           listingRequests.push({
             resolve,
-            items: [...ready],
+            items: ready.filter((file) => file.directory === "other"),
             signal: init?.signal,
           }),
         );
@@ -635,10 +642,21 @@ describe("независимость операций очереди", () => {
       }),
     );
     await flushPromises();
-    expect(browser.files.value.map((file) => file.name)).toEqual([
-      "report-2.txt",
-      "report-1.txt",
-    ]);
+    expect(browser.files.value).toEqual([]);
+    expect(screen.queryByRole("button", { name: "report-1.txt" })).toBeNull();
+    const query = new URL(
+      fetchMock.mock.calls
+        .filter(([url]) => url.startsWith("/api/files?"))
+        .at(-1)![0],
+      "http://localhost",
+    ).searchParams;
+    expect(Object.fromEntries(query)).toMatchObject({
+      directory: "other",
+      search: "report",
+      page: "2",
+      sort: "original_name",
+      order: "asc",
+    });
     expect(router.currentRoute.value.fullPath).toBe(
       "/?directory=other&search=report&page=2",
     );
@@ -650,7 +668,11 @@ describe("независимость операций очереди", () => {
     fetchMock.mockImplementation(originalFetch);
     requests.slice(2).forEach((request) => request.finish());
     await flushPromises();
-    expect(browser.files.value).toHaveLength(5);
+    expect(browser.files.value).toHaveLength(0);
+    await fireEvent.click(screen.getByRole("button", { name: /^Загрузки:/ }));
+    await flushPromises();
+    expect(screen.getAllByText("docs · Через сервер")).toHaveLength(5);
+    expect(screen.getAllByText("Готово")).toHaveLength(5);
   });
 });
 
@@ -774,3 +796,113 @@ describe.each(["presigned", "multipart"] as const)(
     });
   },
 );
+
+describe("фоновая загрузка", () => {
+  it.each(["server", "presigned", "multipart"] as const)(
+    "продолжает несколько загрузок %s на всех стадиях и сохраняет общий успех",
+    async (source) => {
+      const { requests, preparations, confirm } = await setup(source, 2, {
+        delayedPreparation: source !== "server",
+      });
+      async function hideAndReopen(stage: string) {
+        expect(row(0).getByText(stage)).toBeTruthy();
+        await fireEvent.click(screen.getByRole("button", { name: "Отмена" }));
+        await flushPromises();
+        expect(screen.queryByRole("dialog")).toBeNull();
+        expect(
+          screen.getByRole("button", { name: /^Загрузки:/ }).textContent,
+        ).toContain("Загружаются: 2");
+        await fireEvent.click(
+          screen.getByRole("button", { name: /^Загрузки:/ }),
+        );
+        await flushPromises();
+        expect(screen.getAllByTestId("upload-row")).toHaveLength(2);
+        expect(row(0).getByText(stage)).toBeTruthy();
+      }
+      await launch();
+      if (source !== "server") {
+        await hideAndReopen("Готовим ссылку…");
+        preparations.forEach((finish) => finish());
+        await flushPromises();
+      }
+      await hideAndReopen("Отправляем…");
+      requests.forEach((request) => {
+        request.progress(8, 8);
+        request.upload.dispatchEvent(new Event("load"));
+      });
+      await flushPromises();
+      if (source !== "multipart") await hideAndReopen("Обрабатываем…");
+      if (source !== "server") {
+        requests.forEach((request) => request.finish());
+        await flushPromises();
+        await hideAndReopen("Подтверждаем…");
+      }
+      await fireEvent.click(screen.getByRole("button", { name: "Отмена" }));
+      await flushPromises();
+      if (source === "server") requests.forEach((request) => request.finish());
+      else {
+        confirm(0);
+        confirm(1);
+      }
+      await flushPromises();
+      expect(screen.queryByRole("dialog")).toBeNull();
+      const indicator = screen.getByRole("button", { name: /^Загрузки:/ });
+      expect(indicator.textContent).toContain("Загружаются: 0");
+      expect(indicator.textContent).toContain("Готовы: 2");
+      expect(screen.getByRole("button", { name: "report-1.txt" })).toBeTruthy();
+      expect(screen.getByRole("button", { name: "report-2.txt" })).toBeTruthy();
+      await fireEvent.click(indicator);
+      await flushPromises();
+      expect(screen.getAllByText("Готово")).toHaveLength(2);
+      expect(screen.getByRole("dialog")).toBeTruthy();
+    },
+  );
+
+  it("показывает сводку и сохраняет ошибки, отмены и результаты после закрытия", async () => {
+    const { requests } = await setup("server", 5);
+    expect(screen.getByLabelText("Сводка загрузок").textContent).toContain(
+      "Ожидают: 5",
+    );
+    await launch();
+    expect(screen.getByLabelText("Сводка загрузок").textContent).toContain(
+      "Загружаются: 3",
+    );
+    await fireEvent.click(row(4).getByRole("button", { name: "Отменить" }));
+    await fireEvent.click(screen.getByRole("button", { name: "Отмена" }));
+    await flushPromises();
+    expect(screen.queryByRole("dialog")).toBeNull();
+    const indicator = screen.getByRole("button", { name: /^Загрузки:/ });
+    expect(indicator.textContent).toContain("Ожидают: 1");
+    expect(indicator.textContent).toContain("Отменены: 1");
+    requests[0]!.progress(2, 8);
+    requests[1]!.fail();
+    requests[2]!.finish();
+    await flushPromises();
+    expect(requests).toHaveLength(4);
+    expect(indicator.textContent).toContain("Загружаются: 2");
+    expect(indicator.textContent).toContain("Готовы: 1");
+    expect(indicator.textContent).toContain("Ошибки: 1");
+    await fireEvent.click(indicator);
+    await flushPromises();
+    expect(row(0).getByText("25%")).toBeTruthy();
+    expect(row(1).getByRole("alert").textContent).toContain(
+      "Не удалось выяснить результат",
+    );
+    expect(row(2).getByText("Готово")).toBeTruthy();
+    expect(row(4).getByText("Отменено")).toBeTruthy();
+    requests[0]!.finish();
+    requests[3]!.finish();
+    await flushPromises();
+    expect(screen.getByRole("dialog")).toBeTruthy();
+    expect(screen.getByLabelText("Сводка загрузок").textContent).toContain(
+      "Готовы: 3",
+    );
+    await fireEvent.click(screen.getByRole("button", { name: "Отмена" }));
+    await flushPromises();
+    await fireEvent.click(screen.getByRole("button", { name: /^Загрузки:/ }));
+    await flushPromises();
+    expect(screen.getAllByTestId("upload-row")).toHaveLength(5);
+    expect(row(1).getByRole("alert")).toBeTruthy();
+    expect(screen.getAllByText("Готово")).toHaveLength(3);
+  });
+});
