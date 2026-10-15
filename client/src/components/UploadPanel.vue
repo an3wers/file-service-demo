@@ -174,6 +174,17 @@ function setMode(value: unknown): void {
                 >Отменить</Button
               >
             </div>
+            <Button
+              v-if="
+                row.state.value === 'finished' &&
+                row.operation.value?.mode === 'server' &&
+                row.operation.value.outcome.value?.status === 'failed'
+              "
+              variant="outline"
+              size="sm"
+              @click="upload.retry(row)"
+              >Повторить</Button
+            >
             <template
               v-if="row.operation.value && row.state.value === 'active'"
             >

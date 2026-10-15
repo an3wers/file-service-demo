@@ -1,4 +1,5 @@
 import type {
+  UploadOperationResponse,
   DownloadUrlResponse,
   FileDto,
   ListFilesResponse,
@@ -45,16 +46,24 @@ export function getFile(id: string, withUrl = false): Promise<FileDto> {
 }
 
 /** `options` даёт прогресс отправки и отмену: тело уходит через XHR, а не fetch. */
+export function getUploadOperation(
+  id: string,
+): Promise<UploadOperationResponse> {
+  return apiRequest<UploadOperationResponse>(`/files/upload-operations/${id}`);
+}
+
 export function uploadViaServer(
   file: File,
   directory: string,
   options?: UploadOptions,
+  operationId?: string,
 ): Promise<FileDto> {
   const form = new FormData();
 
   // Имя поля ровно "file" — его ждёт `upload.single("file")` на сервере.
   form.append("file", file);
   form.append("directory", directory);
+  if (operationId) form.append("operationId", operationId);
 
   // Content-Type намеренно не задаём: его вместе с boundary проставит браузер.
   return apiUpload<FileDto>("/files", form, options);

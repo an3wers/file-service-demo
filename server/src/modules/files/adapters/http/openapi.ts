@@ -12,6 +12,7 @@ import {
   uploadFormSchema,
 } from "./schemas.js";
 import {
+  uploadOperationResponseSchema,
   directoriesResponseSchema,
   directoryDtoSchema,
   downloadUrlResponseSchema,
@@ -27,13 +28,31 @@ const json = <T>(schema: T) => ({ "application/json": { schema } });
 const FILE_NOT_FOUND = "Файла нет или он удалён";
 
 export const filesPaths: ZodOpenApiPathsObject = {
+  "/upload-operations/{id}": {
+    get: {
+      tags: ["uploads"],
+      summary: "Выяснить результат операции загрузки",
+      operationId: "getUploadOperation",
+      requestParams: { path: idParamsSchema },
+      responses: {
+        200: {
+          description: "Состояние операции",
+          content: json(uploadOperationResponseSchema),
+        },
+        ...apiErrors({ 400: "Недопустимый идентификатор" }),
+      },
+    },
+  },
   "/": {
     post: {
       tags: ["files"],
       summary: "Загрузить файл через сервер",
       description:
         "Файл целиком буферизуется в памяти сервера и ограничен MAX_UPLOAD_SIZE_MB. " +
-        "Файлы крупнее грузятся через /presign-upload.",
+        "Файлы крупнее грузятся через /presign-upload. " +
+        "operationId задаёт устойчивую идентичность: повтор с тем же UUID возвращает прежний файл, " +
+        "а после удаления — 404. Без operationId каждый запрос создаёт новую операцию. " +
+        "Перед повторной передачей выясните состояние через /upload-operations/{id}.",
       operationId: "uploadFile",
       requestBody: {
         required: true,
@@ -45,6 +64,7 @@ export const filesPaths: ZodOpenApiPathsObject = {
           404: "Директория не найдена",
           400: "Нет поля file, лишние поля формы, недопустимое имя или каталог",
           413: "Файл больше лимита загрузки через сервер",
+          409: "Операция обрабатывается или параметры повтора отличаются",
         }),
       },
     },

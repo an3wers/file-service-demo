@@ -433,7 +433,9 @@ describe("независимость операций очереди", () => {
     expect(row(2).getByText("25%")).toBeTruthy();
     requests[1]!.fail();
     await flushPromises();
-    expect(row(1).getByRole("alert").textContent).toContain("Ошибка хранилища");
+    expect(row(1).getByRole("alert").textContent).toContain(
+      "Не удалось выяснить результат",
+    );
     expect(requests).toHaveLength(4);
     expect((requests[3]!.body as FormData).get("file")).toHaveProperty(
       "name",
@@ -451,7 +453,9 @@ describe("независимость операций очереди", () => {
       screen.getByRole("button", { name: "Загрузить файл" }),
     );
     await flushPromises();
-    expect(row(1).getByRole("alert").textContent).toContain("Ошибка хранилища");
+    expect(row(1).getByRole("alert").textContent).toContain(
+      "Не удалось выяснить результат",
+    );
     expect(row(2).getByText("Готово")).toBeTruthy();
     expect(row(4).getByText("Готово")).toBeTruthy();
   });
@@ -640,5 +644,46 @@ describe("независимость операций очереди", () => {
     requests.slice(2).forEach((request) => request.finish());
     await flushPromises();
     expect(browser.files.value).toHaveLength(5);
+  });
+});
+
+describe("ручной повтор строки загрузки", () => {
+  it("показывает потерянный результат без повторной передачи и выбора файла", async () => {
+    const { requests, fetchMock, file } = await setup("server");
+    await launch();
+    const operationId = (requests[0]!.body as FormData).get("operationId");
+    requests[0]!.dispatchEvent(new Event("error"));
+    await flushPromises();
+    expect(row(0).getByRole("alert").textContent).toContain(
+      "Не удалось выяснить результат",
+    );
+    fetchMock.mockResolvedValueOnce(json({ status: "succeeded", file }));
+    await fireEvent.click(row(0).getByRole("button", { name: "Повторить" }));
+    await flushPromises();
+    expect(fetchMock).toHaveBeenCalledWith(
+      `/api/files/upload-operations/${operationId}`,
+      expect.anything(),
+    );
+    expect(requests).toHaveLength(1);
+    expect(row(0).getByText("Готово")).toBeTruthy();
+    expect(row(0).queryByRole("button", { name: "Повторить" })).toBeNull();
+  });
+
+  it("передаёт тот же выбранный файл после подтверждённой неудачи", async () => {
+    const { requests, fetchMock } = await setup("server");
+    await launch();
+    const first = requests[0]!.body as FormData;
+    requests[0]!.fail();
+    await flushPromises();
+    fetchMock.mockResolvedValueOnce(json({ status: "failed" }));
+    await fireEvent.click(row(0).getByRole("button", { name: "Повторить" }));
+    await flushPromises();
+    expect(requests).toHaveLength(2);
+    const second = requests[1]!.body as FormData;
+    expect(second.get("operationId")).toBe(first.get("operationId"));
+    expect(second.get("file")).toEqual(first.get("file"));
+    requests[1]!.finish();
+    await flushPromises();
+    expect(row(0).getByText("Готово")).toBeTruthy();
   });
 });

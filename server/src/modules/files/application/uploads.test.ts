@@ -223,34 +223,15 @@ describe("uploading through the server", () => {
     expect(objectStore.objectAt(uploaded.key)?.body).toEqual(body);
   });
 
-  it("removes the bytes it wrote when the metadata row cannot be inserted", async () => {
+  it("не отправляет байты, если строка метаданных не сохранена", async () => {
     const { files, objectStore, fileRows, rowCount } =
       await buildHarnessWithDirectories();
     const failure = new Error("the metadata table is down");
-
     fileRows.failNext("insertFile", failure);
-
     await expect(
       files.uploadThroughServer(uploadInput(Buffer.from("orphan"))),
     ).rejects.toBe(failure);
-    // Ни строки, ни объекта: сироты, за которую хранилище тарифицирует, нет.
     expect(await rowCount()).toBe(0);
     expect(objectStore.objectKeys()).toEqual([]);
-  });
-
-  it("had written those bytes first, so it is the rollback that removes them", async () => {
-    const { files, objectStore, fileRows } =
-      await buildHarnessWithDirectories();
-    const failure = new Error("the metadata table is down");
-
-    fileRows.failNext("insertFile", failure);
-    // Откат заминирован: если байты всё же остались под ключом, значит они
-    // были записаны до строки и убирает их именно откат, а не их отсутствие.
-    objectStore.failNext("remove", new Error("storage is down"));
-
-    await expect(
-      files.uploadThroughServer(uploadInput(Buffer.from("orphan"))),
-    ).rejects.toBe(failure);
-    expect(objectStore.objectKeys()).toHaveLength(1);
   });
 });

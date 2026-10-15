@@ -1,3 +1,13 @@
+import { randomUUID } from "node:crypto";
+import type {
+  UploadOperations,
+  UploadOperationRecord,
+  UploadOperationFileRows,
+} from "../domain/ports/upload-operations.js";
+import {
+  UploadOperationConflictError,
+  UploadOperationProcessingError,
+} from "../domain/errors.js";
 import { normalizeDirectory } from "../domain/keys.js";
 import { requireDirectory } from "../domain/directories.js";
 import type { DirectoriesForUpload } from "../domain/ports/directories.js";
@@ -23,6 +33,7 @@ import type { StoredFile } from "../domain/stored-file.js";
 import type { UploadPolicy } from "../domain/upload-policy.js";
 
 export interface UploadsModuleDeps {
+  operations: UploadOperations;
   objectStore: ObjectStoreForFiles;
   directories: DirectoriesForUpload;
   fileRows: FileRowsForFiles;
@@ -34,6 +45,7 @@ export interface UploadsModuleDeps {
 }
 
 export interface UploadThroughServerInput {
+  operationId?: string | undefined;
   filename: string;
   directory?: string | undefined;
   contentType?: string | undefined;
@@ -60,7 +72,12 @@ export interface PresignSingleResult {
 
 export type PresignUploadResult = PresignSingleResult | PresignMultipartResult;
 
+export type UploadOperationResult =
+  | { status: "succeeded"; file: StoredFile }
+  | { status: "absent" | "failed" | "processing" | "deleted" };
+
 export interface UploadsModule {
+  getUploadOperation(id: string): Promise<UploadOperationResult>;
   uploadThroughServer(input: UploadThroughServerInput): Promise<StoredFile>;
   createPresignedUpload(
     input: CreatePresignedUploadInput,
@@ -75,6 +92,7 @@ function fileNotFound(id: string) {
 }
 
 export function createUploadsModule({
+  operations,
   objectStore,
   fileRows,
   directories,
@@ -92,50 +110,102 @@ export function createUploadsModule({
     return file;
   }
 
+  async function resolveOperation(
+    record: UploadOperationRecord,
+    rows: UploadOperationFileRows,
+  ): Promise<UploadOperationResult> {
+    const file = await rows.findFileById(record.reservation.id);
+    if (!file)
+      return {
+        status: (await rows.isFileDeleted(record.reservation.id))
+          ? "deleted"
+          : "failed",
+      };
+    if (file.kind === "ready") return { status: "succeeded", file };
+    const stored = await objectStore.head(file.key);
+    if (!stored) return { status: "failed" };
+    const ready = await rows.markFileReady(file.id, {
+      sizeBytes: stored.size,
+      etag: stored.etag,
+      contentType: stored.contentType ?? file.contentType,
+    });
+    return ready ? { status: "succeeded", file: ready } : { status: "deleted" };
+  }
+
   return {
-    /** Upload proxied through the server: the request body is already in memory. */
+    async getUploadOperation(id) {
+      return (
+        (await operations.exclusive(id, async (session) => {
+          const record = await session.read();
+          return record
+            ? await resolveOperation(record, session.fileRows)
+            : { status: "absent" as const };
+        })) ?? { status: "processing" }
+      );
+    },
+
     async uploadThroughServer(input): Promise<StoredFile> {
       await requireDirectory(directories, normalizeDirectory(input.directory));
-      const { id, key, directory, originalName, extension, contentType } =
-        reserveKey({
-          filename: input.filename,
-          directory: input.directory,
-          contentType: input.contentType,
-        });
-
-      const { etag } = await objectStore.put(key, input.bytes, {
-        contentType,
-        contentLength: input.size,
-      });
-
-      try {
-        return await fileRows.insertFile({
-          id,
-          objectKey: key,
-          directory,
-          originalName,
-          extension,
-          contentType,
-          sizeBytes: input.size,
-          etag,
-          status: "ready",
-          uploadSource: "server",
-        });
-      } catch (error) {
-        // The object is already stored but has no metadata row, so nothing can
-        // ever reach it again. Roll the storage side back rather than leak an
-        // orphan. (If the insert actually committed and only the response was
-        // lost, this deletes the object under a live row — rare enough to leave
-        // to a future reconciliation pass rather than a transaction here.)
-        await objectStore.remove(key).catch((cleanupError: unknown) => {
-          logger.error(
-            { err: cleanupError, id, key },
-            "Failed to remove orphaned object after metadata insert failed",
-          );
-        });
-
-        throw error;
-      }
+      const result = await operations.exclusive(
+        input.operationId ?? randomUUID(),
+        async (session) => {
+          const rows = session.fileRows;
+          let record = await session.read();
+          const reservation = reserveKey(input);
+          if (record) {
+            const previous = record.reservation;
+            if (
+              previous.originalName !== reservation.originalName ||
+              previous.directory !== reservation.directory ||
+              previous.contentType !== reservation.contentType ||
+              record.size !== input.size
+            ) {
+              throw new UploadOperationConflictError(
+                "Operation input differs from the original upload",
+              );
+            }
+            const outcome = await resolveOperation(record, session.fileRows);
+            if (outcome.status === "succeeded") return outcome.file;
+            if (outcome.status === "deleted") throw fileNotFound(previous.id);
+          } else {
+            record = { reservation, size: input.size };
+            await session.save(record);
+          }
+          const { id, key, directory, originalName, extension, contentType } =
+            record.reservation;
+          const file = await rows.findFileById(id);
+          if (!file) {
+            await rows.insertFile({
+              id,
+              objectKey: key,
+              directory,
+              originalName,
+              extension,
+              contentType,
+              sizeBytes: input.size,
+              etag: null,
+              status: "pending",
+              uploadSource: "server",
+            });
+          }
+          const { etag } = await objectStore.put(key, input.bytes, {
+            contentType,
+            contentLength: input.size,
+          });
+          const ready = await rows.markFileReady(id, {
+            sizeBytes: input.size,
+            etag,
+            contentType,
+          });
+          if (!ready) throw fileNotFound(id);
+          return ready;
+        },
+      );
+      if (!result)
+        throw new UploadOperationProcessingError(
+          "Upload operation is still processing",
+        );
+      return result;
     },
 
     /**

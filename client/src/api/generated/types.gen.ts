@@ -54,6 +54,13 @@ export type ErrorResponse = {
     };
 };
 
+export type UploadOperationResponse = {
+    status: 'succeeded';
+    file: FileDto;
+} | {
+    status: 'absent' | 'failed' | 'processing' | 'deleted';
+};
+
 export type FileDto = {
     id: string;
     name: string;
@@ -310,6 +317,49 @@ export type LogoutResponses = {
 
 export type LogoutResponse = LogoutResponses[keyof LogoutResponses];
 
+export type GetUploadOperationData = {
+    body?: never;
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/files/upload-operations/{id}';
+};
+
+export type GetUploadOperationErrors = {
+    /**
+     * Недопустимый идентификатор
+     */
+    400: ErrorResponse;
+    /**
+     * Нет токена доступа или он недействителен
+     */
+    401: ErrorResponse;
+    /**
+     * Запрос не прошёл валидацию; details — результат z.flattenError()
+     */
+    422: ErrorResponse;
+    /**
+     * Непредвиденная ошибка сервера
+     */
+    500: ErrorResponse;
+    /**
+     * Хранилище или база данных недоступны
+     */
+    503: ErrorResponse;
+};
+
+export type GetUploadOperationError = GetUploadOperationErrors[keyof GetUploadOperationErrors];
+
+export type GetUploadOperationResponses = {
+    /**
+     * Состояние операции
+     */
+    200: UploadOperationResponse;
+};
+
+export type GetUploadOperationResponse = GetUploadOperationResponses[keyof GetUploadOperationResponses];
+
 export type ListFilesData = {
     body?: never;
     path?: never;
@@ -366,6 +416,7 @@ export type ListFilesResponse2 = ListFilesResponses[keyof ListFilesResponses];
 
 export type UploadFileData = {
     body: {
+        operationId?: string;
         directory?: string;
         file: Blob | File;
     };
@@ -387,6 +438,10 @@ export type UploadFileErrors = {
      * Директория не найдена
      */
     404: ErrorResponse;
+    /**
+     * Операция обрабатывается или параметры повтора отличаются
+     */
+    409: ErrorResponse;
     /**
      * Файл больше лимита загрузки через сервер
      */

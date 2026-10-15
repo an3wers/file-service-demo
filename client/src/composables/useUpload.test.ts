@@ -11,6 +11,7 @@ import { ApiError } from "@/api/client";
 
 // Мокается весь модуль API: проверяем оркестровку частей, а не транспорт.
 vi.mock("@/api/files", () => ({
+  getUploadOperation: vi.fn(),
   uploadViaServer: vi.fn(),
   presignUpload: vi.fn(),
   putToPresignedUrl: vi.fn(),
@@ -22,6 +23,7 @@ vi.mock("@/api/files", () => ({
 }));
 
 import {
+  getUploadOperation,
   completeUpload,
   deleteFile,
   fetchPartUrls,
@@ -423,4 +425,57 @@ describe("независимая операция загрузки", () => {
     expect(putToPresignedUrl).toHaveBeenCalledOnce();
     expect(operation.outcome.value?.status).toBe("succeeded");
   });
+});
+
+describe("ручной повтор серверной операции", () => {
+  it("выясняет потерянный результат без второй передачи и сохраняет идентичность", async () => {
+    vi.mocked(uploadViaServer).mockRejectedValue(new Error("Ответ потерян"));
+    vi.mocked(getUploadOperation).mockResolvedValue({
+      status: "succeeded",
+      file: readyFile(),
+    });
+    const operation = createUploadOperation(bigFile(1), "docs", "server");
+    await expect(operation.start()).rejects.toThrow();
+    expect(operation.outcome.value).toMatchObject({
+      status: "failed",
+      message: "Не удалось выяснить результат",
+    });
+    await expect(operation.retry()).resolves.toEqual(readyFile());
+    expect(getUploadOperation).toHaveBeenCalledWith(operation.operationId);
+    expect(uploadViaServer).toHaveBeenCalledOnce();
+    expect(vi.mocked(uploadViaServer).mock.calls[0]?.[3]).toBe(
+      operation.operationId,
+    );
+  });
+
+  it("повторяет передачу только после подтверждённой неудачи", async () => {
+    vi.mocked(uploadViaServer)
+      .mockRejectedValueOnce(new Error("Нет связи"))
+      .mockResolvedValue(readyFile());
+    vi.mocked(getUploadOperation).mockResolvedValue({ status: "failed" });
+    const operation = createUploadOperation(bigFile(1), "docs", "server");
+    await expect(operation.start()).rejects.toThrow();
+    await operation.retry();
+    expect(uploadViaServer).toHaveBeenCalledTimes(2);
+    expect(
+      vi.mocked(uploadViaServer).mock.calls.map((args) => args[3]),
+    ).toEqual([operation.operationId, operation.operationId]);
+  });
+
+  it.each(["processing", "deleted", "unavailable"])(
+    "не отправляет файл при результате %s",
+    async (status) => {
+      vi.mocked(uploadViaServer).mockRejectedValue(new Error("Нет связи"));
+      if (status === "unavailable")
+        vi.mocked(getUploadOperation).mockRejectedValue(new Error("Нет связи"));
+      else
+        vi.mocked(getUploadOperation).mockResolvedValue({
+          status: status as "processing" | "deleted",
+        });
+      const operation = createUploadOperation(bigFile(1), "docs", "server");
+      await expect(operation.start()).rejects.toThrow();
+      await expect(operation.retry()).rejects.toThrow();
+      expect(uploadViaServer).toHaveBeenCalledOnce();
+    },
+  );
 });

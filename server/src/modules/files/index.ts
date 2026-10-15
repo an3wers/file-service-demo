@@ -1,3 +1,4 @@
+import { createSqlUploadOperations } from "./adapters/persistence/sql-upload-operations.js";
 import { createSqlDirectories } from "./adapters/persistence/sql-directories.js";
 import type { Router } from "express";
 import type { RequestHandler } from "express";
@@ -67,6 +68,7 @@ export function createFilesHttp(
     clock,
   });
   const uploads = createUploadsModule({
+    operations: createSqlUploadOperations(deps.bucket),
     objectStore: deps.objectStore,
     fileRows,
     directories,

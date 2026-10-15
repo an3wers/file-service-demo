@@ -1,0 +1,75 @@
+import { randomUUID } from "node:crypto";
+import type { Server } from "node:http";
+import type { AddressInfo } from "node:net";
+import { afterEach, describe, expect, it } from "vitest";
+import { Router } from "express";
+import { createApp } from "../../../../app.js";
+import { createUploadMiddleware } from "../../../../middleware/upload.js";
+import { buildHarness } from "../../testing/files-module.harness.js";
+import { createFilesRouter } from "./routes.js";
+import { uploadOperationResponseSchema } from "./responses.js";
+
+let server: Server | undefined;
+afterEach(async () => {
+  if (server)
+    await new Promise<void>((resolve) => server!.close(() => resolve()));
+});
+
+describe("HTTP-контракт операций загрузки", () => {
+  it("выясняет потерянный ответ, повторяет подтверждённую неудачу и сохраняет удаление", async () => {
+    const { files, objectStore } = buildHarness();
+    const app = createApp({
+      healthRouter: Router(),
+      authRouter: Router(),
+      requireAuth: (_req, _res, next) => next(),
+      filesRouter: createFilesRouter({
+        uploads: files,
+        catalog: files,
+        uploadSingleFile: createUploadMiddleware(1024),
+      }),
+      directoriesRouter: Router(),
+      corsOrigin: [],
+    });
+    await new Promise<void>((resolve, reject) => {
+      server = app.listen(0, "127.0.0.1", (error) =>
+        error ? reject(error) : resolve(),
+      );
+      server.once("error", reject);
+    });
+    const base = `http://127.0.0.1:${(server!.address() as AddressInfo).port}/api/files`;
+    const id = randomUUID();
+    async function upload(operationId = id, filename = "report.txt") {
+      const form = new FormData();
+      form.append("operationId", operationId);
+      form.append(
+        "file",
+        new Blob(["hello"], { type: "text/plain" }),
+        filename,
+      );
+      return await fetch(base, { method: "POST", body: form });
+    }
+    const status = async () => {
+      const response = await fetch(`${base}/upload-operations/${id}`);
+      expect(response.status).toBe(200);
+      return uploadOperationResponseSchema.parse(await response.json());
+    };
+    expect(await status()).toEqual({ status: "absent" });
+    objectStore.failNext("put", new Error("Хранилище недоступно"));
+    expect((await upload()).status).toBe(500);
+    expect(await status()).toEqual({ status: "failed" });
+    const success = await upload();
+    expect(success.status).toBe(201);
+    const file = await success.json();
+    expect(await status()).toEqual({ status: "succeeded", file });
+    expect(await (await upload()).json()).toEqual(file);
+    expect((await upload(id, "other.txt")).status).toBe(409);
+    const another = await (await upload(randomUUID())).json();
+    expect(another.id).not.toBe(file.id);
+    expect(
+      (await fetch(`${base}/${file.id}`, { method: "DELETE" })).status,
+    ).toBe(204);
+    expect(await status()).toEqual({ status: "deleted" });
+    expect((await upload()).status).toBe(404);
+    expect((await fetch(`${base}/upload-operations/invalid`)).status).toBe(422);
+  });
+});

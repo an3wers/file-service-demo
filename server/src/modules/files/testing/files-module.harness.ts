@@ -1,3 +1,4 @@
+import { createMemoryUploadOperations } from "./memory-upload-operations.js";
 import { createMemoryDirectories } from "./memory-directories.js";
 import { createTestClock } from "../../../testing/clock.js";
 import { createMemoryObjectStore } from "../../../storage/memory-object-store.js";
@@ -107,6 +108,7 @@ export function buildHarness(
     clock,
   });
   const uploads = createUploadsModule({
+    operations: createMemoryUploadOperations(fileRows),
     objectStore,
     fileRows,
     directories,

@@ -15,6 +15,8 @@ export const MAX_UPLOAD_SIZE_BYTES = MAX_UPLOAD_SIZE_MB * 1024 * 1024;
 
 export interface UploadRow {
   id: number;
+  operationId: string;
+  retryPending?: boolean;
   file: File;
   state: Ref<"selected" | "queued" | "active" | "finished" | "cancelled">;
   operation: Ref<UploadOperation | null>;
@@ -39,6 +41,7 @@ function addFiles(files: readonly File[]): void {
     ...rows.value,
     ...files.map((file): UploadRow => ({
       id: ++nextId,
+      operationId: crypto.randomUUID(),
       file,
       state: ref("selected"),
       operation: shallowRef(null),
@@ -57,7 +60,9 @@ async function run(row: UploadRow): Promise<void> {
   row.state.value = "active";
   active.add(row);
   try {
-    await operation.start();
+    const retrying = row.retryPending;
+    row.retryPending = false;
+    await (retrying ? operation.retry() : operation.start());
     if (rows.value.includes(row)) useFileBrowser().refresh();
   } catch {
     return;
@@ -82,9 +87,22 @@ function submit(directory: string): void {
       row.file,
       directory,
       mode.value,
+      row.operationId,
     );
     row.state.value = "queued";
   }
+  drain();
+}
+
+function retry(row: UploadRow): void {
+  if (
+    row.state.value !== "finished" ||
+    row.operation.value?.mode !== "server" ||
+    row.operation.value.outcome.value?.status === "succeeded"
+  )
+    return;
+  row.retryPending = true;
+  row.state.value = "queued";
   drain();
 }
 
@@ -112,6 +130,7 @@ export function useUpload() {
     addFiles,
     remove,
     submit,
+    retry,
     cancelRow,
     cancel,
     reset,

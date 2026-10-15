@@ -286,13 +286,96 @@
         }
       }
     },
+    "/api/files/upload-operations/{id}": {
+      "get": {
+        "tags": [
+          "uploads"
+        ],
+        "summary": "Выяснить результат операции загрузки",
+        "operationId": "getUploadOperation",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+            },
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Состояние операции",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UploadOperationResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Недопустимый идентификатор",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Нет токена доступа или он недействителен",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Запрос не прошёл валидацию; details — результат z.flattenError()",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Непредвиденная ошибка сервера",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Хранилище или база данных недоступны",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/files": {
       "post": {
         "tags": [
           "files"
         ],
         "summary": "Загрузить файл через сервер",
-        "description": "Файл целиком буферизуется в памяти сервера и ограничен MAX_UPLOAD_SIZE_MB. Файлы крупнее грузятся через /presign-upload.",
+        "description": "Файл целиком буферизуется в памяти сервера и ограничен MAX_UPLOAD_SIZE_MB. Файлы крупнее грузятся через /presign-upload. operationId задаёт устойчивую идентичность: повтор с тем же UUID возвращает прежний файл, а после удаления — 404. Без operationId каждый запрос создаёт новую операцию. Перед повторной передачей выясните состояние через /upload-operations/{id}.",
         "operationId": "uploadFile",
         "requestBody": {
           "required": true,
@@ -301,6 +384,11 @@
               "schema": {
                 "type": "object",
                 "properties": {
+                  "operationId": {
+                    "type": "string",
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                  },
                   "directory": {
                     "type": "string",
                     "maxLength": 1024
@@ -351,6 +439,16 @@
           },
           "404": {
             "description": "Директория не найдена",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Операция обрабатывается или параметры повтора отличаются",
             "content": {
               "application/json": {
                 "schema": {
@@ -1667,6 +1765,45 @@
           "error"
         ],
         "additionalProperties": false
+      },
+      "UploadOperationResponse": {
+        "anyOf": [
+          {
+            "type": "object",
+            "properties": {
+              "status": {
+                "type": "string",
+                "const": "succeeded"
+              },
+              "file": {
+                "$ref": "#/components/schemas/FileDto"
+              }
+            },
+            "required": [
+              "status",
+              "file"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "status": {
+                "type": "string",
+                "enum": [
+                  "absent",
+                  "failed",
+                  "processing",
+                  "deleted"
+                ]
+              }
+            },
+            "required": [
+              "status"
+            ],
+            "additionalProperties": false
+          }
+        ]
       },
       "FileDto": {
         "type": "object",

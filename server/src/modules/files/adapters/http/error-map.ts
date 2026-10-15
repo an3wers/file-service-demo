@@ -8,6 +8,8 @@ import {
   tooManyRequests,
 } from "../../../../errors.js";
 import {
+  UploadOperationConflictError,
+  UploadOperationProcessingError,
   DirectoryAlreadyExistsError,
   DirectoryNotFoundError,
   FileNotFoundError,
@@ -27,6 +29,10 @@ export function mapFilesError(error: unknown): AppError | undefined {
   }
 
   const options = { cause: error };
+  if (error instanceof UploadOperationConflictError)
+    return conflict(ERROR_CODES.UPLOAD_OPERATION_CONFLICT, error.message);
+  if (error instanceof UploadOperationProcessingError)
+    return conflict(ERROR_CODES.UPLOAD_OPERATION_PROCESSING, error.message);
 
   if (error instanceof DirectoryNotFoundError) {
     return notFound(

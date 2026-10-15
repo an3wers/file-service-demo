@@ -153,6 +153,10 @@ export function createMemoryFileRows(
       return toStoredFile(copy(row));
     },
 
+    async isFileDeleted(id) {
+      return rows.get(id)?.deleted_at != null;
+    },
+
     async findFileById(id: string): Promise<StoredFile | null> {
       failures.check("findFileById");
 

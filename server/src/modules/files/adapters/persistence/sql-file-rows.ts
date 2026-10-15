@@ -20,8 +20,11 @@ function escapeLike(value: string): string {
   return value.replaceAll(/[\\%_]/g, String.raw`\$&`);
 }
 
-export async function findFileById(id: string): Promise<StoredFile | null> {
-  const { rows } = await query<FileRow>(
+export async function findFileById(
+  id: string,
+  execute = query,
+): Promise<StoredFile | null> {
+  const { rows } = await execute<FileRow>(
     "select * from files where id = $1 and deleted_at is null",
     [id],
   );
@@ -32,8 +35,9 @@ export async function findFileById(id: string): Promise<StoredFile | null> {
 export async function markFileReady(
   id: string,
   values: ReadyValues,
+  execute = query,
 ): Promise<StoredFile | null> {
-  const { rows } = await query<FileRow>(
+  const { rows } = await execute<FileRow>(
     `update files
         set status = 'ready',
             size_bytes = $2,
@@ -208,9 +212,9 @@ export async function listExpiredPending(
  * row writer the domain talks about when it says the column is filled by
  * "whoever writes the row", not by the scenario that asked for the insert.
  */
-export function createSqlFileRows(bucket: string): FileRows {
+export function createSqlFileRows(bucket: string, execute = query): FileRows {
   async function insertFile(input: InsertFileInput): Promise<StoredFile> {
-    const { rows } = await query<FileRow>(
+    const { rows } = await execute<FileRow>(
       `insert into files (
          id, bucket, object_key, directory, original_name, extension,
          content_type, size_bytes, etag, status, upload_source,
@@ -240,9 +244,16 @@ export function createSqlFileRows(bucket: string): FileRows {
   }
 
   return {
+    async isFileDeleted(id) {
+      const { rows } = await execute<{ deleted: boolean }>(
+        "select deleted_at is not null as deleted from files where id = $1",
+        [id],
+      );
+      return rows[0]?.deleted ?? false;
+    },
     insertFile,
-    findFileById,
-    markFileReady,
+    findFileById: (id) => findFileById(id, execute),
+    markFileReady: (id, values) => markFileReady(id, values, execute),
     markFileFailed,
     countActiveMultipart,
     claimExpiredMultipart,

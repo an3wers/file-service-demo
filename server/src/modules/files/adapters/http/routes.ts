@@ -67,6 +67,7 @@ export function createFilesRouter({
       }
 
       const file = await uploads.uploadThroughServer({
+        operationId: req.body.operationId,
         filename: decodeOriginalName(req.file.originalname),
         directory: req.body.directory,
         contentType: req.file.mimetype,
@@ -75,6 +76,20 @@ export function createFilesRouter({
       });
 
       res.status(201).json(toFileDto(file));
+    },
+  );
+
+  filesRouter.get(
+    "/upload-operations/:id",
+    validateParams(idParamsSchema),
+    async (_req, res) => {
+      const { id } = validatedParams<IdParams>(res);
+      const result = await uploads.getUploadOperation(id);
+      res.json(
+        result.status === "succeeded"
+          ? { ...result, file: toFileDto(result.file) }
+          : result,
+      );
     },
   );
 

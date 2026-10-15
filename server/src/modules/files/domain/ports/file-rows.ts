@@ -37,6 +37,7 @@ export interface ReadyValues {
 
 /** Rows as the files module handles them: reserve, confirm, list, delete. */
 export interface FileRowsForFiles {
+  isFileDeleted(id: string): Promise<boolean>;
   insertFile(input: InsertFileInput): Promise<StoredFile>;
 
   /** `null` for a row that never existed or has been soft-deleted. */

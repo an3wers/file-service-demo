@@ -11,6 +11,7 @@ export const idParamsSchema = z.object({
 });
 
 export const uploadBodySchema = z.object({
+  operationId: z.uuid().optional(),
   directory: z.string().max(1024).optional(),
 });
 

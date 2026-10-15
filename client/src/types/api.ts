@@ -1,4 +1,5 @@
 export type {
+  UploadOperationResponse,
   DirectoriesResponse,
   DirectoryDto,
   DownloadUrlResponse,

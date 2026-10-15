@@ -8,6 +8,10 @@ export class FilesDomainError extends Error {
   }
 }
 
+export class UploadOperationConflictError extends FilesDomainError {}
+
+export class UploadOperationProcessingError extends FilesDomainError {}
+
 export class FileNotFoundError extends FilesDomainError {}
 
 export class FileNotReadyError extends FilesDomainError {}

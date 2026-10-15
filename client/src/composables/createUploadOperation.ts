@@ -8,6 +8,7 @@ import type {
   PresignUploadResponse,
 } from "@/types/api";
 import {
+  getUploadOperation,
   completeUpload,
   deleteFile,
   fetchPartUrls,
@@ -40,6 +41,7 @@ export function createUploadOperation(
   file: File,
   directory: string,
   mode: UploadMode,
+  operationId: string = crypto.randomUUID(),
 ) {
   const uploading = ref(false);
   const stage = ref<UploadStage>("idle");
@@ -49,7 +51,9 @@ export function createUploadOperation(
   const partsDone = ref(0);
   const outcome = shallowRef<UploadOutcome | null>(null);
   const reservationState = shallowRef<PresignUploadResponse | null>(null);
-  const controller = new AbortController();
+  let controller = new AbortController();
+  let attempted = false;
+  const unresolved = ref(false);
   let running: Promise<FileDto> | null = null;
 
   const percent = computed(() =>
@@ -274,6 +278,30 @@ export function createUploadOperation(
       : await uploadSingle(file, reservation, signal);
   }
 
+  async function uploadServer(): Promise<FileDto> {
+    if (attempted) {
+      unresolved.value = true;
+      stage.value = "processing";
+      const result = await getUploadOperation(operationId);
+      if (result.status === "succeeded") return result.file;
+      if (result.status === "processing")
+        throw new Error("Не удалось выяснить результат");
+      if (result.status === "deleted") {
+        unresolved.value = false;
+        throw new Error("Результат операции удалён");
+      }
+    }
+    attempted = true;
+    unresolved.value = true;
+    stage.value = "sending";
+    return await uploadViaServer(
+      file,
+      directory,
+      trackSending(controller.signal, "processing"),
+      operationId,
+    );
+  }
+
   async function run(): Promise<FileDto> {
     uploading.value = true;
     stage.value = mode === "server" ? "sending" : "presigning";
@@ -281,14 +309,11 @@ export function createUploadOperation(
     try {
       const result =
         mode === "server"
-          ? await uploadViaServer(
-              file,
-              directory,
-              trackSending(controller.signal, "processing"),
-            )
+          ? await uploadServer()
           : await uploadPresigned(file, directory, controller.signal);
 
       controller.signal.throwIfAborted();
+      unresolved.value = false;
       outcome.value = { status: "succeeded", file: result };
       return result;
     } catch (error) {
@@ -297,7 +322,10 @@ export function createUploadOperation(
         : {
             status: "failed",
             error,
-            message: errorMessage(error, "Не удалось загрузить файл"),
+            message:
+              mode === "server" && unresolved.value
+                ? "Не удалось выяснить результат"
+                : errorMessage(error, "Не удалось загрузить файл"),
           };
       throw error;
     } finally {
@@ -307,6 +335,16 @@ export function createUploadOperation(
 
   function start(): Promise<FileDto> {
     running ??= run();
+    return running;
+  }
+
+  function retry(): Promise<FileDto> {
+    if (uploading.value || outcome.value?.status === "succeeded")
+      return start();
+    controller = new AbortController();
+    outcome.value = null;
+    sentBytes.value = 0;
+    running = run();
     return running;
   }
 
@@ -321,6 +359,9 @@ export function createUploadOperation(
     file,
     directory,
     mode,
+    operationId,
+    unresolved: shallowReadonly(unresolved),
+    retry,
     uploading: shallowReadonly(uploading),
     stage: shallowReadonly(stage),
     sentBytes: shallowReadonly(sentBytes),
