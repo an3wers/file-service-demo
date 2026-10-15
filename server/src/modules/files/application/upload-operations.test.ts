@@ -1,6 +1,9 @@
 import { randomUUID } from "node:crypto";
 import { describe, expect, it } from "vitest";
-import { buildHarness } from "../testing/files-module.harness.js";
+import {
+  buildHarness,
+  THREE_PART_SIZE,
+} from "../testing/files-module.harness.js";
 
 function input() {
   return {
@@ -87,4 +90,66 @@ describe("повтор операции загрузки через сервер
     ).rejects.toMatchObject({ name: "UploadOperationConflictError" });
     expect(objectStore.objectKeys()).toHaveLength(1);
   });
+});
+
+describe.each([5, THREE_PART_SIZE])(
+  "повтор прямой загрузки размером %i",
+  (size) => {
+    it("сохраняет резервирование после потери ответа и подтверждает единственный файл", async () => {
+      const { files, objectStore, rowCount } = buildHarness();
+      const upload = { ...input(), size };
+      const first = await files.createPresignedUpload(upload);
+      const repeated = await files.createPresignedUpload(upload);
+      expect(repeated.id).toBe(first.id);
+      expect(repeated.key).toBe(first.key);
+      if (first.strategy === "multipart" && repeated.strategy === "multipart") {
+        expect(repeated.uploadId).toBe(first.uploadId);
+        expect(repeated.partSize).toBe(first.partSize);
+      }
+      await objectStore.put(first.key, Buffer.from("hello"), {
+        contentType: "text/plain",
+        contentLength: 5,
+      });
+      const outcome = await files.getUploadOperation(upload.operationId);
+      expect(outcome).toMatchObject({
+        status: "succeeded",
+        file: { id: first.id },
+      });
+      expect(await rowCount()).toBe(1);
+      expect(await files.completeUpload(first.id)).toMatchObject({
+        id: first.id,
+        kind: "ready",
+      });
+      await files.deleteFile(first.id);
+      expect(await files.getUploadOperation(upload.operationId)).toEqual({
+        status: "deleted",
+      });
+      await expect(files.createPresignedUpload(upload)).rejects.toMatchObject({
+        name: "FileNotFoundError",
+      });
+      expect(
+        (
+          await files.createPresignedUpload({
+            ...upload,
+            operationId: randomUUID(),
+          })
+        ).id,
+      ).not.toBe(first.id);
+    });
+  },
+);
+
+it("повторяет исчезнувшую составную загрузку с прежним файлом", async () => {
+  const { files, objectStore, rowCount } = buildHarness();
+  const upload = { ...input(), size: THREE_PART_SIZE };
+  const first = await files.createPresignedUpload(upload);
+  if (first.strategy !== "multipart")
+    throw new Error("Ожидалась составная загрузка");
+  await objectStore.abortMultipart(first.key, first.uploadId);
+  const repeated = await files.createPresignedUpload(upload);
+  expect(repeated.id).toBe(first.id);
+  if (repeated.strategy !== "multipart")
+    throw new Error("Ожидалась составная загрузка");
+  expect(repeated.uploadId).not.toBe(first.uploadId);
+  expect(await rowCount()).toBe(1);
 });

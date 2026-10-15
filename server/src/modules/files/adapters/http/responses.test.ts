@@ -6,6 +6,7 @@ import type {
   MultipartStatus,
   PartUrlsResult,
 } from "../../application/multipart.js";
+import type { FileDto } from "./responses.js";
 import type { PresignUploadResult } from "../../application/uploads.js";
 import type { FileStatus, UploadSource } from "../../domain/stored-file.js";
 import type { DirectoryDto } from "../../domain/ports/directories.js";
@@ -21,9 +22,16 @@ import type {
 
 describe("схемы ответов совпадают с тем, что отдают сценарии", () => {
   it("presign-upload", () => {
-    expectTypeOf<Serialized<PresignUploadResult>>().toEqualTypeOf<
-      z.output<typeof presignUploadResponseSchema>
-    >();
+    expectTypeOf<
+      | Serialized<Exclude<PresignUploadResult, { strategy: "ready" }>>
+      | {
+          strategy: "ready";
+          id: string;
+          key: string;
+          directory: string;
+          file: FileDto;
+        }
+    >().toEqualTypeOf<z.output<typeof presignUploadResponseSchema>>();
   });
 
   it("part-urls", () => {

@@ -3,6 +3,7 @@ import type {
   UploadOperations,
   UploadOperationRecord,
   UploadOperationFileRows,
+  UploadOperationSession,
 } from "../domain/ports/upload-operations.js";
 import {
   UploadOperationConflictError,
@@ -11,7 +12,6 @@ import {
 import { normalizeDirectory } from "../domain/keys.js";
 import { requireDirectory } from "../domain/directories.js";
 import type { DirectoriesForUpload } from "../domain/ports/directories.js";
-import { logger } from "../../../logger.js";
 import type { Clock } from "../domain/ports/clock.js";
 import {
   FileNotFoundError,
@@ -54,6 +54,7 @@ export interface UploadThroughServerInput {
 }
 
 export interface CreatePresignedUploadInput {
+  operationId?: string | undefined;
   filename: string;
   directory?: string | undefined;
   contentType?: string | undefined;
@@ -70,13 +71,23 @@ export interface PresignSingleResult {
   requiredHeaders: Record<string, string>;
 }
 
-export type PresignUploadResult = PresignSingleResult | PresignMultipartResult;
+export interface PresignReadyResult {
+  strategy: "ready";
+  directory: string;
+  id: string;
+  key: string;
+  file: StoredFile;
+}
+
+export type PresignUploadResult =
+  PresignSingleResult | PresignMultipartResult | PresignReadyResult;
 
 export type UploadOperationResult =
   | { status: "succeeded"; file: StoredFile }
   | { status: "absent" | "failed" | "processing" | "deleted" };
 
 export interface UploadsModule {
+  cancelUploadOperation(id: string): Promise<UploadOperationResult>;
   getUploadOperation(id: string): Promise<UploadOperationResult>;
   uploadThroughServer(input: UploadThroughServerInput): Promise<StoredFile>;
   createPresignedUpload(
@@ -132,6 +143,89 @@ export function createUploadsModule({
     return ready ? { status: "succeeded", file: ready } : { status: "deleted" };
   }
 
+  async function exclusive<T>(
+    id: string,
+    run: (session: UploadOperationSession) => Promise<T>,
+    wait = false,
+  ): Promise<T> {
+    const result = await operations.exclusive(id, run, wait);
+    if (result === null)
+      throw new UploadOperationProcessingError(
+        "Upload operation is still processing",
+      );
+    return result;
+  }
+
+  async function requireOperation(
+    session: UploadOperationSession,
+    input: CreatePresignedUploadInput,
+  ): Promise<UploadOperationRecord> {
+    const reservation = reserveKey(input);
+    const record = await session.read();
+    if (record) {
+      const previous = record.reservation;
+      if (
+        previous.originalName !== reservation.originalName ||
+        previous.directory !== reservation.directory ||
+        previous.contentType !== reservation.contentType ||
+        record.size !== (input.size ?? null)
+      ) {
+        throw new UploadOperationConflictError(
+          "Operation input differs from the original upload",
+        );
+      }
+      return record;
+    }
+    const created = { reservation, size: input.size ?? null };
+    await session.save(created);
+    return created;
+  }
+
+  function pendingInput(
+    record: UploadOperationRecord,
+    source: "server" | "presigned",
+    status: "pending" | "failed" = "pending",
+  ) {
+    const { id, key, directory, originalName, extension, contentType } =
+      record.reservation;
+    return {
+      id,
+      objectKey: key,
+      directory,
+      originalName,
+      extension,
+      contentType,
+      sizeBytes: record.size,
+      etag: null,
+      status,
+      uploadSource: source,
+    };
+  }
+
+  async function complete(
+    file: StoredFile,
+    rows: Pick<FileRowsForFiles, "markFileReady">,
+  ): Promise<StoredFile> {
+    if (file.kind === "ready") return file;
+    if (file.kind === "multipart")
+      await multipart.completeMultipartUpload(file);
+    const stored = await objectStore.head(file.key);
+    if (!stored) {
+      const message =
+        "No object was found at the reserved key; upload the file before confirming";
+      throw file.kind === "multipart"
+        ? new MultipartNotFoundError(message, { key: file.key })
+        : new UploadNotCompletedError(message, { key: file.key });
+    }
+    const ready = await rows.markFileReady(file.id, {
+      sizeBytes: stored.size,
+      etag: stored.etag,
+      contentType: stored.contentType ?? file.contentType,
+    });
+    if (!ready) throw fileNotFound(file.id);
+    return ready;
+  }
+
   return {
     async getUploadOperation(id) {
       return (
@@ -144,55 +238,44 @@ export function createUploadsModule({
       );
     },
 
-    async uploadThroughServer(input): Promise<StoredFile> {
+    async cancelUploadOperation(id) {
+      return await exclusive(id, async (session) => {
+        const record = await session.read();
+        if (!record) return { status: "absent" };
+        const outcome = await resolveOperation(record, session.fileRows);
+        if (outcome.status !== "failed") return outcome;
+        const file = await session.fileRows.findFileById(record.reservation.id);
+        if (file?.kind === "multipart")
+          await objectStore.abortMultipart(file.key, file.uploadId);
+        await session.fileRows.reserveFile(
+          pendingInput(record, "presigned", "failed"),
+        );
+        return { status: "failed" };
+      });
+    },
+
+    async uploadThroughServer(input) {
       await requireDirectory(directories, normalizeDirectory(input.directory));
-      const result = await operations.exclusive(
+      return await exclusive(
         input.operationId ?? randomUUID(),
         async (session) => {
-          const rows = session.fileRows;
-          let record = await session.read();
-          const reservation = reserveKey(input);
-          if (record) {
-            const previous = record.reservation;
-            if (
-              previous.originalName !== reservation.originalName ||
-              previous.directory !== reservation.directory ||
-              previous.contentType !== reservation.contentType ||
-              record.size !== input.size
-            ) {
-              throw new UploadOperationConflictError(
-                "Operation input differs from the original upload",
-              );
-            }
-            const outcome = await resolveOperation(record, session.fileRows);
-            if (outcome.status === "succeeded") return outcome.file;
-            if (outcome.status === "deleted") throw fileNotFound(previous.id);
-          } else {
-            record = { reservation, size: input.size };
-            await session.save(record);
-          }
-          const { id, key, directory, originalName, extension, contentType } =
-            record.reservation;
-          const file = await rows.findFileById(id);
-          if (!file) {
-            await rows.insertFile({
-              id,
-              objectKey: key,
-              directory,
-              originalName,
-              extension,
-              contentType,
-              sizeBytes: input.size,
-              etag: null,
-              status: "pending",
-              uploadSource: "server",
-            });
-          }
+          const record = await requireOperation(session, input);
+          const outcome = await resolveOperation(record, session.fileRows);
+          if (outcome.status === "succeeded") return outcome.file;
+          if (outcome.status === "deleted")
+            throw fileNotFound(record.reservation.id);
+          const file = await session.fileRows.findFileById(
+            record.reservation.id,
+          );
+          if (file?.kind === "multipart")
+            await objectStore.abortMultipart(file.key, file.uploadId);
+          await session.fileRows.reserveFile(pendingInput(record, "server"));
+          const { key, contentType, id } = record.reservation;
           const { etag } = await objectStore.put(key, input.bytes, {
             contentType,
             contentLength: input.size,
           });
-          const ready = await rows.markFileReady(id, {
+          const ready = await session.fileRows.markFileReady(id, {
             sizeBytes: input.size,
             etag,
             contentType,
@@ -201,68 +284,63 @@ export function createUploadsModule({
           return ready;
         },
       );
-      if (!result)
-        throw new UploadOperationProcessingError(
-          "Upload operation is still processing",
-        );
-      return result;
     },
 
-    /**
-     * Reserves an id, key and metadata row, then hands back a URL the client can
-     * PUT to directly. The row stays `pending` until `completeUpload` confirms
-     * the object actually landed.
-     *
-     * Past the multipart threshold the same call answers with a plan instead,
-     * discriminated by `strategy`. A request that sends no `size` cannot be
-     * planned and stays on the single-PUT path, which is also what keeps callers
-     * that predate multipart working unchanged.
-     */
-    async createPresignedUpload(input): Promise<PresignUploadResult> {
+    async createPresignedUpload(input) {
       await requireDirectory(directories, normalizeDirectory(input.directory));
-      if (needsMultipart(input.size, policy.multipartThresholdBytes)) {
-        return await multipart.createMultipartUpload({
-          filename: input.filename,
-          directory: input.directory,
-          contentType: input.contentType,
-          size: input.size!,
-        });
-      }
-
-      const { id, key, directory, originalName, extension, contentType } =
-        reserveKey(input);
-      const ttl = policy.presignUploadTtlSeconds;
-
-      // Sign before recording anything: the key is already fixed, and a signing
-      // failure this way leaves no `pending` row that no client will confirm.
-      const uploadUrl = await objectStore.signUpload(key, {
-        contentType,
-        expiresIn: ttl,
-      });
-
-      await fileRows.insertFile({
-        id,
-        objectKey: key,
-        directory,
-        originalName,
-        extension,
-        contentType,
-        sizeBytes: input.size ?? null,
-        etag: null,
-        status: "pending",
-        uploadSource: "presigned",
-      });
-
-      return {
-        strategy: "single",
-        id,
-        key,
-        directory,
-        uploadUrl,
-        expiresAt: expiresAt(clock, ttl),
-        // The signature covers Content-Type, so the client must send it verbatim.
-        requiredHeaders: { "Content-Type": contentType },
-      };
+      return await exclusive(
+        input.operationId ?? randomUUID(),
+        async (session) => {
+          const record = await requireOperation(session, input);
+          const outcome = await resolveOperation(record, session.fileRows);
+          if (outcome.status === "succeeded")
+            return {
+              strategy: "ready",
+              directory: outcome.file.directory,
+              id: outcome.file.id,
+              key: outcome.file.key,
+              file: outcome.file,
+            };
+          if (outcome.status === "deleted")
+            throw fileNotFound(record.reservation.id);
+          const file = await session.fileRows.findFileById(
+            record.reservation.id,
+          );
+          if (file?.kind === "multipart") {
+            try {
+              return await multipart.resumeMultipartUpload(file);
+            } catch (error) {
+              if (!(error instanceof MultipartNotFoundError)) throw error;
+              await session.fileRows.reserveFile(
+                pendingInput(record, "presigned", "failed"),
+              );
+            }
+          }
+          if (needsMultipart(input.size, policy.multipartThresholdBytes)) {
+            return await multipart.createMultipartUpload(
+              { ...input, size: input.size! },
+              record.reservation,
+              session.fileRows,
+            );
+          }
+          const { id, key, directory, contentType } = record.reservation;
+          const ttl = policy.presignUploadTtlSeconds;
+          const uploadUrl = await objectStore.signUpload(key, {
+            contentType,
+            expiresIn: ttl,
+          });
+          await session.fileRows.reserveFile(pendingInput(record, "presigned"));
+          return {
+            strategy: "single",
+            id,
+            key,
+            directory,
+            uploadUrl,
+            expiresAt: expiresAt(clock, ttl),
+            requiredHeaders: { "Content-Type": contentType },
+          };
+        },
+      );
     },
 
     /** A further batch of part URLs for an upload already in flight. */
@@ -275,65 +353,18 @@ export function createUploadsModule({
       return await multipart.getMultipartStatus(await requireFile(id));
     },
 
-    /**
-     * Confirms an upload against storage itself. Size and ETag are read off the
-     * object rather than taken from the client, so the metadata reflects the
-     * bytes that were actually stored.
-     */
-    async completeUpload(id): Promise<StoredFile> {
-      const file = await requireFile(id);
-
-      if (file.kind === "ready") {
-        return file; // Idempotent: a retried confirmation is not an error.
-      }
-
-      if (file.kind === "failed") {
-        // `db:cleanup` gave up on this row earlier. If the object is there after
-        // all, the upload did work and only the confirmation was lost, so let
-        // the check below revive it — but say so, because it means cleanup ran
-        // early.
-        logger.info(
-          { id, key: file.key },
-          "Confirming an upload that was previously marked failed",
-        );
-      }
-
-      if (file.kind === "multipart") {
-        // Assembles the object out of its parts first; everything below then
-        // reads the finished object exactly as for a single-PUT upload.
-        const outcome = await multipart.completeMultipartUpload(file);
-
-        if (outcome === "gone") {
-          logger.info(
-            { id, key: file.key },
-            "Multipart upload had already been settled elsewhere",
-          );
-        }
-      }
-
-      const stored = await objectStore.head(file.key);
-
-      if (!stored) {
-        const message =
-          "No object was found at the reserved key; upload the file before confirming";
-        const details = { key: file.key };
-
-        throw file.kind === "multipart"
-          ? new MultipartNotFoundError(message, details)
-          : new UploadNotCompletedError(message, details);
-      }
-
-      const row = await fileRows.markFileReady(id, {
-        sizeBytes: stored.size,
-        etag: stored.etag,
-        contentType: stored.contentType ?? file.contentType,
-      });
-
-      if (!row) {
-        throw fileNotFound(id); // Deleted between the lookup and the update.
-      }
-
-      return row;
+    async completeUpload(id) {
+      const operationId = await operations.findIdByFileId(id);
+      if (!operationId) return await complete(await requireFile(id), fileRows);
+      return await exclusive(
+        operationId,
+        async (session) => {
+          const file = await session.fileRows.findFileById(id);
+          if (!file) throw fileNotFound(id);
+          return await complete(file, session.fileRows);
+        },
+        true,
+      );
     },
   };
 }

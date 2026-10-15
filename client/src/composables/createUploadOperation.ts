@@ -10,7 +10,7 @@ import type {
 import {
   getUploadOperation,
   completeUpload,
-  deleteFile,
+  cancelUploadOperation,
   fetchPartUrls,
   getMultipartStatus,
   presignUpload,
@@ -40,9 +40,10 @@ const PART_ATTEMPTS = 3;
 export function createUploadOperation(
   file: File,
   directory: string,
-  mode: UploadMode,
+  initialMode: UploadMode,
   operationId: string = crypto.randomUUID(),
 ) {
+  const currentMode = ref(initialMode);
   const uploading = ref(false);
   const stage = ref<UploadStage>("idle");
   const sentBytes = ref(0);
@@ -53,6 +54,9 @@ export function createUploadOperation(
   const reservationState = shallowRef<PresignUploadResponse | null>(null);
   let controller = new AbortController();
   let attempted = false;
+  let confirmationPending = false;
+  let deleted = false;
+  let resuming = false;
   const unresolved = ref(false);
   let running: Promise<FileDto> | null = null;
 
@@ -87,19 +91,29 @@ export function createUploadOperation(
   }
 
   async function confirmUpload(id: string): Promise<FileDto> {
-    try {
-      return await completeUpload(id);
-    } catch (error) {
-      if (
-        isApiError(error) &&
-        (error.code === "UPLOAD_NOT_COMPLETED" || error.status === 503)
-      ) {
-        await delay(800);
-
+    confirmationPending = true;
+    unresolved.value = true;
+    for (let attempt = 1; ; attempt += 1) {
+      try {
         return await completeUpload(id);
+      } catch (error) {
+        if (
+          attempt === 1 &&
+          isApiError(error) &&
+          (error.code === "UPLOAD_NOT_COMPLETED" || error.status === 503)
+        ) {
+          await delay(800);
+          continue;
+        }
+        if (
+          isApiError(error) &&
+          (error.code === "UPLOAD_NOT_COMPLETED" ||
+            error.code === "MULTIPART_NOT_FOUND")
+        ) {
+          confirmationPending = false;
+        }
+        throw error;
       }
-
-      throw error;
     }
   }
 
@@ -179,23 +193,6 @@ export function createUploadOperation(
     }
   }
 
-  async function pumpParts(
-    file: File,
-    plan: PresignMultipartResponse,
-    numbers: number[],
-    known: Map<number, MultipartPartDto>,
-    signal: AbortSignal,
-    report: PartProgress,
-  ): Promise<void> {
-    try {
-      await uploadParts(file, plan, numbers, known, signal, report);
-    } catch (error) {
-      await deleteFile(plan.id).catch(() => {});
-
-      throw error;
-    }
-  }
-
   async function uploadMultipart(
     file: File,
     plan: PresignMultipartResponse,
@@ -220,14 +217,20 @@ export function createUploadOperation(
     partsDone.value = 0;
     stage.value = "sending";
 
-    await pumpParts(
-      file,
-      plan,
-      range(1, plan.partCount),
-      known,
-      signal,
-      report,
-    );
+    let numbers = range(1, plan.partCount);
+    if (attempted && reservationState.value?.id === plan.id && resuming) {
+      const status = await getMultipartStatus(plan.id, signal);
+      const uploaded = new Set(status.uploadedParts);
+      numbers = numbers.filter((number) => !uploaded.has(number));
+      partsDone.value = uploaded.size;
+      sentBytes.value = status.uploadedBytes;
+      for (const number of uploaded)
+        loaded.set(
+          number,
+          Math.min(plan.partSize, plan.size - (number - 1) * plan.partSize),
+        );
+    }
+    await uploadParts(file, plan, numbers, known, signal, report);
 
     stage.value = "completing";
 
@@ -245,7 +248,7 @@ export function createUploadOperation(
 
       partsDone.value = plan.partCount - missing.length;
       stage.value = "sending";
-      await pumpParts(file, plan, missing, new Map(), signal, report);
+      await uploadParts(file, plan, missing, new Map(), signal, report);
 
       stage.value = "completing";
 
@@ -258,10 +261,26 @@ export function createUploadOperation(
     directory: string,
     signal: AbortSignal,
   ): Promise<FileDto> {
+    if (confirmationPending && reservationState.value) {
+      stage.value = "completing";
+      try {
+        return await confirmUpload(reservationState.value.id);
+      } catch (error) {
+        if (
+          !isApiError(error) ||
+          error.code !== "MULTIPART_INCOMPLETE" ||
+          reservationState.value.strategy !== "multipart"
+        )
+          throw error;
+        resuming = true;
+        return await uploadMultipart(file, reservationState.value, signal);
+      }
+    }
     stage.value = "presigning";
-
+    unresolved.value = true;
     const reservation = await presignUpload(
       {
+        operationId,
         filename: file.name,
         directory,
         contentType: file.type || undefined,
@@ -271,6 +290,7 @@ export function createUploadOperation(
     );
 
     signal.throwIfAborted();
+    if (reservation.strategy === "ready") return reservation.file;
     reservationState.value = reservation;
 
     return reservation.strategy === "multipart"
@@ -279,19 +299,6 @@ export function createUploadOperation(
   }
 
   async function uploadServer(): Promise<FileDto> {
-    if (attempted) {
-      unresolved.value = true;
-      stage.value = "processing";
-      const result = await getUploadOperation(operationId);
-      if (result.status === "succeeded") return result.file;
-      if (result.status === "processing")
-        throw new Error("Не удалось выяснить результат");
-      if (result.status === "deleted") {
-        unresolved.value = false;
-        throw new Error("Результат операции удалён");
-      }
-    }
-    attempted = true;
     unresolved.value = true;
     stage.value = "sending";
     return await uploadViaServer(
@@ -304,11 +311,21 @@ export function createUploadOperation(
 
   async function run(): Promise<FileDto> {
     uploading.value = true;
-    stage.value = mode === "server" ? "sending" : "presigning";
+    stage.value = currentMode.value === "server" ? "sending" : "presigning";
 
     try {
+      if (deleted) throw new Error("Результат операции удалён");
+      if (attempted) {
+        const result = await resolveResult();
+        if (result) {
+          outcome.value = { status: "succeeded", file: result };
+          return result;
+        }
+      }
+      resuming = attempted;
+      attempted = true;
       const result =
-        mode === "server"
+        currentMode.value === "server"
           ? await uploadServer()
           : await uploadPresigned(file, directory, controller.signal);
 
@@ -317,13 +334,31 @@ export function createUploadOperation(
       outcome.value = { status: "succeeded", file: result };
       return result;
     } catch (error) {
+      if (isAbortError(error) && currentMode.value === "presigned") {
+        try {
+          const result = await cancelUploadOperation(operationId);
+          unresolved.value = result.status === "processing";
+          confirmationPending = false;
+          reservationState.value = null;
+          if (result.status === "succeeded") {
+            outcome.value = { status: "succeeded", file: result.file };
+            return result.file;
+          }
+        } catch {
+          unresolved.value = true;
+        }
+      }
+      if (isApiError(error) && error.code === "TOO_MANY_ACTIVE_UPLOADS") {
+        // Для первой версии выбран ручной повтор; позже можно автоматически ждать свободного места.
+        unresolved.value = false;
+      }
       outcome.value = isAbortError(error)
         ? { status: "cancelled" }
         : {
             status: "failed",
             error,
             message:
-              mode === "server" && unresolved.value
+              currentMode.value === "server" && unresolved.value
                 ? "Не удалось выяснить результат"
                 : errorMessage(error, "Не удалось загрузить файл"),
           };
@@ -333,7 +368,61 @@ export function createUploadOperation(
     }
   }
 
+  async function resolveResult(): Promise<FileDto | null> {
+    unresolved.value = true;
+    stage.value = "processing";
+    const result = await getUploadOperation(operationId);
+    if (result.status === "processing")
+      throw new Error("Не удалось выяснить результат");
+    unresolved.value = false;
+    if (result.status === "succeeded") return result.file;
+    if (result.status === "deleted") {
+      deleted = true;
+      throw new Error("Результат операции удалён");
+    }
+    return null;
+  }
+
+  async function checkResult(): Promise<void> {
+    if (uploading.value) return;
+    uploading.value = true;
+    try {
+      const file = await resolveResult();
+      if (file) outcome.value = { status: "succeeded", file };
+      else
+        outcome.value = {
+          status: "failed",
+          error: null,
+          message: "Загрузка не завершена. Можно повторить операцию.",
+        };
+    } catch (error) {
+      outcome.value = {
+        status: "failed",
+        error,
+        message: errorMessage(error, "Не удалось выяснить результат"),
+      };
+    } finally {
+      uploading.value = false;
+    }
+  }
+
+  function changeMode(next: UploadMode): void {
+    if (
+      uploading.value ||
+      unresolved.value ||
+      deleted ||
+      outcome.value?.status === "succeeded"
+    )
+      return;
+    if (next === currentMode.value) return;
+    currentMode.value = next;
+    confirmationPending = false;
+    reservationState.value = null;
+  }
+
   function start(): Promise<FileDto> {
+    if (outcome.value?.status === "succeeded")
+      return Promise.resolve(outcome.value.file);
     running ??= run();
     return running;
   }
@@ -358,7 +447,11 @@ export function createUploadOperation(
   return {
     file,
     directory,
-    mode,
+    get mode() {
+      return currentMode.value;
+    },
+    changeMode,
+    checkResult,
     operationId,
     unresolved: shallowReadonly(unresolved),
     retry,

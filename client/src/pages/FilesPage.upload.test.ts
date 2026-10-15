@@ -95,6 +95,13 @@ async function setup(
           });
         return response;
       }
+      if (url.endsWith("/cancel")) {
+        if (options.delayedDelete)
+          return new Promise((resolve) => {
+            deletions.set("file-1", () => resolve(json({ status: "failed" })));
+          });
+        return json({ status: "failed" });
+      }
       const id = url.split("/")[3]!;
       if (url.endsWith("/complete")) {
         return new Promise<Response>((resolve) => {
@@ -658,7 +665,9 @@ describe("ручной повтор строки загрузки", () => {
       "Не удалось выяснить результат",
     );
     fetchMock.mockResolvedValueOnce(json({ status: "succeeded", file }));
-    await fireEvent.click(row(0).getByRole("button", { name: "Повторить" }));
+    await fireEvent.click(
+      row(0).getByRole("button", { name: "Выяснить результат" }),
+    );
     await flushPromises();
     expect(fetchMock).toHaveBeenCalledWith(
       `/api/files/upload-operations/${operationId}`,
@@ -676,6 +685,11 @@ describe("ручной повтор строки загрузки", () => {
     requests[0]!.fail();
     await flushPromises();
     fetchMock.mockResolvedValueOnce(json({ status: "failed" }));
+    await fireEvent.click(
+      row(0).getByRole("button", { name: "Выяснить результат" }),
+    );
+    await flushPromises();
+    fetchMock.mockResolvedValueOnce(json({ status: "failed" }));
     await fireEvent.click(row(0).getByRole("button", { name: "Повторить" }));
     await flushPromises();
     expect(requests).toHaveLength(2);
@@ -687,3 +701,76 @@ describe("ручной повтор строки загрузки", () => {
     expect(row(0).getByText("Готово")).toBeTruthy();
   });
 });
+
+describe.each(["presigned", "multipart"] as const)(
+  "ручной повтор прямой строки %s",
+  (source) => {
+    it("повторяет только подтверждение уже отправленного файла", async () => {
+      const { requests, fetchMock, confirm } = await setup(source);
+      const original = fetchMock.getMockImplementation()!;
+      let failed = false;
+      fetchMock.mockImplementation(async (url, init) => {
+        if (url.endsWith("/complete") && !failed) {
+          failed = true;
+          throw new Error("Ответ потерян");
+        }
+        if (url.includes("/upload-operations/"))
+          return json({ status: "failed" });
+        return original(url, init);
+      });
+      await launch();
+      requests.forEach((request) => request.finish());
+      await flushPromises();
+      const count = requests.length;
+      expect(
+        row(0).getByRole("button", { name: "Выяснить результат" }),
+      ).toBeTruthy();
+      expect(
+        row(0)
+          .getByRole("button", { name: "Через сервер" })
+          .hasAttribute("disabled"),
+      ).toBe(true);
+      await fireEvent.click(
+        row(0).getByRole("button", { name: "Выяснить результат" }),
+      );
+      await flushPromises();
+      await fireEvent.click(row(0).getByRole("button", { name: "Повторить" }));
+      await flushPromises();
+      expect(requests).toHaveLength(count);
+      expect(
+        fetchMock.mock.calls.filter(
+          ([url]) => url === "/api/files/presign-upload",
+        ),
+      ).toHaveLength(1);
+      confirm();
+      await flushPromises();
+      expect(row(0).getByText("Готово")).toBeTruthy();
+    });
+
+    it("выясняет потерянное резервирование и показывает готовый файл в прежней строке", async () => {
+      const { requests, fetchMock, file } = await setup(source);
+      fetchMock.mockRejectedValueOnce(new Error("Ответ потерян"));
+      await launch();
+      const first = JSON.parse(
+        String(
+          fetchMock.mock.calls.find(
+            ([url]) => url === "/api/files/presign-upload",
+          )![1]?.body,
+        ),
+      );
+      expect(first.operationId).toEqual(expect.any(String));
+      fetchMock.mockResolvedValueOnce(json({ status: "succeeded", file }));
+      await fireEvent.click(
+        row(0).getByRole("button", { name: "Выяснить результат" }),
+      );
+      await flushPromises();
+      expect(requests).toHaveLength(0);
+      expect(screen.getAllByTestId("upload-row")).toHaveLength(1);
+      expect(row(0).getByText("Готово")).toBeTruthy();
+      expect(fetchMock).toHaveBeenCalledWith(
+        `/api/files/upload-operations/${first.operationId}`,
+        expect.anything(),
+      );
+    });
+  },
+);

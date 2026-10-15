@@ -104,7 +104,9 @@ export type PresignUploadResponse = ({
     strategy: 'single';
 } & PresignSingleResponse) | ({
     strategy: 'multipart';
-} & PresignMultipartResponse);
+} & PresignMultipartResponse) | ({
+    strategy: 'ready';
+} & PresignReadyResponse);
 
 export type PresignSingleResponse = {
     strategy: 'single';
@@ -149,6 +151,14 @@ export type MultipartPartDto = {
     offset: number;
     size: number;
     url: string;
+};
+
+export type PresignReadyResponse = {
+    strategy: 'ready';
+    directory: string;
+    id: string;
+    key: string;
+    file: FileDto;
 };
 
 export type PartUrlsResponse = {
@@ -317,6 +327,49 @@ export type LogoutResponses = {
 
 export type LogoutResponse = LogoutResponses[keyof LogoutResponses];
 
+export type CancelUploadOperationData = {
+    body?: never;
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/files/upload-operations/{id}/cancel';
+};
+
+export type CancelUploadOperationErrors = {
+    /**
+     * Нет токена доступа или он недействителен
+     */
+    401: ErrorResponse;
+    /**
+     * Операция обрабатывается
+     */
+    409: ErrorResponse;
+    /**
+     * Запрос не прошёл валидацию; details — результат z.flattenError()
+     */
+    422: ErrorResponse;
+    /**
+     * Непредвиденная ошибка сервера
+     */
+    500: ErrorResponse;
+    /**
+     * Хранилище или база данных недоступны
+     */
+    503: ErrorResponse;
+};
+
+export type CancelUploadOperationError = CancelUploadOperationErrors[keyof CancelUploadOperationErrors];
+
+export type CancelUploadOperationResponses = {
+    /**
+     * Результат отмены или уже готовый файл
+     */
+    200: UploadOperationResponse;
+};
+
+export type CancelUploadOperationResponse = CancelUploadOperationResponses[keyof CancelUploadOperationResponses];
+
 export type GetUploadOperationData = {
     body?: never;
     path: {
@@ -473,6 +526,7 @@ export type UploadFileResponse = UploadFileResponses[keyof UploadFileResponses];
 
 export type PresignUploadData = {
     body: {
+        operationId?: string;
         filename: string;
         directory?: string;
         contentType?: string;
@@ -496,6 +550,10 @@ export type PresignUploadErrors = {
      * Директория не найдена
      */
     404: ErrorResponse;
+    /**
+     * Операция обрабатывается или параметры повтора отличаются
+     */
+    409: ErrorResponse;
     /**
      * Файл больше потолка размера объекта
      */

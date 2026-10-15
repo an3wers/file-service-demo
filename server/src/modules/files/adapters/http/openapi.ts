@@ -28,6 +28,21 @@ const json = <T>(schema: T) => ({ "application/json": { schema } });
 const FILE_NOT_FOUND = "Файла нет или он удалён";
 
 export const filesPaths: ZodOpenApiPathsObject = {
+  "/upload-operations/{id}/cancel": {
+    post: {
+      tags: ["uploads"],
+      summary: "Отменить передачу с сохранением операции для повтора",
+      operationId: "cancelUploadOperation",
+      requestParams: { path: idParamsSchema },
+      responses: {
+        200: {
+          description: "Результат отмены или уже готовый файл",
+          content: json(uploadOperationResponseSchema),
+        },
+        ...apiErrors({ 409: "Операция обрабатывается" }),
+      },
+    },
+  },
   "/upload-operations/{id}": {
     get: {
       tags: ["uploads"],
@@ -91,7 +106,9 @@ export const filesPaths: ZodOpenApiPathsObject = {
       summary: "Зарезервировать файл и получить подписанные ссылки",
       description:
         "Шаг 1 загрузки в обход сервера. До порога составной загрузки — одна ссылка для PUT " +
-        "(strategy = single), после — план и первая пачка ссылок на части (strategy = multipart).",
+        "(strategy = single), после — план и первая пачка ссылок на части (strategy = multipart). " +
+        "Повтор с тем же operationId сохраняет файл и план; готовый результат возвращается со strategy = ready. " +
+        "После удаления результата возвращается 404. Перед новой передачей выясните исход операции.",
       operationId: "presignUpload",
       requestBody: { required: true, content: json(presignUploadSchema) },
       responses: {
@@ -104,6 +121,7 @@ export const filesPaths: ZodOpenApiPathsObject = {
           404: "Директория не найдена",
           413: "Файл больше потолка размера объекта",
           429: "Слишком много незавершённых составных загрузок",
+          409: "Операция обрабатывается или параметры повтора отличаются",
         }),
       },
     },

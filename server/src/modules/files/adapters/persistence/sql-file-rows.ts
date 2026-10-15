@@ -1,3 +1,4 @@
+import { FileNotFoundError } from "../../domain/errors.js";
 import { query } from "../../../../db/pool.js";
 import type {
   FileRows,
@@ -63,8 +64,8 @@ export async function markFileFailed(id: string): Promise<void> {
 }
 
 /** Slots taken by multipart uploads that have neither completed nor been abandoned. */
-export async function countActiveMultipart(): Promise<number> {
-  const { rows } = await query<{ count: number }>(
+export async function countActiveMultipart(execute = query): Promise<number> {
+  const { rows } = await execute<{ count: number }>(
     `select count(*)::int as count
        from files
       where status = 'pending' and upload_id is not null and deleted_at is null`,
@@ -213,7 +214,10 @@ export async function listExpiredPending(
  * "whoever writes the row", not by the scenario that asked for the insert.
  */
 export function createSqlFileRows(bucket: string, execute = query): FileRows {
-  async function insertFile(input: InsertFileInput): Promise<StoredFile> {
+  async function insertFile(
+    input: InsertFileInput,
+    replace = false,
+  ): Promise<StoredFile> {
     const { rows } = await execute<FileRow>(
       `insert into files (
          id, bucket, object_key, directory, original_name, extension,
@@ -221,6 +225,16 @@ export function createSqlFileRows(bucket: string, execute = query): FileRows {
          upload_id, part_size, part_count
        )
        values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+       ${
+         replace
+           ? `on conflict (id) do update set
+         status = excluded.status, upload_source = excluded.upload_source,
+         size_bytes = excluded.size_bytes, etag = excluded.etag,
+         upload_id = excluded.upload_id, part_size = excluded.part_size,
+         part_count = excluded.part_count, updated_at = now()
+         where files.deleted_at is null and files.status <> 'ready'`
+           : ""
+       }
        returning *`,
       [
         input.id,
@@ -240,7 +254,9 @@ export function createSqlFileRows(bucket: string, execute = query): FileRows {
       ],
     );
 
-    return toStoredFile(rows[0]!);
+    if (!rows[0])
+      throw new FileNotFoundError(`File ${input.id} was deleted or completed`);
+    return toStoredFile(rows[0]);
   }
 
   return {
@@ -252,10 +268,11 @@ export function createSqlFileRows(bucket: string, execute = query): FileRows {
       return rows[0]?.deleted ?? false;
     },
     insertFile,
+    reserveFile: (input) => insertFile(input, true),
     findFileById: (id) => findFileById(id, execute),
     markFileReady: (id, values) => markFileReady(id, values, execute),
     markFileFailed,
-    countActiveMultipart,
+    countActiveMultipart: () => countActiveMultipart(execute),
     claimExpiredMultipart,
     softDeleteFile,
     listFiles,

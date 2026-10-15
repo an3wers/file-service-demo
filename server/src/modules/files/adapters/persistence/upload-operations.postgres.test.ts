@@ -1,5 +1,13 @@
 import { randomUUID } from "node:crypto";
-import { beforeAll, afterAll, describe, expect, it, vi } from "vitest";
+import {
+  beforeAll,
+  beforeEach,
+  afterAll,
+  describe,
+  expect,
+  it,
+  vi,
+} from "vitest";
 import { pool } from "../../../../db/pool.js";
 import { migrate } from "../../../../db/migrate.js";
 import { createSqlDirectories } from "./sql-directories.js";
@@ -8,7 +16,10 @@ import { createSqlUploadOperations } from "./sql-upload-operations.js";
 import { createUploadsModule } from "../../application/uploads.js";
 import { createMultipartModule } from "../../application/multipart.js";
 import { createCatalogModule } from "../../application/catalog.js";
-import { buildHarness } from "../../testing/files-module.harness.js";
+import {
+  buildHarness,
+  THREE_PART_SIZE,
+} from "../../testing/files-module.harness.js";
 import { systemClock } from "../../domain/ports/clock.js";
 
 const schema = `operations_test_${randomUUID().replaceAll("-", "")}`;
@@ -19,6 +30,9 @@ beforeAll(async () => {
   await pool.query(`set search_path to ${schema}`);
   pool.options.options = `-c search_path=${schema}`;
   await migrate();
+});
+beforeEach(async () => {
+  await pool.query("truncate files, upload_operations");
 });
 afterAll(async () => {
   if (created) await pool.query(`drop schema ${schema} cascade`);
@@ -171,3 +185,131 @@ describe("операции загрузки в PostgreSQL", () => {
     expect(objectStore.objectKeys()).toHaveLength(1);
   });
 });
+
+describe.each([5, THREE_PART_SIZE])(
+  "прямая операция PostgreSQL размером %i",
+  (size) => {
+    it("сохраняет резервирование, план и подтверждение после перезапуска и удаления", async () => {
+      const previousLimit = pool.options.max ?? 10;
+      pool.options.max = 1;
+      try {
+        const { objectStore } = buildHarness();
+        const upload = { ...input(), size };
+        const first = await assemble(objectStore).createPresignedUpload(upload);
+        const repeated =
+          await assemble(objectStore).createPresignedUpload(upload);
+        expect(repeated).toMatchObject({
+          ...first,
+          expiresAt: expect.any(Date),
+        });
+        if (first.strategy === "multipart") {
+          for (let part = 1; part <= first.partCount; part++)
+            objectStore.uploadPart(first.uploadId, part, Buffer.from("hello"));
+        } else {
+          await objectStore.put(first.key, Buffer.from("hello"), {
+            contentType: "text/plain",
+            contentLength: 5,
+          });
+        }
+        const file = await assemble(objectStore).completeUpload(first.id);
+        expect(await assemble(objectStore).completeUpload(first.id)).toEqual(
+          file,
+        );
+        expect(
+          await assemble(objectStore).getUploadOperation(upload.operationId),
+        ).toEqual({ status: "succeeded", file });
+        expect(
+          await assemble(objectStore).createPresignedUpload(upload),
+        ).toMatchObject({ strategy: "ready", file });
+        const count = await pool.query(
+          "select count(*)::int as count from files where id = $1",
+          [file.id],
+        );
+        expect(count.rows[0].count).toBe(1);
+        await assemble(objectStore).deleteFile(file.id);
+        expect(
+          await assemble(objectStore).getUploadOperation(upload.operationId),
+        ).toEqual({ status: "deleted" });
+        await expect(
+          assemble(objectStore).createPresignedUpload(upload),
+        ).rejects.toMatchObject({ name: "FileNotFoundError" });
+        expect(
+          (
+            await assemble(objectStore).createPresignedUpload({
+              ...upload,
+              operationId: randomUUID(),
+            })
+          ).id,
+        ).not.toBe(file.id);
+      } finally {
+        pool.options.max = previousLimit;
+      }
+    });
+
+    it("не создаёт второе резервирование при конкурентном повторе из другого экземпляра", async () => {
+      const { objectStore } = buildHarness();
+      const upload = { ...input(), size };
+      let release!: () => void;
+      let entered!: () => void;
+      const started = new Promise<void>((resolve) => {
+        entered = resolve;
+      });
+      const waiting = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      async function gate() {
+        entered();
+        await waiting;
+      }
+      if (size === 5) {
+        const original = objectStore.signUpload.bind(objectStore);
+        vi.spyOn(objectStore, "signUpload").mockImplementation(
+          async (key, options) => {
+            await gate();
+            return await original(key, options);
+          },
+        );
+      } else {
+        const original = objectStore.beginMultipart.bind(objectStore);
+        vi.spyOn(objectStore, "beginMultipart").mockImplementation(
+          async (key, options) => {
+            await gate();
+            return await original(key, options);
+          },
+        );
+      }
+      const running = assemble(objectStore).createPresignedUpload(upload);
+      try {
+        await started;
+        expect(
+          await assemble(objectStore).getUploadOperation(upload.operationId),
+        ).toEqual({ status: "processing" });
+        await expect(
+          assemble(objectStore).createPresignedUpload(upload),
+        ).rejects.toMatchObject({ name: "UploadOperationProcessingError" });
+      } finally {
+        release();
+      }
+      const first = await running;
+      expect(
+        (await assemble(objectStore).createPresignedUpload(upload)).id,
+      ).toBe(first.id);
+      expect(objectStore.openUploads()).toHaveLength(size === 5 ? 0 : 1);
+    });
+
+    it("после отмены повторяет загрузку через сервер с прежним файлом", async () => {
+      const { objectStore } = buildHarness();
+      const upload = { ...input(), size };
+      const first = await assemble(objectStore).createPresignedUpload(upload);
+      expect(
+        await assemble(objectStore).cancelUploadOperation(upload.operationId),
+      ).toEqual({ status: "failed" });
+      expect(objectStore.openUploads()).toEqual([]);
+      const file = await assemble(objectStore).uploadThroughServer(upload);
+      expect(file.id).toBe(first.id);
+      expect(
+        await assemble(objectStore).getUploadOperation(upload.operationId),
+      ).toMatchObject({ status: "succeeded", file: { id: first.id } });
+    });
+  },
+);

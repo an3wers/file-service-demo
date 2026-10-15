@@ -286,6 +286,89 @@
         }
       }
     },
+    "/api/files/upload-operations/{id}/cancel": {
+      "post": {
+        "tags": [
+          "uploads"
+        ],
+        "summary": "Отменить передачу с сохранением операции для повтора",
+        "operationId": "cancelUploadOperation",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+            },
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Результат отмены или уже готовый файл",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UploadOperationResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Нет токена доступа или он недействителен",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Операция обрабатывается",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Запрос не прошёл валидацию; details — результат z.flattenError()",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Непредвиденная ошибка сервера",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Хранилище или база данных недоступны",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/files/upload-operations/{id}": {
       "get": {
         "tags": [
@@ -661,7 +744,7 @@
           "uploads"
         ],
         "summary": "Зарезервировать файл и получить подписанные ссылки",
-        "description": "Шаг 1 загрузки в обход сервера. До порога составной загрузки — одна ссылка для PUT (strategy = single), после — план и первая пачка ссылок на части (strategy = multipart).",
+        "description": "Шаг 1 загрузки в обход сервера. До порога составной загрузки — одна ссылка для PUT (strategy = single), после — план и первая пачка ссылок на части (strategy = multipart). Повтор с тем же operationId сохраняет файл и план; готовый результат возвращается со strategy = ready. После удаления результата возвращается 404. Перед новой передачей выясните исход операции.",
         "operationId": "presignUpload",
         "requestBody": {
           "required": true,
@@ -670,6 +753,11 @@
               "schema": {
                 "type": "object",
                 "properties": {
+                  "operationId": {
+                    "type": "string",
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                  },
                   "filename": {
                     "type": "string",
                     "minLength": 1,
@@ -730,6 +818,16 @@
           },
           "404": {
             "description": "Директория не найдена",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Операция обрабатывается или параметры повтора отличаются",
             "content": {
               "application/json": {
                 "schema": {
@@ -1963,6 +2061,9 @@
           },
           {
             "$ref": "#/components/schemas/PresignMultipartResponse"
+          },
+          {
+            "$ref": "#/components/schemas/PresignReadyResponse"
           }
         ],
         "type": "object",
@@ -1970,7 +2071,8 @@
           "propertyName": "strategy",
           "mapping": {
             "single": "#/components/schemas/PresignSingleResponse",
-            "multipart": "#/components/schemas/PresignMultipartResponse"
+            "multipart": "#/components/schemas/PresignMultipartResponse",
+            "ready": "#/components/schemas/PresignReadyResponse"
           }
         }
       },
@@ -2122,6 +2224,37 @@
           "offset",
           "size",
           "url"
+        ],
+        "additionalProperties": false
+      },
+      "PresignReadyResponse": {
+        "type": "object",
+        "properties": {
+          "strategy": {
+            "type": "string",
+            "const": "ready"
+          },
+          "directory": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+          },
+          "key": {
+            "type": "string"
+          },
+          "file": {
+            "$ref": "#/components/schemas/FileDto"
+          }
+        },
+        "required": [
+          "strategy",
+          "directory",
+          "id",
+          "key",
+          "file"
         ],
         "additionalProperties": false
       },

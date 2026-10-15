@@ -115,6 +115,15 @@ export const presignUploadResponseSchema = z
   .discriminatedUnion("strategy", [
     presignSingleResponseSchema,
     presignMultipartResponseSchema,
+    z
+      .object({
+        strategy: z.literal("ready"),
+        directory: z.string(),
+        id: z.uuid(),
+        key: z.string(),
+        file: fileDtoSchema,
+      })
+      .meta({ id: "PresignReadyResponse" }),
   ])
   .meta({ id: "PresignUploadResponse" });
 

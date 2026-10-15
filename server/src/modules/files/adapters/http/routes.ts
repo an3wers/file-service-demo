@@ -93,20 +93,40 @@ export function createFilesRouter({
     },
   );
 
+  filesRouter.post(
+    "/upload-operations/:id/cancel",
+    validateParams(idParamsSchema),
+    async (_req, res) => {
+      const { id } = validatedParams<IdParams>(res);
+      const result = await uploads.cancelUploadOperation(id);
+      res.json(
+        result.status === "succeeded"
+          ? { ...result, file: toFileDto(result.file) }
+          : result,
+      );
+    },
+  );
+
   // Step 1 of the direct-to-storage flow: reserve the key and hand out a signed URL —
   // or, past the multipart threshold, a split plan with the first batch of them.
   filesRouter.post(
     "/presign-upload",
     validateBody(presignUploadSchema),
     async (req, res) => {
-      res.status(201).json(
-        await uploads.createPresignedUpload({
-          filename: req.body.filename,
-          directory: req.body.directory,
-          contentType: req.body.contentType,
-          size: req.body.size,
-        }),
-      );
+      const result = await uploads.createPresignedUpload({
+        operationId: req.body.operationId,
+        filename: req.body.filename,
+        directory: req.body.directory,
+        contentType: req.body.contentType,
+        size: req.body.size,
+      });
+      res
+        .status(201)
+        .json(
+          result.strategy === "ready"
+            ? { ...result, file: toFileDto(result.file) }
+            : result,
+        );
     },
   );
 

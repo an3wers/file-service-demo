@@ -1,12 +1,19 @@
 import type { QueryResultRow } from "pg";
 import { createSqlFileRows } from "./sql-file-rows.js";
 import { databaseError } from "../../../../db/errors.js";
-import { pool } from "../../../../db/pool.js";
+import { pool, query } from "../../../../db/pool.js";
 import type { UploadOperations } from "../../domain/ports/upload-operations.js";
 
 export function createSqlUploadOperations(bucket: string): UploadOperations {
   return {
-    async exclusive(id, run) {
+    async findIdByFileId(fileId) {
+      const { rows } = await query<{ id: string }>(
+        "select id from upload_operations where file_id = $1",
+        [fileId],
+      );
+      return rows[0]?.id ?? null;
+    },
+    async exclusive(id, run, wait = false) {
       const client = await pool.connect().catch((error: unknown) => {
         throw databaseError(error);
       });
@@ -14,7 +21,9 @@ export function createSqlUploadOperations(bucket: string): UploadOperations {
       let releaseError: Error | undefined;
       try {
         const result = await client.query<{ locked: boolean }>(
-          "select pg_try_advisory_lock(hashtextextended($1, 39)) as locked",
+          wait
+            ? "select pg_advisory_lock(hashtextextended($1, 39)), true as locked"
+            : "select pg_try_advisory_lock(hashtextextended($1, 39)) as locked",
           [id],
         );
         locked = result.rows[0]!.locked;
@@ -35,7 +44,7 @@ export function createSqlUploadOperations(bucket: string): UploadOperations {
               original_name: string;
               extension: string;
               content_type: string;
-              size_bytes: number;
+              size_bytes: number | null;
             }>("select * from upload_operations where id = $1", [id]);
             const row = rows[0];
             return row

@@ -12,6 +12,7 @@ import { ApiError } from "@/api/client";
 // Мокается весь модуль API: проверяем оркестровку частей, а не транспорт.
 vi.mock("@/api/files", () => ({
   getUploadOperation: vi.fn(),
+  cancelUploadOperation: vi.fn(),
   uploadViaServer: vi.fn(),
   presignUpload: vi.fn(),
   putToPresignedUrl: vi.fn(),
@@ -24,6 +25,7 @@ vi.mock("@/api/files", () => ({
 
 import {
   getUploadOperation,
+  cancelUploadOperation,
   completeUpload,
   deleteFile,
   fetchPartUrls,
@@ -106,6 +108,7 @@ beforeEach(() => {
   mocked(putPart).mockResolvedValue(undefined);
   mocked(completeUpload).mockResolvedValue(readyFile());
   mocked(deleteFile).mockResolvedValue(undefined);
+  vi.mocked(cancelUploadOperation).mockResolvedValue({ status: "failed" });
 });
 
 afterEach(() => {
@@ -210,8 +213,8 @@ describe("multipart-загрузка", () => {
       createUploadOperation(bigFile(2), "docs", "presigned").start(),
     ).rejects.toThrow(DOMException);
 
-    // Без DELETE загрузка осталась бы открытой: S3 берёт деньги за залитые части.
-    expect(mocked(deleteFile)).toHaveBeenCalledWith("file-1");
+    expect(cancelUploadOperation).toHaveBeenCalledWith(expect.any(String));
+    expect(deleteFile).not.toHaveBeenCalled();
     expect(mocked(completeUpload)).not.toHaveBeenCalled();
   });
 
@@ -479,3 +482,239 @@ describe("ручной повтор серверной операции", () => 
     },
   );
 });
+
+describe.each(["single", "multipart"] as const)(
+  "безопасный повтор прямой загрузки %s",
+  (strategy) => {
+    function reservation() {
+      return strategy === "multipart"
+        ? plan(2)
+        : {
+            strategy: "single" as const,
+            id: "file-1",
+            key: "docs/file-1.bin",
+            directory: "docs",
+            uploadUrl: "https://s3.test/put",
+            expiresAt: "2026-08-30T13:00:00.000Z",
+            requiredHeaders: { "Content-Type": "application/octet-stream" },
+          };
+    }
+
+    it("после потери резервирования выясняет исход и сохраняет идентичность повтора", async () => {
+      vi.mocked(presignUpload)
+        .mockRejectedValueOnce(new Error("Ответ потерян"))
+        .mockResolvedValue(reservation());
+      vi.mocked(getUploadOperation).mockResolvedValue({ status: "failed" });
+      vi.mocked(getMultipartStatus).mockResolvedValue({
+        id: "file-1",
+        uploadId: "upload-1",
+        size: 16,
+        partSize: 8,
+        partCount: 2,
+        uploadedParts: [],
+        uploadedBytes: 0,
+      });
+      const operation = createUploadOperation(bigFile(2), "docs", "presigned");
+      await expect(operation.start()).rejects.toThrow("Ответ потерян");
+      expect(operation.unresolved.value).toBe(true);
+      operation.changeMode("server");
+      expect(operation.mode).toBe("presigned");
+      await operation.retry();
+      expect(presignUpload).toHaveBeenCalledTimes(2);
+      expect(
+        vi.mocked(presignUpload).mock.calls.map(([body]) => body.operationId),
+      ).toEqual([operation.operationId, operation.operationId]);
+      expect(getUploadOperation).toHaveBeenCalledWith(operation.operationId);
+      expect(operation.outcome.value?.status).toBe("succeeded");
+    });
+
+    it("повторяет подтверждение с прежним файлом без резервирования и передачи", async () => {
+      vi.mocked(presignUpload).mockResolvedValue(reservation());
+      vi.mocked(completeUpload)
+        .mockRejectedValueOnce(new Error("Нет связи"))
+        .mockResolvedValue(readyFile());
+      vi.mocked(getUploadOperation).mockResolvedValue({ status: "failed" });
+      const operation = createUploadOperation(bigFile(2), "docs", "presigned");
+      await expect(operation.start()).rejects.toThrow("Нет связи");
+      await operation.retry();
+      expect(presignUpload).toHaveBeenCalledOnce();
+      expect(putToPresignedUrl).toHaveBeenCalledTimes(
+        strategy === "single" ? 1 : 0,
+      );
+      expect(putPart).toHaveBeenCalledTimes(strategy === "multipart" ? 2 : 0);
+      expect(completeUpload).toHaveBeenNthCalledWith(2, "file-1");
+    });
+
+    it.each(["processing", "deleted", "unavailable"])(
+      "не передаёт байты при невыясненном или удалённом результате %s",
+      async (status) => {
+        vi.mocked(presignUpload).mockRejectedValue(new Error("Нет связи"));
+        if (status === "unavailable")
+          vi.mocked(getUploadOperation).mockRejectedValue(
+            new Error("Нет связи"),
+          );
+        else
+          vi.mocked(getUploadOperation).mockResolvedValue({
+            status: status as "processing" | "deleted",
+          });
+        const operation = createUploadOperation(
+          bigFile(2),
+          "docs",
+          "presigned",
+        );
+        await expect(operation.start()).rejects.toThrow();
+        await expect(operation.retry()).rejects.toThrow();
+        expect(presignUpload).toHaveBeenCalledOnce();
+        expect(putPart).not.toHaveBeenCalled();
+        expect(putToPresignedUrl).not.toHaveBeenCalled();
+      },
+    );
+
+    it("узнаёт готовый результат без повторного подтверждения", async () => {
+      vi.mocked(presignUpload).mockResolvedValue(reservation());
+      vi.mocked(completeUpload).mockRejectedValueOnce(
+        new Error("Ответ потерян"),
+      );
+      vi.mocked(getUploadOperation).mockResolvedValue({
+        status: "succeeded",
+        file: readyFile(),
+      });
+      const operation = createUploadOperation(bigFile(2), "docs", "presigned");
+      await expect(operation.start()).rejects.toThrow();
+      await operation.retry();
+      expect(presignUpload).toHaveBeenCalledOnce();
+      expect(completeUpload).toHaveBeenCalledOnce();
+      expect(operation.outcome.value?.status).toBe("succeeded");
+    });
+
+    it("разрешает другой режим только после выяснения неудачи", async () => {
+      vi.mocked(presignUpload).mockRejectedValue(new Error("Ответ потерян"));
+      vi.mocked(getUploadOperation).mockResolvedValue({ status: "failed" });
+      vi.mocked(uploadViaServer).mockResolvedValue(readyFile());
+      const operation = createUploadOperation(bigFile(2), "docs", "presigned");
+      await expect(operation.start()).rejects.toThrow();
+      operation.changeMode("server");
+      expect(operation.mode).toBe("presigned");
+      await operation.checkResult();
+      operation.changeMode("server");
+      await operation.retry();
+      expect(uploadViaServer).toHaveBeenCalledWith(
+        operation.file,
+        "docs",
+        expect.anything(),
+        operation.operationId,
+      );
+    });
+
+    it("вручную возобновляет отменённую операцию в той же строке", async () => {
+      vi.mocked(presignUpload).mockResolvedValue(reservation());
+      const failure = new DOMException("Отменено", "AbortError");
+      if (strategy === "single")
+        vi.mocked(putToPresignedUrl)
+          .mockRejectedValueOnce(failure)
+          .mockResolvedValue(undefined);
+      else
+        vi.mocked(putPart)
+          .mockRejectedValueOnce(failure)
+          .mockResolvedValue(undefined);
+      vi.mocked(getUploadOperation).mockResolvedValue({ status: "failed" });
+      vi.mocked(getMultipartStatus).mockResolvedValue({
+        id: "file-1",
+        uploadId: "upload-1",
+        size: 16,
+        partSize: 8,
+        partCount: 2,
+        uploadedParts: [],
+        uploadedBytes: 0,
+      });
+      const operation = createUploadOperation(bigFile(2), "docs", "presigned");
+      await expect(operation.start()).rejects.toThrow(DOMException);
+      expect(operation.outcome.value?.status).toBe("cancelled");
+      expect(cancelUploadOperation).toHaveBeenCalledWith(operation.operationId);
+      await operation.retry();
+      expect(operation.outcome.value?.status).toBe("succeeded");
+    });
+  },
+);
+
+it("сохраняет части после ошибки и при ручном повторе досылает только недостающие", async () => {
+  vi.useFakeTimers();
+  vi.mocked(presignUpload).mockResolvedValue(plan(2, 2, 1));
+  vi.mocked(putPart).mockImplementation(async (url) => {
+    if (url.endsWith("2")) throw new Error("Нет связи");
+  });
+  vi.mocked(fetchPartUrls).mockResolvedValue({
+    expiresAt: "2026-08-30T13:00:00.000Z",
+    parts: [part(2)],
+  });
+  const operation = createUploadOperation(bigFile(2), "docs", "presigned");
+  const first = expect(operation.start()).rejects.toThrow("Нет связи");
+  await vi.runAllTimersAsync();
+  await first;
+  expect(cancelUploadOperation).not.toHaveBeenCalled();
+  vi.mocked(getUploadOperation).mockResolvedValue({ status: "failed" });
+  vi.mocked(getMultipartStatus).mockResolvedValue({
+    id: "file-1",
+    uploadId: "upload-1",
+    size: 16,
+    partSize: 8,
+    partCount: 2,
+    uploadedParts: [1],
+    uploadedBytes: 8,
+  });
+  vi.mocked(putPart).mockResolvedValue(undefined);
+  const count = vi.mocked(putPart).mock.calls.length;
+  await operation.retry();
+  expect(
+    vi
+      .mocked(putPart)
+      .mock.calls.slice(count)
+      .map(([url]) => url),
+  ).toEqual([part(2).url]);
+  expect(operation.percent.value).toBe(100);
+});
+
+it("показывает общий лимит конкретного файла и ждёт ручного повтора", async () => {
+  vi.mocked(presignUpload).mockRejectedValue(
+    new ApiError(429, "TOO_MANY_ACTIVE_UPLOADS", "Нет свободного места"),
+  );
+  const operation = createUploadOperation(bigFile(2), "docs", "presigned");
+  await expect(operation.start()).rejects.toThrow();
+  expect(operation.unresolved.value).toBe(false);
+  expect(operation.outcome.value).toMatchObject({ status: "failed" });
+  expect(presignUpload).toHaveBeenCalledOnce();
+  expect(getUploadOperation).not.toHaveBeenCalled();
+});
+
+it.each([
+  [409, "UPLOAD_NOT_COMPLETED", "UPLOAD_NOT_COMPLETED"],
+  [503, "STORAGE_UNAVAILABLE", "MULTIPART_NOT_FOUND"],
+])(
+  "после двух ошибок подтверждения %s повторяет передачу отсутствующих байтов",
+  async (status, firstCode, secondCode) => {
+    vi.useFakeTimers();
+    vi.mocked(presignUpload).mockResolvedValue({
+      strategy: "single",
+      id: "file-1",
+      key: "docs/file-1.bin",
+      directory: "docs",
+      uploadUrl: "https://s3.test/put",
+      expiresAt: "2026-08-30T13:00:00.000Z",
+      requiredHeaders: { "Content-Type": "application/octet-stream" },
+    });
+    vi.mocked(completeUpload)
+      .mockRejectedValueOnce(new ApiError(status, firstCode, "Не подтверждено"))
+      .mockRejectedValueOnce(new ApiError(409, secondCode, "Объекта нет"))
+      .mockResolvedValue(readyFile());
+    vi.mocked(getUploadOperation).mockResolvedValue({ status: "failed" });
+    const operation = createUploadOperation(bigFile(2), "docs", "presigned");
+    const failed = expect(operation.start()).rejects.toThrow("Объекта нет");
+    await vi.runAllTimersAsync();
+    await failed;
+    await operation.retry();
+    expect(presignUpload).toHaveBeenCalledTimes(2);
+    expect(putToPresignedUrl).toHaveBeenCalledTimes(2);
+    expect(completeUpload).toHaveBeenCalledTimes(3);
+    expect(operation.outcome.value?.status).toBe("succeeded");
+  },
+);

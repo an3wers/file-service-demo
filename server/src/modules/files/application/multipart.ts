@@ -7,6 +7,7 @@ import type { CompleteOutcome } from "../../../storage/object-store.js";
 import type { Clock } from "../domain/ports/clock.js";
 import type { FileRowsForMultipart } from "../domain/ports/file-rows.js";
 import type { ObjectStoreForMultipart } from "../domain/ports/object-storage.js";
+import type { Reservation } from "../domain/reservation.js";
 import { expiresAt, reserveKey } from "../domain/reservation.js";
 import { partRange, planMultipart } from "../domain/upload-plan.js";
 import type { UploadPlan } from "../domain/upload-plan.js";
@@ -79,7 +80,11 @@ export interface MultipartStatus {
 export interface MultipartModule {
   createMultipartUpload(
     input: MultipartUploadInput,
+    reservation?: Reservation,
+    rows?: FileRowsForMultipart,
   ): Promise<PresignMultipartResult>;
+
+  resumeMultipartUpload(file: StoredFile): Promise<PresignMultipartResult>;
 
   createPartUrls(
     file: StoredFile,
@@ -138,14 +143,18 @@ export function createMultipartModule({
   }
 
   return {
-    async createMultipartUpload(body): Promise<PresignMultipartResult> {
+    async createMultipartUpload(
+      body,
+      reservation,
+      rows = fileRows,
+    ): Promise<PresignMultipartResult> {
       await requireDirectory(directories, normalizeDirectory(body.directory));
       const { id, key, directory, originalName, extension, contentType } =
-        reserveKey(body);
+        reservation ?? reserveKey(body);
 
       // Both of these refuse before anything exists in storage to roll back.
       const plan = planMultipart(body.size, policy.planLimits);
-      const active = await fileRows.countActiveMultipart();
+      const active = await rows.countActiveMultipart();
 
       if (active >= policy.maxActiveUploads) {
         throw new TooManyActiveUploadsError(
@@ -165,7 +174,7 @@ export function createMultipartModule({
           Array.from({ length: batch }, (_, index) => index + 1),
         );
 
-        await fileRows.insertFile({
+        await (reservation ? rows.reserveFile : rows.insertFile)({
           id,
           objectKey: key,
           directory,
@@ -209,6 +218,36 @@ export function createMultipartModule({
 
         throw error;
       }
+    },
+
+    async resumeMultipartUpload(file) {
+      const { key, uploadId, plan } = requireLiveUpload(file);
+      if (!(await objectStore.listParts(key, uploadId)))
+        throw new MultipartNotFoundError(
+          `Object storage has no multipart upload for file ${file.id}`,
+        );
+      const parts = await signParts(
+        key,
+        uploadId,
+        plan,
+        Array.from(
+          { length: Math.min(plan.partCount, policy.partUrlBatch) },
+          (_, index) => index + 1,
+        ),
+      );
+      return {
+        strategy: "multipart",
+        id: file.id,
+        key,
+        directory: file.directory,
+        uploadId,
+        size: plan.size,
+        partSize: plan.partSize,
+        partCount: plan.partCount,
+        maxConcurrency: policy.maxConcurrency,
+        expiresAt: expiresAt(clock, policy.presignPartTtlSeconds),
+        parts,
+      };
     },
 
     async createPartUrls(file, body) {

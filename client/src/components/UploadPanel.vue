@@ -176,15 +176,48 @@ function setMode(value: unknown): void {
             </div>
             <Button
               v-if="
-                row.state.value === 'finished' &&
-                row.operation.value?.mode === 'server' &&
-                row.operation.value.outcome.value?.status === 'failed'
+                (row.state.value === 'finished' ||
+                  row.state.value === 'cancelled') &&
+                row.operation.value &&
+                row.operation.value.outcome.value?.status !== 'succeeded'
               "
               variant="outline"
               size="sm"
-              @click="upload.retry(row)"
-              >Повторить</Button
+              :disabled="row.operation.value?.uploading.value"
+              @click="
+                row.operation.value?.unresolved.value
+                  ? upload.checkResult(row)
+                  : upload.retry(row)
+              "
+              >{{
+                row.operation.value?.unresolved.value
+                  ? "Выяснить результат"
+                  : "Повторить"
+              }}</Button
             >
+            <ToggleGroup
+              v-if="
+                row.state.value === 'finished' &&
+                row.operation.value?.outcome.value?.status !== 'succeeded'
+              "
+              type="single"
+              variant="outline"
+              aria-label="Режим повтора"
+              :disabled="
+                row.operation.value?.unresolved.value ||
+                row.operation.value?.uploading.value
+              "
+              :model-value="row.operation.value?.mode"
+              @update:model-value="
+                (value) => {
+                  if (value === 'server' || value === 'presigned')
+                    row.operation.value?.changeMode(value);
+                }
+              "
+            >
+              <ToggleGroupItem value="server">Через сервер</ToggleGroupItem>
+              <ToggleGroupItem value="presigned">Напрямую в S3</ToggleGroupItem>
+            </ToggleGroup>
             <template
               v-if="row.operation.value && row.state.value === 'active'"
             >

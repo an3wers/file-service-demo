@@ -69,8 +69,18 @@ export function uploadViaServer(
   return apiUpload<FileDto>("/files", form, options);
 }
 
+export function cancelUploadOperation(
+  id: string,
+): Promise<UploadOperationResponse> {
+  return apiRequest<UploadOperationResponse>(
+    `/files/upload-operations/${id}/cancel`,
+    { method: "POST" },
+  );
+}
+
 export function presignUpload(
   body: {
+    operationId?: string;
     filename: string;
     directory?: string;
     contentType?: string;

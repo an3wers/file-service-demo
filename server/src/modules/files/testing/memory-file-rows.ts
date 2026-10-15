@@ -106,6 +106,22 @@ export function createMemoryFileRows(
     row.created_at.getTime() < clock.now().getTime() - ttlHours * HOUR_MS;
 
   const files: FileRowsForFiles & FileRowsForMultipart & FileRowsForCleanup = {
+    async reserveFile(input) {
+      failures.check("reserveFile");
+      const row = rows.get(input.id);
+      if (!row) return await files.insertFile(input);
+      if (!live(row) || row.status === "ready")
+        throw new Error("Файл уже завершён или удалён");
+      row.status = input.status;
+      row.upload_source = input.uploadSource;
+      row.size_bytes = input.sizeBytes;
+      row.etag = input.etag;
+      row.upload_id = input.uploadId ?? null;
+      row.part_size = input.partSize ?? null;
+      row.part_count = input.partCount ?? null;
+      row.updated_at = clock.now();
+      return toStoredFile(copy(row));
+    },
     async insertFile(input: InsertFileInput): Promise<StoredFile> {
       failures.check("insertFile");
 

@@ -5,7 +5,10 @@ import { afterEach, describe, expect, it } from "vitest";
 import { Router } from "express";
 import { createApp } from "../../../../app.js";
 import { createUploadMiddleware } from "../../../../middleware/upload.js";
-import { buildHarness } from "../../testing/files-module.harness.js";
+import {
+  buildHarness,
+  THREE_PART_SIZE,
+} from "../../testing/files-module.harness.js";
 import { createFilesRouter } from "./routes.js";
 import { uploadOperationResponseSchema } from "./responses.js";
 
@@ -73,3 +76,89 @@ describe("HTTP-контракт операций загрузки", () => {
     expect((await fetch(`${base}/upload-operations/invalid`)).status).toBe(422);
   });
 });
+
+describe.each([5, THREE_PART_SIZE])(
+  "HTTP-повтор прямой загрузки размером %i",
+  (size) => {
+    it("сохраняет резервирование, повторяет подтверждение и не воссоздаёт удалённый результат", async () => {
+      const { files, objectStore, fileRows } = buildHarness();
+      const app = createApp({
+        healthRouter: Router(),
+        authRouter: Router(),
+        requireAuth: (_req, _res, next) => next(),
+        filesRouter: createFilesRouter({
+          uploads: files,
+          catalog: files,
+          uploadSingleFile: createUploadMiddleware(1024),
+        }),
+        directoriesRouter: Router(),
+        corsOrigin: [],
+      });
+      await new Promise<void>((resolve, reject) => {
+        server = app.listen(0, "127.0.0.1", (error) =>
+          error ? reject(error) : resolve(),
+        );
+        server.once("error", reject);
+      });
+      const base = `http://127.0.0.1:${(server!.address() as AddressInfo).port}/api/files`;
+      const operationId = randomUUID();
+      const body = { operationId, filename: "report.txt", size };
+      const reserve = (value = body) =>
+        fetch(`${base}/presign-upload`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(value),
+        });
+      const firstResponse = await reserve();
+      expect(firstResponse.status).toBe(201);
+      const first = await firstResponse.json();
+      expect(await (await reserve()).json()).toEqual(first);
+      expect((await reserve({ ...body, filename: "other.txt" })).status).toBe(
+        409,
+      );
+      if (first.strategy === "multipart") {
+        for (let number = 1; number <= first.partCount; number++)
+          objectStore.uploadPart(first.uploadId, number, Buffer.from("hello"));
+      } else
+        await objectStore.put(first.key, Buffer.from("hello"), {
+          contentType: "text/plain",
+          contentLength: 5,
+        });
+      fileRows.failNext("markFileReady", new Error("Подтверждение потеряно"));
+      expect(
+        (await fetch(`${base}/${first.id}/complete`, { method: "POST" }))
+          .status,
+      ).toBe(500);
+      const statusResponse = await fetch(
+        `${base}/upload-operations/${operationId}`,
+      );
+      const status = uploadOperationResponseSchema.parse(
+        await statusResponse.json(),
+      );
+      expect(status).toMatchObject({
+        status: "succeeded",
+        file: { id: first.id },
+      });
+      const confirmed = await fetch(`${base}/${first.id}/complete`, {
+        method: "POST",
+      });
+      expect(confirmed.status).toBe(200);
+      const file = await confirmed.json();
+      expect(await (await reserve()).json()).toMatchObject({
+        strategy: "ready",
+        file,
+      });
+      expect(
+        (await fetch(`${base}/${first.id}`, { method: "DELETE" })).status,
+      ).toBe(204);
+      expect((await reserve()).status).toBe(404);
+      expect(
+        await (await fetch(`${base}/upload-operations/${operationId}`)).json(),
+      ).toEqual({ status: "deleted" });
+      expect(
+        (await (await reserve({ ...body, operationId: randomUUID() })).json())
+          .id,
+      ).not.toBe(first.id);
+    });
+  },
+);

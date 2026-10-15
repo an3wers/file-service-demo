@@ -37,6 +37,7 @@ export interface ReadyValues {
 
 /** Rows as the files module handles them: reserve, confirm, list, delete. */
 export interface FileRowsForFiles {
+  reserveFile(input: InsertFileInput): Promise<StoredFile>;
   isFileDeleted(id: string): Promise<boolean>;
   insertFile(input: InsertFileInput): Promise<StoredFile>;
 
@@ -61,6 +62,7 @@ export interface FileRowsForFiles {
 
 /** Rows as the multipart module handles them: admission, then reservation. */
 export interface FileRowsForMultipart {
+  reserveFile(input: InsertFileInput): Promise<StoredFile>;
   /** Slots taken by uploads that have neither completed nor been abandoned. */
   countActiveMultipart(): Promise<number>;
 

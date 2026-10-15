@@ -96,8 +96,8 @@ function submit(directory: string): void {
 
 function retry(row: UploadRow): void {
   if (
-    row.state.value !== "finished" ||
-    row.operation.value?.mode !== "server" ||
+    (row.state.value !== "finished" && row.state.value !== "cancelled") ||
+    !row.operation.value ||
     row.operation.value.outcome.value?.status === "succeeded"
   )
     return;
@@ -131,6 +131,11 @@ export function useUpload() {
     remove,
     submit,
     retry,
+    async checkResult(row: UploadRow) {
+      await row.operation.value?.checkResult();
+      if (row.operation.value?.outcome.value?.status === "succeeded")
+        useFileBrowser().refresh();
+    },
     cancelRow,
     cancel,
     reset,

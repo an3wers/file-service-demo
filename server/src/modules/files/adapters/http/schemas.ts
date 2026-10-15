@@ -20,6 +20,7 @@ export const uploadFormSchema = uploadBodySchema.extend({
 });
 
 export const presignUploadSchema = z.object({
+  operationId: z.uuid().optional(),
   filename: z.string().min(1).max(512),
   directory: z.string().max(1024).optional(),
   contentType: z.string().min(1).max(255).optional(),
