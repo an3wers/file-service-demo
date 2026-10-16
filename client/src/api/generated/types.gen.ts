@@ -58,7 +58,7 @@ export type UploadOperationResponse = {
     status: 'succeeded';
     file: FileDto;
 } | {
-    status: 'absent' | 'failed' | 'processing' | 'deleted';
+    status: 'absent' | 'failed' | 'processing' | 'deleted' | 'cancelled' | 'discarded';
 };
 
 export type FileDto = {
@@ -327,6 +327,49 @@ export type LogoutResponses = {
 
 export type LogoutResponse = LogoutResponses[keyof LogoutResponses];
 
+export type FailUploadOperationData = {
+    body?: never;
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/files/upload-operations/{id}/fail';
+};
+
+export type FailUploadOperationErrors = {
+    /**
+     * Недопустимый идентификатор
+     */
+    400: ErrorResponse;
+    /**
+     * Нет токена доступа или он недействителен
+     */
+    401: ErrorResponse;
+    /**
+     * Запрос не прошёл валидацию; details — результат z.flattenError()
+     */
+    422: ErrorResponse;
+    /**
+     * Непредвиденная ошибка сервера
+     */
+    500: ErrorResponse;
+    /**
+     * Хранилище или база данных недоступны
+     */
+    503: ErrorResponse;
+};
+
+export type FailUploadOperationError = FailUploadOperationErrors[keyof FailUploadOperationErrors];
+
+export type FailUploadOperationResponses = {
+    /**
+     * Состояние операции после очистки
+     */
+    200: UploadOperationResponse;
+};
+
+export type FailUploadOperationResponse = FailUploadOperationResponses[keyof FailUploadOperationResponses];
+
 export type CancelUploadOperationData = {
     body?: never;
     path: {
@@ -363,7 +406,7 @@ export type CancelUploadOperationError = CancelUploadOperationErrors[keyof Cance
 
 export type CancelUploadOperationResponses = {
     /**
-     * Результат отмены или уже готовый файл
+     * Состояние отмены и очистки
      */
     200: UploadOperationResponse;
 };

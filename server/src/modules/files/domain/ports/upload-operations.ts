@@ -1,6 +1,13 @@
 import type { FileRowsForFiles, FileRowsForMultipart } from "./file-rows.js";
 import type { Reservation } from "../reservation.js";
 
+export type UploadTerminationReason = "cancelled" | "failed" | "deleted";
+
+export interface UploadTermination {
+  reason: UploadTerminationReason;
+  uploadId: string | null;
+}
+
 export interface UploadOperationRecord {
   reservation: Reservation;
   size: number | null;
@@ -13,16 +20,26 @@ export type UploadOperationFileRows = Pick<
   | "insertFile"
   | "reserveFile"
   | "markFileReady"
+  | "markFileFailed"
 > &
   Pick<FileRowsForMultipart, "countActiveMultipart">;
 
 export interface UploadOperationSession {
   fileRows: UploadOperationFileRows;
   read(): Promise<UploadOperationRecord | null>;
+  termination(): Promise<UploadTermination | null>;
+  terminate(reason: UploadTerminationReason, uploadId?: string): Promise<void>;
+  checked(): Promise<void>;
   save(record: UploadOperationRecord): Promise<void>;
 }
 
 export interface UploadOperations {
+  terminate(
+    id: string,
+    reason: UploadTerminationReason,
+    uploadId?: string,
+  ): Promise<void>;
+  listTerminated(): Promise<string[]>;
   findIdByFileId(fileId: string): Promise<string | null>;
   exclusive<T>(
     id: string,

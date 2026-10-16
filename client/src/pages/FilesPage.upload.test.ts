@@ -4,9 +4,7 @@ import { fireEvent, screen, within } from "@testing-library/vue";
 import { createMemoryHistory, createRouter, RouterView } from "vue-router";
 import { createAppRouter } from "@/router";
 import { useAuth } from "@/composables/useAuth";
-import { apiRequest } from "@/api/client";
 import FilesPage from "./FilesPage.vue";
-import UploadPanel from "@/components/UploadPanel.vue";
 import { useUpload } from "@/composables/useUpload";
 import { useFileBrowser } from "@/composables/useFileBrowser";
 import { expireSession, startSession } from "@/api/session";
@@ -60,6 +58,7 @@ async function setup(
     };
   }
   const results = new Map<string, FileDto>();
+  const operations = new Map<string, string>();
   const fetchMock = vi.fn(
     async (url: string, init?: RequestInit): Promise<Response> => {
       if (url === "/api/auth/logout") {
@@ -77,8 +76,15 @@ async function setup(
         });
       if (url === "/api/files/presign-upload") {
         const body = JSON.parse(String(init?.body));
-        const file = result(filenames.indexOf(body.filename), body.directory);
+        const fileId =
+          operations.get(body.operationId) ?? `file-${operations.size + 1}`;
+        const file = {
+          ...result(filenames.indexOf(body.filename), body.directory),
+          id: fileId,
+          key: `${fileId}.txt`,
+        };
         results.set(file.id, file);
+        operations.set(body.operationId, file.id);
         const response =
           options.preparationResponse ??
           json(
@@ -121,12 +127,23 @@ async function setup(
           });
         return response;
       }
+      if (url.endsWith("/fail")) return json({ status: "discarded" });
+      if (url.includes("/upload-operations/") && !url.endsWith("/cancel"))
+        return json({ status: "failed" });
       if (url.endsWith("/cancel")) {
+        const cancel = () => {
+          const fileId = operations.get(url.split("/")[4]!);
+          const index = ready.findIndex((file) => file.id === fileId);
+          if (index !== -1) ready.splice(index, 1);
+          return json({ status: "cancelled" });
+        };
         if (options.delayedDelete)
           return new Promise((resolve) => {
-            deletions.set("file-1", () => resolve(json({ status: "failed" })));
+            deletions.set("file-1", () =>
+              resolve(json({ status: "cancelled" })),
+            );
           });
-        return json({ status: "failed" });
+        return cancel();
       }
       const id = url.split("/")[3]!;
       if (url.endsWith("/complete")) {
@@ -197,6 +214,11 @@ async function setup(
           filenames.indexOf((body.get("file") as File).name),
           String(body.get("directory")),
         );
+        const fileId =
+          operations.get(String(body.get("operationId"))) ??
+          `file-${operations.size + 1}`;
+        this.file = { ...this.file, id: fileId, key: `${fileId}.txt` };
+        operations.set(String(body.get("operationId")), this.file.id);
         this.responseText = JSON.stringify(this.file);
       }
       requests.push(this);
@@ -295,7 +317,10 @@ async function setup(
     router,
     requests,
     fetchMock,
-    confirm: (index = 0) => confirmations.get(`file-${index + 1}`)!(),
+    confirm: (index?: number) =>
+      index === undefined
+        ? [...confirmations.values()][0]!()
+        : confirmations.get(`file-${index + 1}`)!(),
     finishDelete: (index = 0) => deletions.get(`file-${index + 1}`)!(),
     preparations,
     finishLogout: () => finishLogout(),
@@ -316,8 +341,22 @@ beforeEach(() => {
   });
 });
 
-it("предупреждает об уходе с неотправленными и активными файлами и снимает предупреждение после завершения", async () => {
-  const { requests, wrapper } = await setup("server");
+function row(index: number) {
+  return within(screen.getAllByTestId("upload-row")[index]!);
+}
+async function launch(): Promise<void> {
+  await fireEvent.click(screen.getByRole("button", { name: /^Загрузить$/ }));
+  await flushPromises();
+}
+async function loginAgain(): Promise<void> {
+  await fireEvent.update(screen.getByLabelText("Логин"), "operator");
+  await fireEvent.update(screen.getByLabelText("Пароль"), "password");
+  await fireEvent.click(screen.getByRole("button", { name: "Войти" }));
+  await flushPromises();
+}
+
+it("предупреждает об уходе с активными файлами и снимает предупреждение после успеха", async () => {
+  const { requests } = await setup("server");
   const leaving = () => {
     const event = new Event("beforeunload", { cancelable: true });
     window.dispatchEvent(event);
@@ -329,1019 +368,218 @@ it("предупреждает об уходе с неотправленными
   requests[0]!.finish();
   await flushPromises();
   expect(leaving()).toBe(false);
-  wrapper.unmount();
-  expect(leaving()).toBe(false);
-});
-
-it("при отказе от выхода сохраняет выбранные файлы, историю и запуск очереди", async () => {
-  const { requests, fetchMock, choose } = await setup("server", 5, {
-    lifecycle: true,
-  });
-  await launch();
-  await choose([new File(["extra"], "extra.txt")]);
-  await requestLogout();
-  const confirmation = screen.getByRole("alertdialog");
-  expect(confirmation.textContent).toContain("могут завершиться после выхода");
-  await fireEvent.click(
-    within(confirmation).getByRole("button", { name: "Остаться" }),
-  );
-  await flushPromises();
-  expect(fetchMock.mock.calls.some(([url]) => url === "/api/auth/logout")).toBe(
-    false,
-  );
-  requests[0]!.finish();
-  await flushPromises();
-  expect(requests).toHaveLength(4);
-  await fireEvent.click(screen.getByRole("button", { name: /^Загрузки:/ }));
-  await flushPromises();
-  expect(row(0).getByText("Готово")).toBeTruthy();
-  expect(row(5).getByText("Выбран")).toBeTruthy();
-});
-
-it("подтверждённый выход сразу очищает работу и игнорирует поздний ответ обработки до ответа выхода", async () => {
-  const { requests, router, finishLogout, fetchMock } = await setup(
-    "server",
-    5,
-    {
-      lifecycle: true,
-      delayedLogout: true,
-    },
-  );
-  await launch();
-  requests[0]!.upload.dispatchEvent(new Event("load"));
-  await confirmLogout();
-  expect(router.currentRoute.value.name).toBe("login");
-  expect(useUpload().rows.value).toHaveLength(0);
-  expect(requests.every((request) => request.aborted)).toBe(true);
-  requests[0]!.finish();
-  await flushPromises();
-  expect(requests).toHaveLength(3);
-  expect(useUpload().rows.value).toHaveLength(0);
-  await loginAgain();
-  expect(fetchMock.mock.calls.some(([url]) => url === "/api/auth/login")).toBe(
-    false,
-  );
-  finishLogout();
-  await flushPromises();
-  expect(router.currentRoute.value.name).toBe("files");
 });
 
 it.each(["server", "presigned", "multipart"] as const)(
-  "истечение сессии сохраняет строки и причину, а вход позволяет вручную выяснить исходную операцию без дубликата: %s",
+  "показывает единое состояние загрузки %s и подтверждает успех только после ответа",
   async (source) => {
-    const {
-      requests,
-      router,
-      fetchMock,
-      confirm,
-      file,
-      choose,
-      operationId: sentOperationId,
-    } = await setup(source, 5, { lifecycle: true });
+    const { requests, confirm } = await setup(source);
+    expect(row(0).getByText("Выбран")).toBeTruthy();
     await launch();
-    await choose([new File(["extra"], "extra.txt")]);
-    const initialRequests = requests.length;
-    const operationId = sentOperationId();
-    if (source === "server")
-      requests[0]!.upload.dispatchEvent(new Event("load"));
-    else {
-      requests
-        .slice(0, source === "multipart" ? 2 : 1)
-        .forEach((request) => request.finish());
+    expect(row(0).getByText("Загружается")).toBeTruthy();
+    expect(
+      row(0).queryByRole("button", { name: "Выяснить результат" }),
+    ).toBeNull();
+    expect(row(0).queryByRole("button", { name: "Через сервер" })).toBeNull();
+    for (const request of requests) {
+      request.progress(
+        source === "server" ? 100 : 8 / requests.length,
+        source === "server" ? 100 : 8 / requests.length,
+      );
+      request.upload.dispatchEvent(new Event("load"));
+    }
+    await flushPromises();
+    expect(row(0).getByText("99%")).toBeTruthy();
+    expect(
+      row(0).getByRole("button", { name: "Отменить" }).hasAttribute("disabled"),
+    ).toBe(false);
+    requests.forEach((request) => request.finish());
+    await flushPromises();
+    if (source !== "server") {
+      expect(row(0).getByText("Загружается")).toBeTruthy();
+      expect(row(0).queryByText("Успех")).toBeNull();
+      confirm();
       await flushPromises();
     }
-    expireSession();
-    await flushPromises();
-    expect(router.currentRoute.value.name).toBe("login");
-    expect(useUpload().rows.value).toHaveLength(6);
-    if (source === "server") requests[0]!.finish();
-    else confirm();
-    await flushPromises();
-    expect(requests).toHaveLength(initialRequests);
-    await loginAgain();
-    expect(router.currentRoute.value.name).toBe("files");
-    expect(requests).toHaveLength(initialRequests);
-    await fireEvent.click(screen.getByRole("button", { name: /^Загрузки:/ }));
-    await flushPromises();
-    expect(row(0).getByRole("alert").textContent).toContain("сессия истекла");
-    expect(row(3).getByRole("alert").textContent).toContain("сессия истекла");
-    expect(row(5).getByRole("alert").textContent).toContain("сессия истекла");
-    expect(row(0).queryByText("Готово")).toBeNull();
-    fetchMock.mockResolvedValueOnce(json({ status: "succeeded", file }));
-    await fireEvent.click(
-      row(0).getByRole("button", { name: "Выяснить результат" }),
-    );
-    await flushPromises();
-    expect(
-      fetchMock.mock.calls.some(
-        ([url]) => url === `/api/files/upload-operations/${operationId}`,
-      ),
-    ).toBe(true);
-    expect(row(0).getByText("Готово")).toBeTruthy();
-    expect(requests).toHaveLength(initialRequests);
+    expect(row(0).getByText("Успех")).toBeTruthy();
+    expect(row(0).getByText("100%")).toBeTruthy();
   },
 );
 
-async function requestLogout(): Promise<void> {
+it.each(["server", "presigned", "multipart"] as const)(
+  "сохраняет предел трёх передач %s и запускает очередь после подтверждения",
+  async (source) => {
+    const { requests, confirm } = await setup(source, 5);
+    const parts = source === "multipart" ? 2 : 1;
+    await launch();
+    expect(requests).toHaveLength(3 * parts);
+    expect(screen.getAllByText("Загружается")).toHaveLength(5);
+    requests.slice(0, parts).forEach((request) => request.finish());
+    await flushPromises();
+    if (source !== "server") {
+      expect(requests).toHaveLength(3 * parts);
+      confirm(0);
+      await flushPromises();
+    }
+    expect(requests).toHaveLength(4 * parts);
+    requests.slice(parts).forEach((request) => request.finish());
+    await flushPromises();
+    if (source !== "server") {
+      confirm(1);
+      await flushPromises();
+    }
+    expect(requests).toHaveLength(5 * parts);
+    requests.slice(4 * parts).forEach((request) => request.finish());
+    await flushPromises();
+    if (source !== "server") {
+      confirm(2);
+      confirm(3);
+      confirm(4);
+      await flushPromises();
+    }
+    expect(screen.getAllByText("Успех")).toHaveLength(5);
+  },
+);
+
+it("автоматически восстанавливает потерянный ответ без кнопки проверки", async () => {
+  const { requests, fetchMock, file } = await setup("server");
+  const original = fetchMock.getMockImplementation()!;
+  fetchMock.mockImplementation((url, init) =>
+    url.includes("/upload-operations/")
+      ? Promise.resolve(json({ status: "succeeded", file }))
+      : original(url, init),
+  );
+  await launch();
+  requests[0]!.dispatchEvent(new Event("error"));
+  await flushPromises();
+  expect(row(0).getByText("Успех")).toBeTruthy();
+  expect(requests).toHaveLength(1);
+  expect(row(0).queryByRole("button", { name: "Повторить" })).toBeNull();
+});
+
+it("повторяет подтверждённую ошибку одной кнопкой и сохраняет родительский выбор режима", async () => {
+  const { requests, confirm, fetchMock } = await setup("server");
+  await launch();
+  const originalId = (requests[0]!.body as FormData).get("operationId");
+  requests[0]!.fail();
+  await flushPromises();
+  expect(row(0).getByText("Ошибка загрузки")).toBeTruthy();
+  expect(row(0).queryByRole("button", { name: "Напрямую в S3" })).toBeNull();
+  await fireEvent.click(screen.getByRole("button", { name: "Напрямую в S3" }));
+  await fireEvent.click(row(0).getByRole("button", { name: "Повторить" }));
+  await flushPromises();
+  const body = JSON.parse(
+    String(
+      fetchMock.mock.calls.find(([url]) => url.endsWith("presign-upload"))![1]
+        ?.body,
+    ),
+  );
+  expect(body.operationId).not.toBe(originalId);
+  requests[1]!.finish();
+  await flushPromises();
+  confirm();
+  await flushPromises();
+  expect(row(0).getByText("Успех")).toBeTruthy();
+});
+
+it.each(["server", "presigned", "multipart"] as const)(
+  "подтверждает отмену %s на сервере и сохраняет остальные строки",
+  async (source) => {
+    const { requests, fetchMock } = await setup(source, 5);
+    await launch();
+    const id = useUpload().rows.value[0]!.operationId;
+    await fireEvent.click(row(0).getByRole("button", { name: "Отменить" }));
+    await flushPromises();
+    expect(row(0).getByText("Отменено")).toBeTruthy();
+    expect(
+      fetchMock.mock.calls.some(
+        ([url]) => url === `/api/files/upload-operations/${id}/cancel`,
+      ),
+    ).toBe(true);
+    expect(
+      requests
+        .slice(source === "multipart" ? 2 : 1)
+        .every((request) => !request.aborted),
+    ).toBe(true);
+    expect(row(0).getByRole("button", { name: "Повторить" })).toBeTruthy();
+  },
+);
+
+it("не скрывает удаляемую строку, пока сервер не подтвердит очистку", async () => {
+  const { requests, fetchMock } = await setup("server");
+  await launch();
+  requests[0]!.fail();
+  await flushPromises();
+  let finish!: () => void;
+  fetchMock.mockResolvedValueOnce(json({ status: "processing" }));
+  await fireEvent.click(row(0).getByRole("button", { name: "Удалить" }));
+  await flushPromises();
+  expect(row(0).getByText("Загружается")).toBeTruthy();
+  expect(useUpload().rows.value[0]!.intent.value).toBe("remove");
+  fetchMock.mockImplementationOnce(
+    () =>
+      new Promise((resolve) => {
+        finish = () => resolve(json({ status: "cancelled" }));
+      }),
+  );
+  useUpload().resume();
+  await flushPromises();
+  finish();
+  await flushPromises();
+  expect(screen.queryAllByTestId("upload-row")).toHaveLength(0);
+});
+
+it.each(["server", "presigned", "multipart"] as const)(
+  "после повторного входа автоматически проверяет операцию %s без новой передачи",
+  async (source) => {
+    const { requests, fetchMock, file, router } = await setup(source, 1, {
+      lifecycle: true,
+    });
+    await launch();
+    const count = requests.length;
+    expireSession();
+    await flushPromises();
+    expect(router.currentRoute.value.name).toBe("login");
+    expect(useUpload().rows.value).toHaveLength(1);
+    const original = fetchMock.getMockImplementation()!;
+    fetchMock.mockImplementation((url, init) =>
+      url.includes("/upload-operations/")
+        ? Promise.resolve(json({ status: "succeeded", file }))
+        : original(url, init),
+    );
+    await loginAgain();
+    await fireEvent.click(screen.getByRole("button", { name: /^Загрузки:/ }));
+    await flushPromises();
+    expect(row(0).getByText("Успех")).toBeTruthy();
+    expect(requests).toHaveLength(count);
+  },
+);
+
+it("после выхода сохраняет историю и игнорирует поздний ответ до следующего входа", async () => {
+  const { requests, router } = await setup("server", 1, { lifecycle: true });
+  await launch();
   await fireEvent.click(screen.getByRole("button", { name: "Отмена" }));
   await flushPromises();
   await fireEvent.click(screen.getByRole("button", { name: "Выйти" }));
-}
-
-async function confirmLogout(): Promise<void> {
-  await requestLogout();
+  await flushPromises();
   await fireEvent.click(
     within(screen.getByRole("alertdialog")).getByRole("button", {
       name: "Выйти",
     }),
   );
   await flushPromises();
-}
-
-async function loginAgain(): Promise<void> {
-  await fireEvent.update(screen.getByLabelText("Логин"), "operator");
-  await fireEvent.update(screen.getByLabelText("Пароль"), "password");
-  await fireEvent.click(screen.getByRole("button", { name: "Войти" }));
-  await flushPromises();
-}
-
-it.each(["server", "presigned"] as const)(
-  "после отказа продления останавливает передачу и вручную повторяет исходную операцию после выяснения неудачи: %s",
-  async (source) => {
-    const {
-      requests,
-      fetchMock,
-      operationId: sentOperationId,
-    } = await setup(source, 5, { lifecycle: true });
-    await launch();
-    const operationId = sentOperationId();
-    fetchMock.mockResolvedValueOnce(
-      json({ error: { code: "UNAUTHORIZED", message: "" } }, 401),
-    );
-    fetchMock.mockResolvedValueOnce(
-      json({ error: { code: "SESSION_EXPIRED", message: "" } }, 401),
-    );
-    await expect(apiRequest("/files/session-probe")).rejects.toMatchObject({
-      status: 401,
-    });
-    await flushPromises();
-    expect(requests.every((request) => request.aborted)).toBe(true);
-    await loginAgain();
-    await fireEvent.click(screen.getByRole("button", { name: /^Загрузки:/ }));
-    await flushPromises();
-    expect(row(0).getByRole("alert").textContent).toContain("сессия истекла");
-    expect(requests).toHaveLength(3);
-    fetchMock.mockResolvedValueOnce(json({ status: "processing" }));
-    await fireEvent.click(
-      row(0).getByRole("button", { name: "Выяснить результат" }),
-    );
-    await flushPromises();
-    expect(row(0).getByRole("alert").textContent).toContain(
-      "Не удалось выяснить результат",
-    );
-    expect(requests).toHaveLength(3);
-    fetchMock.mockResolvedValueOnce(json({ status: "failed" }));
-    await fireEvent.click(
-      row(0).getByRole("button", { name: "Выяснить результат" }),
-    );
-    await flushPromises();
-    fetchMock.mockResolvedValueOnce(json({ status: "failed" }));
-    await fireEvent.click(row(0).getByRole("button", { name: "Повторить" }));
-    await flushPromises();
-    expect(
-      fetchMock.mock.calls.some(
-        ([url]) => url === `/api/files/upload-operations/${operationId}`,
-      ),
-    ).toBe(true);
-    expect(requests).toHaveLength(4);
-    const retriedId = sentOperationId(3);
-    expect(retriedId).toBe(operationId);
-  },
-);
-
-it.each(["подтверждение", "отмена"])(
-  "после выхода и нового входа игнорирует поздний ответ: %s",
-  async (stage) => {
-    const { requests, confirm, finishDelete, fetchMock, router } = await setup(
-      "presigned",
-      5,
-      {
-        lifecycle: true,
-        delayedDelete: true,
-      },
-    );
-    await launch();
-    if (stage === "подтверждение") requests[0]!.finish();
-    else
-      await fireEvent.click(row(0).getByRole("button", { name: "Отменить" }));
-    await flushPromises();
-    await confirmLogout();
-    expect(router.currentRoute.value.name).toBe("login");
-    await loginAgain();
-    const callsAfterLogin = fetchMock.mock.calls.length;
-    if (stage === "подтверждение") confirm();
-    else finishDelete();
-    await flushPromises();
-    expect(useUpload().rows.value).toHaveLength(0);
-    expect(requests).toHaveLength(3);
-    expect(fetchMock.mock.calls).toHaveLength(callsAfterLogin);
-    await fireEvent.click(
-      screen.getByRole("button", { name: "Загрузить файл" }),
-    );
-    await flushPromises();
-    expect(screen.queryAllByTestId("upload-row")).toHaveLength(0);
-  },
-);
-
-it("требует подтверждения выхода при выбранных файлах до запуска и очищает выбор", async () => {
-  const { requests, router } = await setup("server", 1, { lifecycle: true });
-  await confirmLogout();
   expect(router.currentRoute.value.name).toBe("login");
-  await loginAgain();
-  await fireEvent.click(screen.getByRole("button", { name: "Загрузить файл" }));
-  await flushPromises();
-  expect(screen.queryAllByTestId("upload-row")).toHaveLength(0);
-  expect(requests).toHaveLength(0);
-});
-
-it("игнорирует поздний отказ сессии при резервировании после выхода и повторного входа", async () => {
-  const { preparations, requests, router } = await setup("presigned", 5, {
-    lifecycle: true,
-    delayedPreparation: true,
-    ignorePreparationAbort: true,
-    preparationResponse: json(
-      { error: { code: "SESSION_EXPIRED", message: "" } },
-      401,
-    ),
-  });
-  await launch();
-  await confirmLogout();
-  await loginAgain();
-  preparations.forEach((finish) => finish());
-  await flushPromises();
-  expect(router.currentRoute.value.name).toBe("files");
-  expect(requests).toHaveLength(0);
-  expect(useUpload().rows.value).toHaveLength(0);
-});
-
-it("выходит после завершения без подтверждения и очищает историю готовых файлов", async () => {
-  const { requests, router } = await setup("server", 1, { lifecycle: true });
-  await launch();
+  expect(useUpload().rows.value).toHaveLength(1);
   requests[0]!.finish();
   await flushPromises();
-  await requestLogout();
-  await flushPromises();
-  expect(screen.queryByRole("alertdialog")).toBeNull();
-  expect(router.currentRoute.value.name).toBe("login");
-  expect(useUpload().rows.value).toHaveLength(0);
-});
-
-it("предупреждает при выяснении результата и не восстанавливает историю его поздним ответом после выхода", async () => {
-  const { requests, fetchMock, file } = await setup("server", 1, {
-    lifecycle: true,
-  });
-  await launch();
-  requests[0]!.fail();
-  await flushPromises();
-  let finishCheck = () => {};
-  fetchMock.mockImplementationOnce(
-    () =>
-      new Promise((resolve) => {
-        finishCheck = () => resolve(json({ status: "succeeded", file }));
-      }),
-  );
-  await fireEvent.click(
-    row(0).getByRole("button", { name: "Выяснить результат" }),
-  );
-  await flushPromises();
-  const leaving = new Event("beforeunload", { cancelable: true });
-  window.dispatchEvent(leaving);
-  expect(leaving.defaultPrevented).toBe(true);
-  await confirmLogout();
-  await loginAgain();
-  const callsAfterLogin = fetchMock.mock.calls.length;
-  finishCheck();
-  await flushPromises();
-  expect(useUpload().rows.value).toHaveLength(0);
-  expect(fetchMock.mock.calls).toHaveLength(callsAfterLogin);
-});
-
-it.each([200, 401])(
-  "игнорирует поздний ответ продления старой сессии после выхода и нового входа: %s",
-  async (status) => {
-    const { fetchMock, requests, router } = await setup("presigned", 5, {
-      lifecycle: true,
-    });
-    let finishRenewal = () => {};
-    let rejected = false;
-    let renewing = false;
-    const original = fetchMock.getMockImplementation()!;
-    fetchMock.mockImplementation((url, init) => {
-      if (url === "/api/files/presign-upload" && !rejected) {
-        rejected = true;
-        return Promise.resolve(
-          json({ error: { code: "UNAUTHORIZED", message: "" } }, 401),
-        );
-      }
-      if (url === "/api/auth/refresh")
-        return new Promise((resolve) => {
-          renewing = true;
-          finishRenewal = () =>
-            resolve(
-              status === 401
-                ? json({ error: { code: "SESSION_EXPIRED", message: "" } }, 401)
-                : json({
-                    accessToken: "old-session-token",
-                    expiresIn: 3600,
-                    user: { login: "old-session" },
-                  }),
-            );
-        });
-      return original(url, init);
-    });
-    await launch();
-    expect(renewing).toBe(true);
-    await requestLogout();
-    await fireEvent.click(
-      within(screen.getByRole("alertdialog")).getByRole("button", {
-        name: "Выйти",
-      }),
-    );
-    await flushPromises();
-    await loginAgain();
-    expect(
-      fetchMock.mock.calls.some(([url]) => url === "/api/auth/login"),
-    ).toBe(false);
-    finishRenewal();
-    await flushPromises();
-    expect(router.currentRoute.value.name).toBe("files");
-    expect(screen.getByText("operator")).toBeTruthy();
-    expect(requests).toHaveLength(2);
-    expect(useUpload().rows.value).toHaveLength(0);
-  },
-);
-
-describe("загрузка одного файла через страницу", () => {
-  it.each([
-    { source: "server", name: "через сервер" },
-    { source: "presigned", name: "одной прямой передачей" },
-    { source: "multipart", name: "составной загрузкой" },
-  ] as const)(
-    "явно запускает файл $name и показывает его после ответа сервера",
-    async ({ source }) => {
-      const { wrapper, requests, fetchMock, confirm, file } =
-        await setup(source);
-      expect(requests).toHaveLength(0);
-      expect(
-        fetchMock.mock.calls.some(([url]) => url.includes("presign-upload")),
-      ).toBe(false);
-
-      await fireEvent.click(
-        screen.getByRole("button", { name: /^Загрузить$/ }),
-      );
-      await flushPromises();
-      expect(requests).toHaveLength(source === "multipart" ? 2 : 1);
-      expect(screen.getByText("Отправляем…")).toBeTruthy();
-      expect(
-        (screen.getByRole("button", { name: "Отменить" }) as HTMLButtonElement)
-          .disabled,
-      ).toBe(false);
-      const operation = useUpload().rows.value[0]!.operation.value!;
-
-      if (source === "multipart") {
-        expect(requests.map((request) => (request.body as Blob).size)).toEqual([
-          4, 4,
-        ]);
-        requests[0]!.progress(2, 4);
-        requests[1]!.progress(2, 4);
-        await flushPromises();
-        expect(screen.getByText("50%")).toBeTruthy();
-      }
-      for (const request of requests) {
-        request.progress(
-          source === "server" ? 100 : (request.body as Blob).size,
-          source === "server" ? 100 : (request.body as Blob).size,
-        );
-        request.upload.dispatchEvent(new Event("load"));
-      }
-      await flushPromises();
-      expect(screen.getByText("100%")).toBeTruthy();
-      expect(operation.outcome.value).toBeNull();
-
-      if (source !== "multipart") {
-        expect(screen.getByText("Обрабатываем…")).toBeTruthy();
-        expect(
-          (
-            screen.getByRole("button", {
-              name: "Отменить",
-            }) as HTMLButtonElement
-          ).disabled,
-        ).toBe(true);
-      }
-      if (source !== "server") {
-        requests.forEach((request) => request.finish());
-        await flushPromises();
-        expect(screen.getByText("Подтверждаем…")).toBeTruthy();
-        expect(
-          (
-            screen.getByRole("button", {
-              name: "Отменить",
-            }) as HTMLButtonElement
-          ).disabled,
-        ).toBe(true);
-        expect(operation.outcome.value).toBeNull();
-      }
-
-      wrapper.getComponent(UploadPanel).vm.$emit("update:open", false);
-      await flushPromises();
-      expect(screen.queryByRole("dialog")).toBeNull();
-      expect(operation.uploading.value).toBe(true);
-      await fireEvent.click(
-        screen.getByRole("button", { name: "Загрузить файл" }),
-      );
-      await flushPromises();
-      expect(useUpload().rows.value[0]!.operation.value).toBe(operation);
-      expect(
-        screen.getByText(
-          source === "server" ? "Обрабатываем…" : "Подтверждаем…",
-        ),
-      ).toBeTruthy();
-
-      if (source === "server") requests[0]!.finish();
-      else confirm();
-      await flushPromises();
-
-      expect(wrapper.text()).toContain("report.txt");
-      expect(screen.getByRole("dialog")).toBeTruthy();
-      expect(operation.outcome.value).toEqual({ status: "succeeded", file });
-      expect(operation.uploading.value).toBe(false);
-    },
-  );
-
-  it("отменяет передачу через сервер и сохраняет отмену после закрытия диалога", async () => {
-    const { requests } = await setup("server");
-    await fireEvent.click(screen.getByRole("button", { name: /^Загрузить$/ }));
-    await flushPromises();
-    const operation = useUpload().rows.value[0]!.operation.value!;
-    const abort = vi.spyOn(requests[0]!, "abort");
-
-    await fireEvent.click(screen.getByRole("button", { name: "Отменить" }));
-    await flushPromises();
-    expect(abort).toHaveBeenCalledOnce();
-    expect(operation.outcome.value).toEqual({ status: "cancelled" });
-    expect(operation.uploading.value).toBe(false);
-    await fireEvent.click(screen.getByRole("button", { name: "Отмена" }));
-    await flushPromises();
-    expect(screen.queryByRole("dialog")).toBeNull();
-    expect(useUpload().rows.value[0]!.operation.value?.outcome.value).toEqual({
-      status: "cancelled",
-    });
-  });
-});
-
-describe("очередь загрузки файлов", () => {
-  it("запускает пять файлов по порядку с пределом трёх и удерживает место при обработке", async () => {
-    const { requests } = await setup("server", 5);
-    expect(requests).toHaveLength(0);
-    await fireEvent.click(screen.getByRole("button", { name: /^Загрузить$/ }));
-    await flushPromises();
-    expect(requests).toHaveLength(3);
-    expect(screen.getAllByText("Ожидает")).toHaveLength(2);
-    requests[0]!.upload.dispatchEvent(new Event("load"));
-    await flushPromises();
-    expect(requests).toHaveLength(3);
-    requests[1]!.finish();
-    await flushPromises();
-    expect(requests).toHaveLength(4);
-    expect((requests[3]!.body as FormData).get("file")).toHaveProperty(
-      "name",
-      "report-4.txt",
-    );
-    requests[0]!.finish();
-    await flushPromises();
-    expect(requests).toHaveLength(5);
-    expect((requests[4]!.body as FormData).get("file")).toHaveProperty(
-      "name",
-      "report-5.txt",
-    );
-    requests.slice(2).forEach((request) => request.finish());
-    await flushPromises();
-    expect(screen.getAllByText("Готово")).toHaveLength(5);
-    expect(screen.getByRole("dialog")).toBeTruthy();
-    expect(
-      screen
-        .getAllByTestId("upload-row")
-        .map((row) => row.querySelector("[data-file-name]")?.textContent),
-    ).toEqual(
-      Array.from({ length: 5 }, (_, index) => `report-${index + 1}.txt`),
-    );
-  });
-});
-
-function row(index: number) {
-  return within(screen.getAllByTestId("upload-row")[index]!);
-}
-async function launch() {
-  await fireEvent.click(screen.getByRole("button", { name: /^Загрузить$/ }));
-  await flushPromises();
-}
-
-describe("независимость операций очереди", () => {
-  it("удаляет файл из выбора без отправки остальных", async () => {
-    const { requests } = await setup("server", 5);
-    await fireEvent.click(row(1).getByRole("button", { name: "Убрать" }));
-    expect(screen.getAllByTestId("upload-row")).toHaveLength(4);
-    expect(requests).toHaveLength(0);
-    await launch();
-    expect(
-      requests.map((request) => (request.body as FormData).get("file")),
-    ).toEqual([
-      expect.objectContaining({ name: "report-1.txt" }),
-      expect.objectContaining({ name: "report-3.txt" }),
-      expect.objectContaining({ name: "report-4.txt" }),
-    ]);
-    requests.forEach((request) => request.finish());
-    await flushPromises();
-    requests[3]!.finish();
-    await flushPromises();
-  });
-
-  it("сохраняет место во время отмены и продолжает очередь после независимой ошибки", async () => {
-    const { requests, wrapper } = await setup("server", 5, {
-      delayedAbort: true,
-    });
-    await launch();
-    requests[2]!.progress(2, 8);
-    await fireEvent.click(row(3).getByRole("button", { name: "Отменить" }));
-    await fireEvent.click(row(0).getByRole("button", { name: "Отменить" }));
-    expect(row(0).getByText("Отменяем…")).toBeTruthy();
-    expect(row(3).getByText("Отменено")).toBeTruthy();
-    expect(requests).toHaveLength(3);
-    expect(row(2).getByText("25%")).toBeTruthy();
-    requests[1]!.fail();
-    await flushPromises();
-    expect(row(1).getByRole("alert").textContent).toContain(
-      "Не удалось выяснить результат",
-    );
-    expect(requests).toHaveLength(4);
-    expect((requests[3]!.body as FormData).get("file")).toHaveProperty(
-      "name",
-      "report-5.txt",
-    );
-    requests[0]!.finishAbort();
-    await flushPromises();
-    expect(row(0).getByText("Отменено")).toBeTruthy();
-    expect(requests).toHaveLength(4);
-    requests.slice(2).forEach((request) => request.finish());
-    await flushPromises();
-    wrapper.getComponent(UploadPanel).vm.$emit("update:open", false);
-    await flushPromises();
-    await fireEvent.click(
-      screen.getByRole("button", { name: "Загрузить файл" }),
-    );
-    await flushPromises();
-    expect(row(1).getByRole("alert").textContent).toContain(
-      "Не удалось выяснить результат",
-    );
-    expect(row(2).getByText("Готово")).toBeTruthy();
-    expect(row(4).getByText("Готово")).toBeTruthy();
-  });
-
-  it.each([
-    { source: "presigned", name: "прямой передачи", parts: 1 },
-    { source: "multipart", name: "составной загрузки", parts: 2 },
-  ] as const)(
-    "удерживает три места на подтверждении $name",
-    async ({ source, parts }) => {
-      const { requests, confirm, fetchMock } = await setup(source, 5);
-      expect(
-        fetchMock.mock.calls.some(([url]) => url.includes("presign-upload")),
-      ).toBe(false);
-      await launch();
-      expect(requests).toHaveLength(3 * parts);
-      for (const request of requests) {
-        request.progress(8 / parts, 8 / parts);
-        request.finish();
-      }
-      await flushPromises();
-      expect(screen.getAllByText("Подтверждаем…")).toHaveLength(3);
-      expect(screen.queryByText("Готово")).toBeNull();
-      expect(requests).toHaveLength(3 * parts);
-      expect(
-        (row(0).getByRole("button", { name: "Отменить" }) as HTMLButtonElement)
-          .disabled,
-      ).toBe(true);
-      confirm(1);
-      await flushPromises();
-      expect(requests).toHaveLength(4 * parts);
-      expect(requests[3 * parts]!.url).toContain("file-4");
-      confirm(0);
-      await flushPromises();
-      expect(requests).toHaveLength(5 * parts);
-      expect(requests[4 * parts]!.url).toContain("file-5");
-      requests.slice(3 * parts).forEach((request) => request.finish());
-      await flushPromises();
-      confirm(2);
-      confirm(3);
-      confirm(4);
-      await flushPromises();
-      expect(screen.getAllByText("Готово")).toHaveLength(5);
-    },
-  );
-
-  it("удерживает место составной загрузки до ответа об отмене и не отменяет соседние части", async () => {
-    const { requests, finishDelete, confirm } = await setup("multipart", 5, {
-      delayedDelete: true,
-    });
-    await launch();
-    expect(requests).toHaveLength(6);
-    await fireEvent.click(row(0).getByRole("button", { name: "Отменить" }));
-    await flushPromises();
-    expect(row(0).getByText("Отменяем…")).toBeTruthy();
-    expect(requests).toHaveLength(6);
-    requests[2]!.progress(2, 4);
-    requests[3]!.progress(2, 4);
-    await flushPromises();
-    expect(row(1).getByText("50%")).toBeTruthy();
-    finishDelete();
-    await flushPromises();
-    expect(row(0).getByText("Отменено")).toBeTruthy();
-    expect(requests).toHaveLength(8);
-    expect(requests[6]!.url).toContain("file-4");
-    requests.slice(2).forEach((request) => request.finish());
-    await flushPromises();
-    confirm(1);
-    await flushPromises();
-    expect(requests).toHaveLength(10);
-    requests.slice(8).forEach((request) => request.finish());
-    await flushPromises();
-    confirm(2);
-    confirm(3);
-    confirm(4);
-    await flushPromises();
-    expect(screen.getAllByText("Готово")).toHaveLength(4);
-  });
-
-  it("учитывает подготовку в пределе трёх и отменяет только выбранную подготовку", async () => {
-    const { requests, fetchMock, preparations, confirm } = await setup(
-      "presigned",
-      5,
-      { delayedPreparation: true },
-    );
-    await launch();
-    expect(preparations).toHaveLength(3);
-    expect(requests).toHaveLength(0);
-    await fireEvent.click(row(0).getByRole("button", { name: "Отменить" }));
-    await flushPromises();
-    expect(preparations).toHaveLength(4);
-    expect(row(0).getByText("Отменено")).toBeTruthy();
-    expect(
-      fetchMock.mock.calls
-        .filter(([url]) => url.includes("presign-upload"))
-        .map(([, init]) => JSON.parse(String(init?.body)).filename),
-    ).toEqual(["report-1.txt", "report-2.txt", "report-3.txt", "report-4.txt"]);
-    preparations.slice(1).forEach((finish) => finish());
-    await flushPromises();
-    requests.forEach((request) => request.finish());
-    await flushPromises();
-    confirm(1);
-    await flushPromises();
-    preparations[4]!();
-    await flushPromises();
-    requests[3]!.finish();
-    await flushPromises();
-    confirm(2);
-    confirm(3);
-    confirm(4);
-    await flushPromises();
-  });
-
-  it("сохраняет назначение ожидающих файлов при навигации и обновляет текущее представление после близких успехов", async () => {
-    const { requests, router, fetchMock, ready } = await setup("server", 5, {
-      url: "/?directory=docs",
-    });
-    await launch();
-    await fireEvent.click(screen.getByRole("button", { name: "Отмена" }));
-    await flushPromises();
-    await router.push("/?directory=other&search=report&page=2");
-    await flushPromises();
-    const browser = useFileBrowser();
-    browser.sort.value = "original_name";
-    browser.order.value = "asc";
-    const listingRequests: {
-      resolve: (response: Response) => void;
-      items: FileDto[];
-      signal?: AbortSignal | null;
-    }[] = [];
-    const originalFetch = fetchMock.getMockImplementation()!;
-    fetchMock.mockImplementation((url, init) => {
-      if (url.startsWith("/api/files?"))
-        return new Promise((resolve) =>
-          listingRequests.push({
-            resolve,
-            items: ready.filter((file) => file.directory === "other"),
-            signal: init?.signal,
-          }),
-        );
-      return originalFetch(url, init);
-    });
-    requests[1]!.finish();
-    await flushPromises();
-    requests[0]!.finish();
-    await flushPromises();
-    expect(requests).toHaveLength(5);
-    expect(
-      requests.every(
-        (request) => (request.body as FormData).get("directory") === "docs",
-      ),
-    ).toBe(true);
-    expect(listingRequests).toHaveLength(2);
-    expect(listingRequests[0]!.signal?.aborted).toBe(true);
-    const latest = listingRequests[1]!;
-    latest.resolve(
-      json({
-        items: latest.items,
-        pagination: { page: 2, limit: 20, total: 2, totalPages: 2 },
-      }),
-    );
-    await flushPromises();
-    const stale = listingRequests[0]!;
-    stale.resolve(
-      json({
-        items: stale.items,
-        pagination: { page: 2, limit: 20, total: 1, totalPages: 2 },
-      }),
-    );
-    await flushPromises();
-    expect(browser.files.value).toEqual([]);
-    expect(screen.queryByRole("button", { name: "report-1.txt" })).toBeNull();
-    const query = new URL(
-      fetchMock.mock.calls
-        .filter(([url]) => url.startsWith("/api/files?"))
-        .at(-1)![0],
-      "http://localhost",
-    ).searchParams;
-    expect(Object.fromEntries(query)).toMatchObject({
-      directory: "other",
-      search: "report",
-      page: "2",
-      sort: "original_name",
-      order: "asc",
-    });
-    expect(router.currentRoute.value.fullPath).toBe(
-      "/?directory=other&search=report&page=2",
-    );
-    expect(browser.directory.value).toBe("other");
-    expect(browser.search.value).toBe("report");
-    expect(browser.page.value).toBe(2);
-    expect(browser.sort.value).toBe("original_name");
-    expect(browser.order.value).toBe("asc");
-    fetchMock.mockImplementation(originalFetch);
-    requests.slice(2).forEach((request) => request.finish());
-    await flushPromises();
-    expect(browser.files.value).toHaveLength(0);
-    await fireEvent.click(screen.getByRole("button", { name: /^Загрузки:/ }));
-    await flushPromises();
-    expect(screen.getAllByText("docs · Через сервер")).toHaveLength(5);
-    expect(screen.getAllByText("Готово")).toHaveLength(5);
-  });
-});
-
-describe("ручной повтор строки загрузки", () => {
-  it("показывает потерянный результат без повторной передачи и выбора файла", async () => {
-    const { requests, fetchMock, file } = await setup("server");
-    await launch();
-    const operationId = (requests[0]!.body as FormData).get("operationId");
-    requests[0]!.dispatchEvent(new Event("error"));
-    await flushPromises();
-    expect(row(0).getByRole("alert").textContent).toContain(
-      "Не удалось выяснить результат",
-    );
-    fetchMock.mockResolvedValueOnce(json({ status: "succeeded", file }));
-    await fireEvent.click(
-      row(0).getByRole("button", { name: "Выяснить результат" }),
-    );
-    await flushPromises();
-    expect(fetchMock).toHaveBeenCalledWith(
-      `/api/files/upload-operations/${operationId}`,
-      expect.anything(),
-    );
-    expect(requests).toHaveLength(1);
-    expect(row(0).getByText("Готово")).toBeTruthy();
-    expect(row(0).queryByRole("button", { name: "Повторить" })).toBeNull();
-  });
-
-  it("передаёт тот же выбранный файл после подтверждённой неудачи", async () => {
-    const { requests, fetchMock } = await setup("server");
-    await launch();
-    const first = requests[0]!.body as FormData;
-    requests[0]!.fail();
-    await flushPromises();
-    fetchMock.mockResolvedValueOnce(json({ status: "failed" }));
-    await fireEvent.click(
-      row(0).getByRole("button", { name: "Выяснить результат" }),
-    );
-    await flushPromises();
-    fetchMock.mockResolvedValueOnce(json({ status: "failed" }));
-    await fireEvent.click(row(0).getByRole("button", { name: "Повторить" }));
-    await flushPromises();
-    expect(requests).toHaveLength(2);
-    const second = requests[1]!.body as FormData;
-    expect(second.get("operationId")).toBe(first.get("operationId"));
-    expect(second.get("file")).toEqual(first.get("file"));
-    requests[1]!.finish();
-    await flushPromises();
-    expect(row(0).getByText("Готово")).toBeTruthy();
-  });
-});
-
-describe.each(["presigned", "multipart"] as const)(
-  "ручной повтор прямой строки %s",
-  (source) => {
-    it("повторяет только подтверждение уже отправленного файла", async () => {
-      const { requests, fetchMock, confirm } = await setup(source);
-      const original = fetchMock.getMockImplementation()!;
-      let failed = false;
-      fetchMock.mockImplementation(async (url, init) => {
-        if (url.endsWith("/complete") && !failed) {
-          failed = true;
-          throw new Error("Ответ потерян");
-        }
-        if (url.includes("/upload-operations/"))
-          return json({ status: "failed" });
-        return original(url, init);
-      });
-      await launch();
-      requests.forEach((request) => request.finish());
-      await flushPromises();
-      const count = requests.length;
-      expect(
-        row(0).getByRole("button", { name: "Выяснить результат" }),
-      ).toBeTruthy();
-      expect(
-        row(0)
-          .getByRole("button", { name: "Через сервер" })
-          .hasAttribute("disabled"),
-      ).toBe(true);
-      await fireEvent.click(
-        row(0).getByRole("button", { name: "Выяснить результат" }),
-      );
-      await flushPromises();
-      await fireEvent.click(row(0).getByRole("button", { name: "Повторить" }));
-      await flushPromises();
-      expect(requests).toHaveLength(count);
-      expect(
-        fetchMock.mock.calls.filter(
-          ([url]) => url === "/api/files/presign-upload",
-        ),
-      ).toHaveLength(1);
-      confirm();
-      await flushPromises();
-      expect(row(0).getByText("Готово")).toBeTruthy();
-    });
-
-    it("выясняет потерянное резервирование и показывает готовый файл в прежней строке", async () => {
-      const { requests, fetchMock, file } = await setup(source);
-      fetchMock.mockRejectedValueOnce(new Error("Ответ потерян"));
-      await launch();
-      const first = JSON.parse(
-        String(
-          fetchMock.mock.calls.find(
-            ([url]) => url === "/api/files/presign-upload",
-          )![1]?.body,
-        ),
-      );
-      expect(first.operationId).toEqual(expect.any(String));
-      fetchMock.mockResolvedValueOnce(json({ status: "succeeded", file }));
-      await fireEvent.click(
-        row(0).getByRole("button", { name: "Выяснить результат" }),
-      );
-      await flushPromises();
-      expect(requests).toHaveLength(0);
-      expect(screen.getAllByTestId("upload-row")).toHaveLength(1);
-      expect(row(0).getByText("Готово")).toBeTruthy();
-      expect(fetchMock).toHaveBeenCalledWith(
-        `/api/files/upload-operations/${first.operationId}`,
-        expect.anything(),
-      );
-    });
-  },
-);
-
-describe("фоновая загрузка", () => {
-  it.each(["server", "presigned", "multipart"] as const)(
-    "продолжает несколько загрузок %s на всех стадиях и сохраняет общий успех",
-    async (source) => {
-      const { requests, preparations, confirm } = await setup(source, 2, {
-        delayedPreparation: source !== "server",
-      });
-      async function hideAndReopen(stage: string) {
-        expect(row(0).getByText(stage)).toBeTruthy();
-        await fireEvent.click(screen.getByRole("button", { name: "Отмена" }));
-        await flushPromises();
-        expect(screen.queryByRole("dialog")).toBeNull();
-        expect(
-          screen.getByRole("button", { name: /^Загрузки:/ }).textContent,
-        ).toContain("Загружаются: 2");
-        await fireEvent.click(
-          screen.getByRole("button", { name: /^Загрузки:/ }),
-        );
-        await flushPromises();
-        expect(screen.getAllByTestId("upload-row")).toHaveLength(2);
-        expect(row(0).getByText(stage)).toBeTruthy();
-      }
-      await launch();
-      if (source !== "server") {
-        await hideAndReopen("Готовим ссылку…");
-        preparations.forEach((finish) => finish());
-        await flushPromises();
-      }
-      await hideAndReopen("Отправляем…");
-      requests.forEach((request) => {
-        request.progress(8, 8);
-        request.upload.dispatchEvent(new Event("load"));
-      });
-      await flushPromises();
-      if (source !== "multipart") await hideAndReopen("Обрабатываем…");
-      if (source !== "server") {
-        requests.forEach((request) => request.finish());
-        await flushPromises();
-        await hideAndReopen("Подтверждаем…");
-      }
-      await fireEvent.click(screen.getByRole("button", { name: "Отмена" }));
-      await flushPromises();
-      if (source === "server") requests.forEach((request) => request.finish());
-      else {
-        confirm(0);
-        confirm(1);
-      }
-      await flushPromises();
-      expect(screen.queryByRole("dialog")).toBeNull();
-      const indicator = screen.getByRole("button", { name: /^Загрузки:/ });
-      expect(indicator.textContent).toContain("Загружаются: 0");
-      expect(indicator.textContent).toContain("Готовы: 2");
-      expect(screen.getByRole("button", { name: "report-1.txt" })).toBeTruthy();
-      expect(screen.getByRole("button", { name: "report-2.txt" })).toBeTruthy();
-      await fireEvent.click(indicator);
-      await flushPromises();
-      expect(screen.getAllByText("Готово")).toHaveLength(2);
-      expect(screen.getByRole("dialog")).toBeTruthy();
-    },
-  );
-
-  it("показывает сводку и сохраняет ошибки, отмены и результаты после закрытия", async () => {
-    const { requests } = await setup("server", 5);
-    expect(screen.getByLabelText("Сводка загрузок").textContent).toContain(
-      "Ожидают: 5",
-    );
-    await launch();
-    expect(screen.getByLabelText("Сводка загрузок").textContent).toContain(
-      "Загружаются: 3",
-    );
-    await fireEvent.click(row(4).getByRole("button", { name: "Отменить" }));
-    await fireEvent.click(screen.getByRole("button", { name: "Отмена" }));
-    await flushPromises();
-    expect(screen.queryByRole("dialog")).toBeNull();
-    const indicator = screen.getByRole("button", { name: /^Загрузки:/ });
-    expect(indicator.textContent).toContain("Ожидают: 1");
-    expect(indicator.textContent).toContain("Отменены: 1");
-    requests[0]!.progress(2, 8);
-    requests[1]!.fail();
-    requests[2]!.finish();
-    await flushPromises();
-    expect(requests).toHaveLength(4);
-    expect(indicator.textContent).toContain("Загружаются: 2");
-    expect(indicator.textContent).toContain("Готовы: 1");
-    expect(indicator.textContent).toContain("Ошибки: 1");
-    await fireEvent.click(indicator);
-    await flushPromises();
-    expect(row(0).getByText("25%")).toBeTruthy();
-    expect(row(1).getByRole("alert").textContent).toContain(
-      "Не удалось выяснить результат",
-    );
-    expect(row(2).getByText("Готово")).toBeTruthy();
-    expect(row(4).getByText("Отменено")).toBeTruthy();
-    requests[0]!.finish();
-    requests[3]!.finish();
-    await flushPromises();
-    expect(screen.getByRole("dialog")).toBeTruthy();
-    expect(screen.getByLabelText("Сводка загрузок").textContent).toContain(
-      "Готовы: 3",
-    );
-    await fireEvent.click(screen.getByRole("button", { name: "Отмена" }));
-    await flushPromises();
-    await fireEvent.click(screen.getByRole("button", { name: /^Загрузки:/ }));
-    await flushPromises();
-    expect(screen.getAllByTestId("upload-row")).toHaveLength(5);
-    expect(row(1).getByRole("alert")).toBeTruthy();
-    expect(screen.getAllByText("Готово")).toHaveLength(3);
-  });
+  expect(useUpload().rows.value[0]!.status.value).toBe("failed");
+  expect(useUpload().rows.value[0]!.result.value).toBeNull();
 });
 
 describe("итерации выбора файлов", () => {
   it("проверяет полное имя и размер без времени изменения и помнит удалённую строку до конца итерации", async () => {
     const { choose, requests } = await setup("server", 2);
-    await fireEvent.click(row(0).getByRole("button", { name: "Убрать" }));
+    await fireEvent.click(row(0).getByRole("button", { name: "Удалить" }));
     await choose([
       new File(["contents"], "report-1.txt", { lastModified: 1 }),
       new File(["contents"], "report-2.txt", { lastModified: 2 }),
@@ -1356,7 +594,7 @@ describe("итерации выбора файлов", () => {
     await flushPromises();
     await choose([new File(["contents"], "report-1.txt")]);
     expect(screen.getAllByTestId("upload-row")).toHaveLength(4);
-    expect(screen.getAllByText("Готово")).toHaveLength(3);
+    expect(screen.getAllByText("Успех")).toHaveLength(3);
     expect(row(3).getByText("Выбран")).toBeTruthy();
   });
 });
@@ -1399,157 +637,6 @@ describe("добавление в работающую очередь", () => {
   });
 });
 
-describe("порядок повторных попыток", () => {
-  it("ставит повтор ошибочной строки после ожидающих файлов и сохраняет строки", async () => {
-    const { requests, fetchMock } = await setup("server", 5);
-    const original = fetchMock.getMockImplementation()!;
-    fetchMock.mockImplementation((url, init) =>
-      url.includes("/upload-operations/")
-        ? Promise.resolve(json({ status: "failed" }))
-        : original(url, init),
-    );
-    await launch();
-    requests[0]!.fail();
-    await flushPromises();
-    await fireEvent.click(
-      row(0).getByRole("button", { name: "Выяснить результат" }),
-    );
-    await flushPromises();
-    await fireEvent.click(row(0).getByRole("button", { name: "Повторить" }));
-    requests[1]!.finish();
-    await flushPromises();
-    expect((requests[4]!.body as FormData).get("file")).toMatchObject({
-      name: "report-5.txt",
-    });
-    requests[2]!.finish();
-    await flushPromises();
-    expect((requests[5]!.body as FormData).get("file")).toMatchObject({
-      name: "report-1.txt",
-    });
-    expect((requests[5]!.body as FormData).get("operationId")).toBe(
-      (requests[0]!.body as FormData).get("operationId"),
-    );
-    expect(
-      screen
-        .getAllByTestId("upload-row")
-        .map((element) => within(element).getByText(/report-/).textContent),
-    ).toEqual([
-      "report-1.txt",
-      "report-2.txt",
-      "report-3.txt",
-      "report-4.txt",
-      "report-5.txt",
-    ]);
-    requests.slice(3).forEach((request) => request.finish());
-    await flushPromises();
-  });
-
-  it("ставит отменённую строку в конец очереди без нового выбора", async () => {
-    const { requests } = await setup("server", 5);
-    await launch();
-    await fireEvent.click(row(3).getByRole("button", { name: "Отменить" }));
-    await fireEvent.click(
-      row(3).getByRole("button", { name: "Загрузить снова" }),
-    );
-    requests[0]!.finish();
-    await flushPromises();
-    expect((requests[3]!.body as FormData).get("file")).toMatchObject({
-      name: "report-5.txt",
-    });
-    requests[1]!.finish();
-    await flushPromises();
-    expect((requests[4]!.body as FormData).get("file")).toMatchObject({
-      name: "report-4.txt",
-    });
-    requests.slice(2).forEach((request) => request.finish());
-    await flushPromises();
-    expect(screen.getAllByText("Готово")).toHaveLength(5);
-  });
-});
-
-describe("исправление режима и размера", () => {
-  it("показывает ошибку размера в строке, загружает остальные и повторяет большой файл напрямую с прежней операцией", async () => {
-    const { requests, choose, fetchMock, confirm } = await setup("server");
-    const large = new File(["contents"], "large.txt");
-    Object.defineProperty(large, "size", { value: 50 * 1024 * 1024 + 1 });
-    await choose([large]);
-    expect(row(1).getByRole("alert").textContent).toContain("50 МБ");
-    await launch();
-    expect(requests).toHaveLength(1);
-    expect(row(1).getByText("Ошибка")).toBeTruthy();
-    const operationId = useUpload().rows.value[1]!.operationId;
-    expect(
-      (
-        screen.getAllByRole("button", {
-          name: "Напрямую в S3",
-        })[0] as HTMLButtonElement
-      ).disabled,
-    ).toBe(true);
-    requests[0]!.finish();
-    await flushPromises();
-    await fireEvent.click(
-      screen.getAllByRole("button", { name: "Напрямую в S3" })[0]!,
-    );
-    expect(row(0).getByText("Корень · Через сервер")).toBeTruthy();
-    await fireEvent.click(row(1).getByRole("button", { name: "Повторить" }));
-    await flushPromises();
-    const body = JSON.parse(
-      String(
-        fetchMock.mock.calls.find(([url]) => url.endsWith("presign-upload"))![1]
-          ?.body,
-      ),
-    );
-    expect(body.operationId).toBe(operationId);
-    expect(body.filename).toBe("large.txt");
-    expect(requests).toHaveLength(2);
-    requests[1]!.finish();
-    await flushPromises();
-    confirm(1);
-    await flushPromises();
-    expect(screen.getAllByText("Готово")).toHaveLength(2);
-  });
-
-  it("сохраняет режим неизвестного результата и меняет его только после подтверждения неудачи", async () => {
-    const { requests, fetchMock, confirm } = await setup("server");
-    await launch();
-    const first = requests[0]!.body as FormData;
-    requests[0]!.fail();
-    await flushPromises();
-    await fireEvent.click(
-      screen.getAllByRole("button", { name: "Напрямую в S3" })[0]!,
-    );
-    expect(row(0).getByText("Корень · Через сервер")).toBeTruthy();
-    expect(
-      (
-        row(0).getByRole("button", {
-          name: "Напрямую в S3",
-        }) as HTMLButtonElement
-      ).disabled,
-    ).toBe(true);
-    fetchMock.mockResolvedValueOnce(json({ status: "failed" }));
-    await fireEvent.click(
-      row(0).getByRole("button", { name: "Выяснить результат" }),
-    );
-    await flushPromises();
-    fetchMock.mockResolvedValueOnce(json({ status: "failed" }));
-    await fireEvent.click(row(0).getByRole("button", { name: "Повторить" }));
-    await flushPromises();
-    const body = JSON.parse(
-      String(
-        fetchMock.mock.calls.find(([url]) => url.endsWith("presign-upload"))![1]
-          ?.body,
-      ),
-    );
-    expect(body.operationId).toBe(first.get("operationId"));
-    expect(row(0).getByText("Корень · Напрямую в S3")).toBeTruthy();
-    requests[1]!.finish();
-    await flushPromises();
-    confirm();
-    await flushPromises();
-    expect(row(0).getByText("Готово")).toBeTruthy();
-  });
-});
-
 describe("границы итерации и последующие добавления", () => {
   it("запускает добавленный файл во время работы только после кнопки и начинает новую операцию того же файла после завершения", async () => {
     const { requests, choose } = await setup("server");
@@ -1562,7 +649,7 @@ describe("границы итерации и последующие добавл
     requests.forEach((request) => request.finish());
     await flushPromises();
     await choose([new File(["contents"], "report.txt", { lastModified: 0 })]);
-    expect(screen.getAllByText("Готово")).toHaveLength(2);
+    expect(screen.getAllByText("Успех")).toHaveLength(2);
     expect(row(2).getByText("Выбран")).toBeTruthy();
     expect(requests).toHaveLength(2);
     await launch();
@@ -1571,12 +658,12 @@ describe("границы итерации и последующие добавл
     );
     requests[2]!.finish();
     await flushPromises();
-    expect(screen.getAllByText("Готово")).toHaveLength(3);
+    expect(screen.getAllByText("Успех")).toHaveLength(3);
   });
 
   it("разрешает новый выбор после удаления всех неотправленных строк", async () => {
     const { choose } = await setup("server");
-    await fireEvent.click(row(0).getByRole("button", { name: "Убрать" }));
+    await fireEvent.click(row(0).getByRole("button", { name: "Удалить" }));
     await choose([new File(["contents"], "report.txt")]);
     expect(screen.getAllByTestId("upload-row")).toHaveLength(1);
     expect(row(0).getByText("Выбран")).toBeTruthy();
@@ -1598,7 +685,6 @@ describe("границы итерации и последующие добавл
     await fireEvent.click(
       screen.getAllByRole("button", { name: "Напрямую в S3" })[0]!,
     );
-    fetchMock.mockResolvedValueOnce(json({ status: "failed" }));
     await fireEvent.click(row(0).getByRole("button", { name: "Повторить" }));
     await flushPromises();
     const body = JSON.parse(
@@ -1607,38 +693,12 @@ describe("границы итерации и последующие добавл
           ?.body,
       ),
     );
-    expect(body.operationId).toBe(operationId);
+    expect(body.operationId).not.toBe(operationId);
     requests[1]!.finish();
     await flushPromises();
     confirm();
     await flushPromises();
-    expect(row(0).getByText("Готово")).toBeTruthy();
-  });
-});
-
-describe("завершённая итерация", () => {
-  it("не открывает завершённую итерацию повтором старой строки и разрешает независимый выбор того же файла", async () => {
-    const { requests, choose, fetchMock } = await setup("server");
-    const original = fetchMock.getMockImplementation()!;
-    fetchMock.mockImplementation((url, init) =>
-      url.includes("/upload-operations/")
-        ? Promise.resolve(json({ status: "failed" }))
-        : original(url, init),
-    );
-    await launch();
-    requests[0]!.fail();
-    await flushPromises();
-    await fireEvent.click(
-      row(0).getByRole("button", { name: "Выяснить результат" }),
-    );
-    await flushPromises();
-    await fireEvent.click(row(0).getByRole("button", { name: "Повторить" }));
-    await flushPromises();
-    await choose([new File(["contents"], "report.txt")]);
-    expect(screen.getAllByTestId("upload-row")).toHaveLength(2);
-    expect(row(1).getByText("Выбран")).toBeTruthy();
-    requests[1]!.finish();
-    await flushPromises();
+    expect(row(0).getByText("Успех")).toBeTruthy();
   });
 });
 
@@ -1649,41 +709,37 @@ describe("удаление готового файла из загрузок", (
     await flushPromises();
     requests[0]!.finish();
     await flushPromises();
-    await fireEvent.click(
-      screen.getByRole("button", { name: "Удалить из хранилища" }),
-    );
+    await fireEvent.click(screen.getByRole("button", { name: "Удалить" }));
     const confirmation = screen.getByRole("alertdialog");
     expect(
       within(confirmation).getByText("Удалить файл из хранилища?"),
     ).toBeTruthy();
     expect(confirmation.textContent).toContain("report.txt");
     expect(
-      fetchMock.mock.calls.filter(([, init]) => init?.method === "DELETE"),
+      fetchMock.mock.calls.filter(([url]) => url.endsWith("/cancel")),
     ).toHaveLength(0);
     await fireEvent.click(
       within(confirmation).getByRole("button", { name: "Отмена" }),
     );
     await flushPromises();
-    expect(screen.getByText("Готово")).toBeTruthy();
-    await fireEvent.click(
-      screen.getByRole("button", { name: "Удалить из хранилища" }),
-    );
+    expect(screen.getByText("Успех")).toBeTruthy();
+    await fireEvent.click(screen.getByRole("button", { name: "Удалить" }));
     await fireEvent.click(
       within(screen.getByRole("alertdialog")).getByRole("button", {
         name: "Удалить",
       }),
     );
     await flushPromises();
-    expect(screen.queryByText("Готово")).toBeNull();
+    expect(screen.queryByText("Успех")).toBeNull();
     expect(
-      fetchMock.mock.calls.filter(([, init]) => init?.method === "DELETE"),
+      fetchMock.mock.calls.filter(([url]) => url.endsWith("/cancel")),
     ).toHaveLength(1);
     expect(useFileBrowser().files.value).toHaveLength(0);
     wrapper.unmount();
   });
 });
 
-it.each(["модалка", "список"])(
+it.each(["список"])(
   "сохраняет строку при ошибке, разрешает повтор и блокирует повторное подтверждение: %s",
   async (origin) => {
     const { requests, fetchMock, finishDelete, deleteResponses } = await setup(
@@ -1709,7 +765,7 @@ it.each(["модалка", "список"])(
     }
     await fireEvent.click(
       screen.getByRole("button", {
-        name: origin === "список" ? "Удалить файл" : "Удалить из хранилища",
+        name: origin === "список" ? "Удалить файл" : "Удалить",
       }),
     );
     const confirm = within(screen.getByRole("alertdialog")).getByRole(
@@ -1733,7 +789,7 @@ it.each(["модалка", "список"])(
     finishDelete();
     await flushPromises();
     expect(screen.queryByRole("alertdialog")).toBeNull();
-    expect(screen.queryByText("Готово")).toBeNull();
+    expect(screen.queryByText("Успех")).toBeNull();
     expect(useFileBrowser().files.value).toHaveLength(0);
   },
 );
@@ -1760,7 +816,7 @@ it.each(["модалка", "список"])(
     }
     await fireEvent.click(
       screen.getByRole("button", {
-        name: origin === "список" ? "Удалить файл" : "Удалить из хранилища",
+        name: origin === "список" ? "Удалить файл" : "Удалить",
       }),
     );
     await fireEvent.click(
@@ -1770,7 +826,7 @@ it.each(["модалка", "список"])(
     );
     await flushPromises();
     expect(screen.queryByRole("alertdialog")).toBeNull();
-    expect(screen.queryByText("Готово")).toBeNull();
+    expect(screen.queryByText("Успех")).toBeNull();
     expect(useFileBrowser().files.value).toHaveLength(0);
   },
 );
@@ -1804,7 +860,7 @@ it("удаляет из списка сохранённый результат �
   ]);
   await fireEvent.click(screen.getByRole("button", { name: /^Загрузки:/ }));
   await flushPromises();
-  expect(screen.getAllByText("Готово")).toHaveLength(1);
+  expect(screen.getAllByText("Успех")).toHaveLength(1);
   expect(
     within(screen.getByRole("dialog")).getAllByText("report.txt"),
   ).toHaveLength(1);
@@ -1818,9 +874,7 @@ it("не разрешает повторно выбрать удалённый �
   await choose([other]);
   requests[0]!.finish();
   await flushPromises();
-  await fireEvent.click(
-    screen.getByRole("button", { name: "Удалить из хранилища" }),
-  );
+  await fireEvent.click(row(0).getByRole("button", { name: "Удалить" }));
   await fireEvent.click(
     within(screen.getByRole("alertdialog")).getByRole("button", {
       name: "Удалить",
@@ -1829,7 +883,7 @@ it("не разрешает повторно выбрать удалённый �
   await flushPromises();
   await choose([new File(["contents"], file.name)]);
   expect(within(screen.getByRole("dialog")).queryByText(file.name)).toBeNull();
-  await fireEvent.click(screen.getByRole("button", { name: "Убрать" }));
+  await fireEvent.click(screen.getByRole("button", { name: "Удалить" }));
   await choose([new File(["contents"], file.name)]);
   expect(within(screen.getByRole("dialog")).getByText(file.name)).toBeTruthy();
 });
@@ -1848,16 +902,14 @@ it.each(["ошибка", "отмена"])(
     ]);
     await fireEvent.click(screen.getByRole("button", { name: /^Загрузить$/ }));
     await flushPromises();
-    expect(screen.queryByRole("button", { name: "Убрать строку" })).toBeNull();
+    expect(row(1).queryByRole("button", { name: "Удалить" })).toBeNull();
     if (outcome === "ошибка") requests[1]!.fail();
     else
       await fireEvent.click(
         screen.getAllByRole("button", { name: "Отменить" })[0]!,
       );
     await flushPromises();
-    await fireEvent.click(
-      screen.getByRole("button", { name: "Убрать строку" }),
-    );
+    await fireEvent.click(row(1).getByRole("button", { name: "Удалить" }));
     await choose([new File(["contents"], file.name)]);
     expect(
       within(screen.getByRole("dialog")).getAllByText(file.name),
@@ -1876,3 +928,31 @@ it.each(["ошибка", "отмена"])(
     ).toHaveLength(2);
   },
 );
+
+it("после подтверждения удаления готового файла повторяет очистку автоматически и сохраняет строку до ответа", async () => {
+  const { requests, fetchMock } = await setup("server");
+  await launch();
+  requests[0]!.finish();
+  await flushPromises();
+  const original = fetchMock.getMockImplementation()!;
+  let attempts = 0;
+  fetchMock.mockImplementation((url, init) => {
+    if (url.endsWith("/cancel") && attempts++ === 0)
+      return Promise.reject(new Error("Нет связи"));
+    return original(url, init);
+  });
+  await fireEvent.click(row(0).getByRole("button", { name: "Удалить" }));
+  await fireEvent.click(
+    within(screen.getByRole("alertdialog")).getByRole("button", {
+      name: "Удалить",
+    }),
+  );
+  await flushPromises();
+  expect(screen.queryByRole("alertdialog")).toBeNull();
+  expect(row(0).getByText("Загружается")).toBeTruthy();
+  expect(row(0).queryByRole("button", { name: "Повторить" })).toBeNull();
+  window.dispatchEvent(new Event("online"));
+  await flushPromises();
+  expect(screen.queryAllByTestId("upload-row")).toHaveLength(0);
+  expect(useFileBrowser().files.value).toHaveLength(0);
+});

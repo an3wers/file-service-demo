@@ -206,7 +206,7 @@ describe("multipart-загрузка", () => {
     expect(mocked(completeUpload)).toHaveBeenCalledOnce();
   });
 
-  it("отменяет загрузку в хранилище, когда часть не долетела", async () => {
+  it("прерывает передачу и передаёт очистку уровню управления загрузками", async () => {
     mocked(presignUpload).mockResolvedValue(plan(2, 2, 1));
     mocked(putPart).mockRejectedValue(
       new DOMException("The operation was aborted.", "AbortError"),
@@ -216,10 +216,7 @@ describe("multipart-загрузка", () => {
       createUploadOperation(bigFile(2), "docs", "presigned").start(),
     ).rejects.toThrow(DOMException);
 
-    expect(cancelUploadOperation).toHaveBeenCalledWith(
-      expect.any(String),
-      expect.any(AbortSignal),
-    );
+    expect(cancelUploadOperation).not.toHaveBeenCalled();
     expect(deleteFile).not.toHaveBeenCalled();
     expect(mocked(completeUpload)).not.toHaveBeenCalled();
   });
@@ -373,8 +370,7 @@ describe("независимая операция загрузки", () => {
     expect(first.partsDone.value).toBe(1);
     expect(first.percent.value).toBe(100);
     expect(first.outcome.value).toBeNull();
-    expect(first.cancellable.value).toBe(false);
-    first.cancel();
+    expect(first.cancellable.value).toBe(true);
     finish(readyFile());
     await firstRun;
     expect(first.outcome.value?.status).toBe("succeeded");
@@ -649,10 +645,7 @@ describe.each(["single", "multipart"] as const)(
       const operation = createUploadOperation(bigFile(2), "docs", "presigned");
       await expect(operation.start()).rejects.toThrow(DOMException);
       expect(operation.outcome.value?.status).toBe("cancelled");
-      expect(cancelUploadOperation).toHaveBeenCalledWith(
-        operation.operationId,
-        expect.any(AbortSignal),
-      );
+      expect(cancelUploadOperation).not.toHaveBeenCalled();
       await operation.retry();
       expect(operation.outcome.value?.status).toBe("succeeded");
     });

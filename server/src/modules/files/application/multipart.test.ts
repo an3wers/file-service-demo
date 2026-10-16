@@ -204,23 +204,19 @@ describe("multipart uploads", () => {
   });
 
   describe("deleting a live multipart upload", () => {
-    it("cancels the parts instead of removing an object that does not exist", async () => {
+    it("удаляет части и объект под зарезервированным ключом", async () => {
       const { multipart, files, objectStore, fileRows } =
         await buildHarnessWithDirectories();
 
       const started = await multipart.createMultipartUpload(uploadRequest());
 
       objectStore.uploadPart(started.uploadId, 1, Buffer.alloc(5 * MIB, 1));
-      // Байты под ключом, которых при живой загрузке быть не должно: если бы
-      // удаление пошло по ветке объекта, оно стёрло бы их и оставило части.
       objectStore.uploadObject(started.key, Buffer.from("bystander"));
 
       await files.deleteFile(started.id);
 
       expect(objectStore.openUploads()).toEqual([]);
-      expect(objectStore.objectAt(started.key)?.body.toString()).toBe(
-        "bystander",
-      );
+      expect(objectStore.objectAt(started.key)).toBeNull();
       expect(await fileRows.findFileById(started.id)).toBeNull();
     });
   });

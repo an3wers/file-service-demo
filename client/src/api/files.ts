@@ -82,6 +82,16 @@ export function cancelUploadOperation(
   );
 }
 
+export function failUploadOperation(
+  id: string,
+  signal?: AbortSignal,
+): Promise<UploadOperationResponse> {
+  return apiRequest<UploadOperationResponse>(
+    `/files/upload-operations/${id}/fail`,
+    { method: "POST", signal },
+  );
+}
+
 export function presignUpload(
   body: {
     operationId?: string;

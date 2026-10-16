@@ -162,7 +162,8 @@ describe("роутер", () => {
 
     expect(channel.posted).toEqual([{ type: "logout" }]);
     expect(getAccessToken()).toBeNull();
-    expect(upload.reset).toHaveBeenCalled();
+    expect(upload.stop).toHaveBeenCalled();
+    expect(upload.reset).not.toHaveBeenCalled();
     expect(browser.reset).toHaveBeenCalled();
     expect(router.currentRoute.value.name).toBe("login");
   });
@@ -192,7 +193,8 @@ describe("канал между вкладками", () => {
     await settle();
 
     expect(getAccessToken()).toBeNull();
-    expect(upload.reset).toHaveBeenCalled();
+    expect(upload.stop).toHaveBeenCalled();
+    expect(upload.reset).not.toHaveBeenCalled();
     expect(browser.reset).toHaveBeenCalled();
     expect(notify).toHaveBeenCalledWith("Вы вышли в другой вкладке");
     expect(router.currentRoute.value.name).toBe("login");

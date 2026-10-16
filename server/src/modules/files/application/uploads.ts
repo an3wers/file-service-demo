@@ -1,3 +1,4 @@
+import { logger } from "../../../logger.js";
 import { randomUUID } from "node:crypto";
 import type {
   UploadOperations,
@@ -84,9 +85,19 @@ export type PresignUploadResult =
 
 export type UploadOperationResult =
   | { status: "succeeded"; file: StoredFile }
-  | { status: "absent" | "failed" | "processing" | "deleted" };
+  | {
+      status:
+        | "absent"
+        | "failed"
+        | "processing"
+        | "deleted"
+        | "cancelled"
+        | "discarded";
+    };
 
 export interface UploadsModule {
+  failUploadOperation(id: string): Promise<UploadOperationResult>;
+  sweepTerminated(): Promise<void>;
   cancelUploadOperation(id: string): Promise<UploadOperationResult>;
   getUploadOperation(id: string): Promise<UploadOperationResult>;
   uploadThroughServer(input: UploadThroughServerInput): Promise<StoredFile>;
@@ -134,7 +145,9 @@ export function createUploadsModule({
       };
     if (file.kind === "ready") return { status: "succeeded", file };
     const stored = await objectStore.head(file.key);
-    if (!stored) return { status: "failed" };
+    if (!stored || (record.size !== null && stored.size !== record.size)) {
+      return { status: "failed" };
+    }
     const ready = await rows.markFileReady(file.id, {
       sizeBytes: stored.size,
       etag: stored.etag,
@@ -217,6 +230,16 @@ export function createUploadsModule({
         ? new MultipartNotFoundError(message, { key: file.key })
         : new UploadNotCompletedError(message, { key: file.key });
     }
+    const expectedSize =
+      file.kind === "multipart"
+        ? file.plan.size
+        : file.kind === "reserved"
+          ? file.size
+          : null;
+    if (expectedSize !== null && stored.size !== expectedSize)
+      throw new UploadNotCompletedError(
+        "Размер загруженного файла не совпадает с ожидаемым",
+      );
     const ready = await rows.markFileReady(file.id, {
       sizeBytes: stored.size,
       etag: stored.etag,
@@ -226,10 +249,66 @@ export function createUploadsModule({
     return ready;
   }
 
+  async function dispose(
+    session: UploadOperationSession,
+  ): Promise<UploadOperationResult | null> {
+    let termination = await session.termination();
+    if (!termination) return null;
+    const record = await session.read();
+    if (record) {
+      const file = await session.fileRows.findFileById(record.reservation.id);
+      if (file?.kind === "multipart") {
+        await session.terminate(termination.reason, file.uploadId);
+        termination = (await session.termination())!;
+      }
+      await session.fileRows.markFileFailed(record.reservation.id);
+      if (termination.uploadId)
+        await objectStore.abortMultipart(
+          record.reservation.key,
+          termination.uploadId,
+        );
+      await objectStore.remove(record.reservation.key);
+    }
+    await session.checked();
+    return {
+      status:
+        termination.reason === "failed" ? "discarded" : termination.reason,
+    };
+  }
+
+  async function requireOpen(session: UploadOperationSession): Promise<void> {
+    if (await session.termination()) {
+      await dispose(session);
+      throw new FileNotFoundError(
+        "Операция завершена и больше не принимает данные",
+      );
+    }
+  }
+
   return {
+    async sweepTerminated() {
+      for (const id of await operations.listTerminated()) {
+        try {
+          await operations.exclusive(id, async (session) => {
+            try {
+              return await dispose(session);
+            } finally {
+              await session.checked();
+            }
+          });
+        } catch (error) {
+          logger.error(
+            { err: error, operationId: id },
+            "Не удалось очистить завершённую загрузку",
+          );
+        }
+      }
+    },
     async getUploadOperation(id) {
       return (
         (await operations.exclusive(id, async (session) => {
+          const disposed = await dispose(session);
+          if (disposed) return disposed;
           const record = await session.read();
           return record
             ? await resolveOperation(record, session.fileRows)
@@ -239,19 +318,27 @@ export function createUploadsModule({
     },
 
     async cancelUploadOperation(id) {
-      return await exclusive(id, async (session) => {
-        const record = await session.read();
-        if (!record) return { status: "absent" };
-        const outcome = await resolveOperation(record, session.fileRows);
-        if (outcome.status !== "failed") return outcome;
-        const file = await session.fileRows.findFileById(record.reservation.id);
-        if (file?.kind === "multipart")
-          await objectStore.abortMultipart(file.key, file.uploadId);
-        await session.fileRows.reserveFile(
-          pendingInput(record, "presigned", "failed"),
-        );
-        return { status: "failed" };
-      });
+      await operations.terminate(id, "cancelled");
+      return (
+        (await operations.exclusive(id, dispose)) ?? { status: "processing" }
+      );
+    },
+
+    async failUploadOperation(id) {
+      return (
+        (await operations.exclusive(id, async (session) => {
+          const disposed = await dispose(session);
+          if (disposed) return disposed;
+          const record = await session.read();
+          if (record) {
+            const outcome = await resolveOperation(record, session.fileRows);
+            if (outcome.status === "succeeded" || outcome.status === "deleted")
+              return outcome;
+          }
+          await session.terminate("failed");
+          return (await dispose(session))!;
+        })) ?? { status: "processing" }
+      );
     },
 
     async uploadThroughServer(input) {
@@ -259,6 +346,7 @@ export function createUploadsModule({
       return await exclusive(
         input.operationId ?? randomUUID(),
         async (session) => {
+          await requireOpen(session);
           const record = await requireOperation(session, input);
           const outcome = await resolveOperation(record, session.fileRows);
           if (outcome.status === "succeeded") return outcome.file;
@@ -275,6 +363,7 @@ export function createUploadsModule({
             contentType,
             contentLength: input.size,
           });
+          await requireOpen(session);
           const ready = await session.fileRows.markFileReady(id, {
             sizeBytes: input.size,
             etag,
@@ -291,6 +380,7 @@ export function createUploadsModule({
       return await exclusive(
         input.operationId ?? randomUUID(),
         async (session) => {
+          await requireOpen(session);
           const record = await requireOperation(session, input);
           const outcome = await resolveOperation(record, session.fileRows);
           if (outcome.status === "succeeded")
@@ -317,11 +407,13 @@ export function createUploadsModule({
             }
           }
           if (needsMultipart(input.size, policy.multipartThresholdBytes)) {
-            return await multipart.createMultipartUpload(
+            const result = await multipart.createMultipartUpload(
               { ...input, size: input.size! },
               record.reservation,
               session.fileRows,
             );
+            await requireOpen(session);
+            return result;
           }
           const { id, key, directory, contentType } = record.reservation;
           const ttl = policy.presignUploadTtlSeconds;
@@ -330,6 +422,7 @@ export function createUploadsModule({
             expiresIn: ttl,
           });
           await session.fileRows.reserveFile(pendingInput(record, "presigned"));
+          await requireOpen(session);
           return {
             strategy: "single",
             id,
@@ -345,6 +438,14 @@ export function createUploadsModule({
 
     /** A further batch of part URLs for an upload already in flight. */
     async getPartUrls(id, input) {
+      const operationId = await operations.findIdByFileId(id);
+      if (operationId)
+        return await exclusive(operationId, async (session) => {
+          await requireOpen(session);
+          const file = await session.fileRows.findFileById(id);
+          if (!file) throw fileNotFound(id);
+          return await multipart.createPartUrls(file, input);
+        });
       return await multipart.createPartUrls(await requireFile(id), input);
     },
 
@@ -359,9 +460,12 @@ export function createUploadsModule({
       return await exclusive(
         operationId,
         async (session) => {
+          await requireOpen(session);
           const file = await session.fileRows.findFileById(id);
           if (!file) throw fileNotFound(id);
-          return await complete(file, session.fileRows);
+          const result = await complete(file, session.fileRows);
+          await requireOpen(session);
+          return result;
         },
         true,
       );

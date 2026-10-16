@@ -1,7 +1,7 @@
 import { bucket, createObjectStore, uploadPolicy } from "../composition.js";
 import { pool } from "../db/pool.js";
 import { logger } from "../logger.js";
-import { createFilesCleanup } from "../modules/files/index.js";
+import { createFilesMaintenance } from "../modules/files/index.js";
 
 /**
  * The cleanup pass on a schedule: a second assembly next to the app's, building
@@ -10,23 +10,13 @@ import { createFilesCleanup } from "../modules/files/index.js";
  * they settled.
  */
 async function main(): Promise<void> {
-  const cleanup = createFilesCleanup({
+  const maintain = createFilesMaintenance({
     objectStore: createObjectStore(),
     bucket: bucket(),
     policy: uploadPolicy(),
   });
-
-  const counters = await cleanup.settleExpiredRows();
-
-  if (counters.examined === 0) {
-    logger.info("No expired pending uploads");
-  } else {
-    logger.info(counters, "Cleanup finished");
-  }
-
-  const orphans = await cleanup.sweepOrphanUploads();
-
-  logger.info(orphans, "Orphan multipart sweep finished");
+  await maintain();
+  logger.info("Уборка загрузок завершена");
 }
 
 try {

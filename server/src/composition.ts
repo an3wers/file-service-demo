@@ -13,7 +13,10 @@ import {
   PROTOCOL_LIMITS,
 } from "./storage/s3-object-store.js";
 import type { ObjectStore } from "./storage/object-store.js";
-import { createFilesHttp } from "./modules/files/index.js";
+import {
+  createFilesMaintenance,
+  createFilesHttp,
+} from "./modules/files/index.js";
 import { createAuthHttp } from "./modules/auth/index.js";
 import type { UploadPolicy } from "./modules/files/index.js";
 
@@ -95,4 +98,12 @@ export function buildApp(): Express {
 
 export function createNotification(): Notification {
   return assembleNotification(config.notification);
+}
+
+export function createUploadMaintenance(): () => Promise<void> {
+  return createFilesMaintenance({
+    objectStore: createObjectStore(),
+    bucket: bucket(),
+    policy: uploadPolicy(),
+  });
 }

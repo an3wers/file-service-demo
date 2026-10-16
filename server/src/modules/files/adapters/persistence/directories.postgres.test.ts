@@ -1,3 +1,4 @@
+import { createSqlUploadOperations } from "./sql-upload-operations.js";
 import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -89,6 +90,7 @@ describe("постоянные каталоги на PostgreSQL", () => {
   it("один конкурентный запрос создаёт каталог, второй получает ошибку дубликата", async () => {
     const harness = buildHarness();
     const catalog = createCatalogModule({
+      operations: createSqlUploadOperations("test"),
       objectStore: harness.objectStore,
       fileRows: createSqlFileRows("test"),
       directories: createSqlDirectories(),

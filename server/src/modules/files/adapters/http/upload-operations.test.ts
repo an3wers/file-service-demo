@@ -74,6 +74,26 @@ describe("HTTP-контракт операций загрузки", () => {
     expect(await status()).toEqual({ status: "deleted" });
     expect((await upload()).status).toBe(404);
     expect((await fetch(`${base}/upload-operations/invalid`)).status).toBe(422);
+    const cancelledId = randomUUID();
+    expect((await upload(cancelledId)).status).toBe(201);
+    const cancelled = await fetch(
+      `${base}/upload-operations/${cancelledId}/cancel`,
+      { method: "POST" },
+    );
+    expect(cancelled.status).toBe(200);
+    expect(uploadOperationResponseSchema.parse(await cancelled.json())).toEqual(
+      { status: "cancelled" },
+    );
+    expect((await upload(cancelledId)).status).toBe(404);
+    const failedId = randomUUID();
+    const failed = await fetch(`${base}/upload-operations/${failedId}/fail`, {
+      method: "POST",
+    });
+    expect(failed.status).toBe(200);
+    expect(uploadOperationResponseSchema.parse(await failed.json())).toEqual({
+      status: "discarded",
+    });
+    expect((await upload(failedId)).status).toBe(404);
   });
 });
 
@@ -118,7 +138,13 @@ describe.each([5, THREE_PART_SIZE])(
       );
       if (first.strategy === "multipart") {
         for (let number = 1; number <= first.partCount; number++)
-          objectStore.uploadPart(first.uploadId, number, Buffer.from("hello"));
+          objectStore.uploadPart(
+            first.uploadId,
+            number,
+            Buffer.alloc(
+              Math.min(first.partSize, size - (number - 1) * first.partSize),
+            ),
+          );
       } else
         await objectStore.put(first.key, Buffer.from("hello"), {
           contentType: "text/plain",

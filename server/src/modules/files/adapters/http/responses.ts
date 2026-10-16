@@ -160,6 +160,15 @@ export type ListFilesResponse = z.output<typeof listFilesResponseSchema>;
 export const uploadOperationResponseSchema = z
   .union([
     z.object({ status: z.literal("succeeded"), file: fileDtoSchema }),
-    z.object({ status: z.enum(["absent", "failed", "processing", "deleted"]) }),
+    z.object({
+      status: z.enum([
+        "absent",
+        "failed",
+        "processing",
+        "deleted",
+        "cancelled",
+        "discarded",
+      ]),
+    }),
   ])
   .meta({ id: "UploadOperationResponse" });

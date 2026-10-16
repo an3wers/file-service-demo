@@ -28,15 +28,30 @@ const json = <T>(schema: T) => ({ "application/json": { schema } });
 const FILE_NOT_FOUND = "Файла нет или он удалён";
 
 export const filesPaths: ZodOpenApiPathsObject = {
+  "/upload-operations/{id}/fail": {
+    post: {
+      tags: ["uploads"],
+      summary: "Завершить неудавшуюся операцию и очистить остатки",
+      operationId: "failUploadOperation",
+      requestParams: { path: idParamsSchema },
+      responses: {
+        200: {
+          description: "Состояние операции после очистки",
+          content: json(uploadOperationResponseSchema),
+        },
+        ...apiErrors({ 400: "Недопустимый идентификатор" }),
+      },
+    },
+  },
   "/upload-operations/{id}/cancel": {
     post: {
       tags: ["uploads"],
-      summary: "Отменить передачу с сохранением операции для повтора",
+      summary: "Отменить операцию и удалить загруженные данные",
       operationId: "cancelUploadOperation",
       requestParams: { path: idParamsSchema },
       responses: {
         200: {
-          description: "Результат отмены или уже готовый файл",
+          description: "Состояние отмены и очистки",
           content: json(uploadOperationResponseSchema),
         },
         ...apiErrors({ 409: "Операция обрабатывается" }),

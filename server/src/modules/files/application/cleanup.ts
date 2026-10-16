@@ -17,6 +17,9 @@ export interface CleanupModuleDeps {
    * sweep's age filter age together.
    */
   clock: Clock;
+  settleOperation?: (
+    file: StoredFile,
+  ) => Promise<"recovered" | "failed" | "skipped" | null>;
 }
 
 /** What one pass over the expired rows settled. */
@@ -66,6 +69,7 @@ export function createCleanupModule({
   fileRows,
   policy,
   clock,
+  settleOperation,
 }: CleanupModuleDeps): CleanupModule {
   const ttlHours = policy.pendingTtlHours;
 
@@ -73,17 +77,23 @@ export function createCleanupModule({
   async function recoverFromObject(file: StoredFile): Promise<boolean> {
     const stored = await objectStore.head(file.key);
 
-    if (!stored) {
+    const expectedSize =
+      file.kind === "multipart"
+        ? file.plan.size
+        : file.kind === "reserved"
+          ? file.size
+          : null;
+    if (!stored || (expectedSize !== null && stored.size !== expectedSize)) {
       return false;
     }
 
-    await fileRows.markFileReady(file.id, {
+    const ready = await fileRows.markFileReady(file.id, {
       sizeBytes: stored.size,
       etag: stored.etag,
       contentType: stored.contentType ?? file.contentType,
     });
 
-    return true;
+    return ready !== null;
   }
 
   /**
@@ -174,6 +184,11 @@ export function createCleanupModule({
 
       for (const file of expired) {
         try {
+          const settled = await settleOperation?.(file);
+          if (settled) {
+            counters[settled] += 1;
+            continue;
+          }
           if (file.kind === "multipart") {
             await settleMultipart(file, counters);
           } else {

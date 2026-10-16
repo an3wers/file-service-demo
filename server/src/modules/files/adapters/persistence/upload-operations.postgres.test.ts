@@ -32,7 +32,7 @@ beforeAll(async () => {
   await migrate();
 });
 beforeEach(async () => {
-  await pool.query("truncate files, upload_operations");
+  await pool.query("truncate files, upload_operations, upload_terminations");
 });
 afterAll(async () => {
   if (created) await pool.query(`drop schema ${schema} cascade`);
@@ -43,6 +43,7 @@ function assemble(objectStore: ReturnType<typeof buildHarness>["objectStore"]) {
   const { policy } = buildHarness();
   const fileRows = createSqlFileRows("test");
   const deps = {
+    operations: createSqlUploadOperations("test"),
     objectStore,
     fileRows,
     directories: createSqlDirectories(),
@@ -204,7 +205,13 @@ describe.each([5, THREE_PART_SIZE])(
         });
         if (first.strategy === "multipart") {
           for (let part = 1; part <= first.partCount; part++)
-            objectStore.uploadPart(first.uploadId, part, Buffer.from("hello"));
+            objectStore.uploadPart(
+              first.uploadId,
+              part,
+              Buffer.alloc(
+                Math.min(first.partSize, size - (part - 1) * first.partSize),
+              ),
+            );
         } else {
           await objectStore.put(first.key, Buffer.from("hello"), {
             contentType: "text/plain",
@@ -297,19 +304,26 @@ describe.each([5, THREE_PART_SIZE])(
       expect(objectStore.openUploads()).toHaveLength(size === 5 ? 0 : 1);
     });
 
-    it("после отмены повторяет загрузку через сервер с прежним файлом", async () => {
+    it("сохраняет окончательную отмену после пересоздания модуля", async () => {
       const { objectStore } = buildHarness();
       const upload = { ...input(), size };
       const first = await assemble(objectStore).createPresignedUpload(upload);
       expect(
         await assemble(objectStore).cancelUploadOperation(upload.operationId),
-      ).toEqual({ status: "failed" });
+      ).toEqual({ status: "cancelled" });
       expect(objectStore.openUploads()).toEqual([]);
-      const file = await assemble(objectStore).uploadThroughServer(upload);
-      expect(file.id).toBe(first.id);
       expect(
         await assemble(objectStore).getUploadOperation(upload.operationId),
-      ).toMatchObject({ status: "succeeded", file: { id: first.id } });
+      ).toEqual({ status: "cancelled" });
+      await objectStore.put(first.key, Buffer.alloc(size), {
+        contentLength: size,
+        contentType: "text/plain",
+      });
+      await assemble(objectStore).sweepTerminated();
+      expect(await objectStore.head(first.key)).toBeNull();
+      await expect(
+        assemble(objectStore).uploadThroughServer(upload),
+      ).rejects.toMatchObject({ name: "FileNotFoundError" });
     });
   },
 );

@@ -14,7 +14,14 @@ import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
 import { useFileActions } from "@/composables/useFileActions";
 
-const props = defineProps<{ file: FileDto | null; open: boolean }>();
+const props = withDefaults(
+  defineProps<{
+    file: FileDto | null;
+    open: boolean;
+    remove?: (file: FileDto) => Promise<void>;
+  }>(),
+  { remove: undefined },
+);
 
 const emit = defineEmits<{
   "update:open": [value: boolean];
@@ -25,7 +32,6 @@ const actions = useFileActions();
 const pending = ref(false);
 
 async function confirm(event: Event): Promise<void> {
-  // Диалог закрываем сами — только после того, как запрос действительно прошёл.
   event.preventDefault();
 
   const file = props.file;
@@ -37,8 +43,11 @@ async function confirm(event: Event): Promise<void> {
   pending.value = true;
 
   try {
-    await actions.remove(file);
-    emit("deleted", file);
+    if (props.remove) await props.remove(file);
+    else {
+      await actions.remove(file);
+      emit("deleted", file);
+    }
     emit("update:open", false);
   } catch {
     // Текст ошибки уже показан тостом внутри `remove`.

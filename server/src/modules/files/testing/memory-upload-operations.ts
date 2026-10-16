@@ -1,4 +1,6 @@
 import type {
+  UploadTermination,
+  UploadTerminationReason,
   UploadOperationFileRows,
   UploadOperations,
   UploadOperationRecord,
@@ -9,7 +11,23 @@ export function createMemoryUploadOperations(
 ): UploadOperations {
   const records = new Map<string, UploadOperationRecord>();
   const active = new Map<string, Promise<void>>();
+  const terminations = new Map<string, UploadTermination>();
+  async function terminate(
+    id: string,
+    reason: UploadTerminationReason,
+    uploadId?: string,
+  ) {
+    const previous = terminations.get(id);
+    terminations.set(id, {
+      reason: reason === "failed" ? (previous?.reason ?? reason) : reason,
+      uploadId: uploadId ?? previous?.uploadId ?? null,
+    });
+  }
   return {
+    terminate,
+    async listTerminated() {
+      return [...terminations.keys()];
+    },
     async findIdByFileId(fileId) {
       return (
         [...records].find(
@@ -32,6 +50,11 @@ export function createMemoryUploadOperations(
       try {
         return await run({
           fileRows,
+          async termination() {
+            return terminations.get(id) ?? null;
+          },
+          terminate: (reason, uploadId) => terminate(id, reason, uploadId),
+          async checked() {},
           async read() {
             return records.get(id) ?? null;
           },

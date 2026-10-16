@@ -100,9 +100,9 @@ function confirmLogout(): void {
         <AlertDialogHeader>
           <AlertDialogTitle>Выйти?</AlertDialogTitle>
           <AlertDialogDescription>
-            Ожидающие загрузки будут остановлены, выбранные файлы и история
-            очищены. Уже принятые сервером обработка и подтверждение могут
-            завершиться после выхода.
+            Передача файлов будет остановлена. История загрузок сохранится, а
+            проверка результатов продолжится после следующего входа. Уже
+            принятая сервером работа может завершиться после выхода.
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>

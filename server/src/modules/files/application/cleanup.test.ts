@@ -66,11 +66,7 @@ describe("cleanup", () => {
 
       const reserved = await files.createPresignedUpload(singleUpload());
       // Клиент положил байты по подписанной ссылке и не подтвердил загрузку.
-      objectStore.uploadObject(
-        reserved.key,
-        Buffer.from("hello"),
-        "text/plain",
-      );
+      objectStore.uploadObject(reserved.key, Buffer.alloc(MIB), "text/plain");
       advance(PAST_TTL);
 
       const counters = await cleanup.settleExpiredRows();

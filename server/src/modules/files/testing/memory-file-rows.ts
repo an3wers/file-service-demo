@@ -216,6 +216,9 @@ export function createMemoryFileRows(
       }
 
       row.status = "failed";
+      row.upload_id = null;
+      row.part_size = null;
+      row.part_count = null;
       row.updated_at = clock.now();
     },
 

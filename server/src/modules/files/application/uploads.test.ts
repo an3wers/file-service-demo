@@ -70,31 +70,25 @@ async function reserveMultipart(
   return reserved;
 }
 
-/**
- * Три части, которые клиент кладёт по подписанным ссылкам. Байтов в них
- * несравнимо меньше, чем в объявленных 12 МиБ: хранилище не обязано отвечать
- * планом, и именно его ответ должен попасть в строку.
- */
-const PARTS = [Buffer.from("alpha"), Buffer.from("beta"), Buffer.from("gamma")];
+const PARTS = [
+  Buffer.alloc(5 * 1024 * 1024, 1),
+  Buffer.alloc(5 * 1024 * 1024, 2),
+  Buffer.alloc(2 * 1024 * 1024, 3),
+];
 
 describe("confirming an upload", () => {
   describe("a single signed PUT", () => {
-    it("takes the size and etag off the stored object, not off the client's word", async () => {
+    it("отклоняет объект, размер которого не совпадает с резервированием", async () => {
       const { files, objectStore } = await buildHarnessWithDirectories();
 
-      // Клиент объявил десять байт, а положил четыре: запомнить надо байты.
       const reserved = await reserveSingle(files, 10);
       const body = Buffer.from("four");
 
       objectStore.uploadObject(reserved.key, body, "text/plain");
 
-      expect(await files.completeUpload(reserved.id)).toMatchObject({
-        id: reserved.id,
-        kind: "ready",
-        size: body.byteLength,
-        etag: etagOf(body),
-        contentType: "text/plain",
-      });
+      await expect(files.completeUpload(reserved.id)).rejects.toBeInstanceOf(
+        UploadNotCompletedError,
+      );
     });
 
     it("answers a repeated confirmation with the same result instead of an error", async () => {
@@ -127,7 +121,7 @@ describe("confirming an upload", () => {
   });
 
   describe("a multipart upload", () => {
-    it("assembles the object and records what storage holds, not what was planned", async () => {
+    it("собирает полный файл и сохраняет подтверждённые размер и ETag", async () => {
       const { files, objectStore, rowOf } = await buildHarnessWithDirectories();
 
       const reserved = await reserveMultipart(files);
@@ -145,7 +139,9 @@ describe("confirming an upload", () => {
         etag: etagOf(assembled),
       });
       // Части склеены в объект по возрастанию номера, а загрузка закрыта.
-      expect(objectStore.objectAt(reserved.key)?.body).toEqual(assembled);
+      expect(objectStore.objectAt(reserved.key)?.body.equals(assembled)).toBe(
+        true,
+      );
       expect(objectStore.openUploads()).toEqual([]);
       // Подтверждённая строка больше не несёт плана: загрузка неживая.
       expect(await rowOf(reserved.id)).toMatchObject({ kind: "ready" });
@@ -153,7 +149,7 @@ describe("confirming an upload", () => {
       expect(await files.completeUpload(reserved.id)).toEqual(confirmed);
     });
 
-    it("lets the second racing confirmation read the result of the first", async () => {
+    it("возвращает одинаковый результат конкурентных подтверждений", async () => {
       const { files, objectStore } = await buildHarnessWithDirectories();
 
       const reserved = await reserveMultipart(files);

@@ -67,8 +67,9 @@ export function createFilesHttp(
     policy: deps.policy,
     clock,
   });
+  const operations = createSqlUploadOperations(deps.bucket);
   const uploads = createUploadsModule({
-    operations: createSqlUploadOperations(deps.bucket),
+    operations,
     objectStore: deps.objectStore,
     fileRows,
     directories,
@@ -77,6 +78,7 @@ export function createFilesHttp(
     clock,
   });
   const catalog = createCatalogModule({
+    operations,
     objectStore: deps.objectStore,
     fileRows,
     directories,
@@ -109,4 +111,47 @@ export function createFilesCleanup(
     policy: deps.policy,
     clock,
   });
+}
+
+export function createFilesMaintenance(
+  deps: FilesModuleDependencies,
+): () => Promise<void> {
+  const clock = deps.clock ?? systemClock;
+  const fileRows = createSqlFileRows(deps.bucket);
+  const directories = createSqlDirectories();
+  const multipart = createMultipartModule({
+    ...deps,
+    fileRows,
+    directories,
+    clock,
+  });
+  const uploads = createUploadsModule({
+    ...deps,
+    fileRows,
+    directories,
+    multipart,
+    clock,
+    operations: createSqlUploadOperations(deps.bucket),
+  });
+  const operations = createSqlUploadOperations(deps.bucket);
+  const cleanup = createCleanupModule({
+    ...deps,
+    fileRows,
+    clock,
+    async settleOperation(file) {
+      const operationId = await operations.findIdByFileId(file.id);
+      if (!operationId) return null;
+      const result = await uploads.failUploadOperation(operationId);
+      return result.status === "succeeded"
+        ? "recovered"
+        : result.status === "processing"
+          ? "skipped"
+          : "failed";
+    },
+  });
+  return async () => {
+    await uploads.sweepTerminated();
+    await cleanup.settleExpiredRows();
+    await cleanup.sweepOrphanUploads();
+  };
 }

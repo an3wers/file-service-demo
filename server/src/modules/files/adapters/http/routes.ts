@@ -94,6 +94,20 @@ export function createFilesRouter({
   );
 
   filesRouter.post(
+    "/upload-operations/:id/fail",
+    validateParams(idParamsSchema),
+    async (_req, res) => {
+      const { id } = validatedParams<IdParams>(res);
+      const result = await uploads.failUploadOperation(id);
+      res.json(
+        result.status === "succeeded"
+          ? { ...result, file: toFileDto(result.file) }
+          : result,
+      );
+    },
+  );
+
+  filesRouter.post(
     "/upload-operations/:id/cancel",
     validateParams(idParamsSchema),
     async (_req, res) => {

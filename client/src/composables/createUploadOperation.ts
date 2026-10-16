@@ -2,6 +2,7 @@ import { computed, readonly, ref, shallowReadonly, shallowRef } from "vue";
 import type { UploadOptions } from "@/api/client";
 import type {
   FileDto,
+  UploadOperationResponse,
   MultipartPartDto,
   PresignMultipartResponse,
   PresignSingleResponse,
@@ -10,7 +11,6 @@ import type {
 import {
   getUploadOperation,
   completeUpload,
-  cancelUploadOperation,
   fetchPartUrls,
   getMultipartStatus,
   presignUpload,
@@ -54,7 +54,6 @@ export function createUploadOperation(
   const outcome = shallowRef<UploadOutcome | null>(null);
   const reservationState = shallowRef<PresignUploadResponse | null>(null);
   let controller = new AbortController();
-  let cancellationController = new AbortController();
   let generation = 0;
   let attempted = false;
   let confirmationPending = false;
@@ -69,9 +68,7 @@ export function createUploadOperation(
       : 100,
   );
   const cancellable = computed(
-    () =>
-      uploading.value &&
-      (stage.value === "presigning" || stage.value === "sending"),
+    () => uploading.value && stage.value !== "cancelling",
   );
 
   const delay = (ms: number) =>
@@ -334,7 +331,6 @@ export function createUploadOperation(
   async function run(): Promise<FileDto> {
     const started = generation;
     const signal = controller.signal;
-    const cancellationSignal = cancellationController.signal;
     uploading.value = true;
     stage.value = currentMode.value === "server" ? "sending" : "presigning";
 
@@ -364,25 +360,6 @@ export function createUploadOperation(
       return result;
     } catch (error) {
       if (started !== generation) throw error;
-      if (isAbortError(error) && currentMode.value === "presigned") {
-        try {
-          const result = await cancelUploadOperation(
-            operationId,
-            cancellationSignal,
-          );
-          if (started !== generation) throw error;
-          unresolved.value = result.status === "processing";
-          confirmationPending = false;
-          reservationState.value = null;
-          if (result.status === "succeeded") {
-            outcome.value = { status: "succeeded", file: result.file };
-            return result.file;
-          }
-        } catch {
-          if (started !== generation) throw error;
-          unresolved.value = true;
-        }
-      }
       if (
         isApiError(error) &&
         (error.code === "TOO_MANY_ACTIVE_UPLOADS" ||
@@ -449,6 +426,12 @@ export function createUploadOperation(
     }
   }
 
+  function acceptResult(result: UploadOperationResponse): void {
+    unresolved.value = result.status === "processing";
+    if (result.status === "succeeded")
+      outcome.value = { status: "succeeded", file: result.file };
+  }
+
   function changeMode(next: UploadMode): void {
     if (
       uploading.value ||
@@ -474,7 +457,6 @@ export function createUploadOperation(
     if (uploading.value || outcome.value?.status === "succeeded")
       return start();
     controller = new AbortController();
-    cancellationController = new AbortController();
     outcome.value = null;
     sentBytes.value = 0;
     running = run();
@@ -491,7 +473,6 @@ export function createUploadOperation(
   function stop(): void {
     generation += 1;
     controller.abort();
-    cancellationController.abort();
     uploading.value = false;
     stage.value = "idle";
     unresolved.value = attempted;
@@ -511,6 +492,7 @@ export function createUploadOperation(
     },
     changeMode,
     checkResult,
+    acceptResult,
     operationId,
     unresolved: shallowReadonly(unresolved),
     retry,

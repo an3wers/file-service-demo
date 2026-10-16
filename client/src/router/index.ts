@@ -67,12 +67,8 @@ export function createAppRouter({
   });
 
   auth.onSignOut((reason) => {
-    if (reason === "expired") {
-      upload.stop();
-    } else {
-      upload.reset();
-      browser.reset();
-    }
+    upload.stop();
+    if (reason !== "expired") browser.reset();
 
     const notice = SIGN_OUT_NOTICES[reason];
 

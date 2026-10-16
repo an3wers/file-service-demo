@@ -47,7 +47,7 @@ async function setup() {
 }
 
 describe("публичный сценарий удаления файла", () => {
-  it("удаляет готовый файл и сообщает FILE_NOT_FOUND при повторе", async () => {
+  it("удаляет готовый файл и допускает безопасный повтор удаления", async () => {
     const { base, file, objectStore } = await setup();
     expect(
       (await fetch(`${base}/${file.id}`, { method: "DELETE" })).status,
@@ -56,14 +56,11 @@ describe("публичный сценарий удаления файла", () =
     expect((await fetch(`${base}/${file.id}`)).status).toBe(404);
     expect(await (await fetch(base)).json()).toMatchObject({ items: [] });
     const repeated = await fetch(`${base}/${file.id}`, { method: "DELETE" });
-    expect(repeated.status).toBe(404);
-    expect(await repeated.json()).toMatchObject({
-      error: { code: "FILE_NOT_FOUND" },
-    });
+    expect(repeated.status).toBe(204);
   });
 
-  it("скрывает строку метаданных до удаления объекта и возвращает успех при сбое хранилища", async () => {
-    const { base, file, objectStore } = await setup();
+  it("сохраняет задачу очистки при сбое хранилища и завершает удаление в фоне", async () => {
+    const { base, file, objectStore, files } = await setup();
     let hiddenBeforeRemoval = false;
     vi.spyOn(objectStore, "remove").mockImplementation(async () => {
       const card = await fetch(`${base}/${file.id}`);
@@ -73,14 +70,14 @@ describe("публичный сценарий удаления файла", () =
     });
     expect(
       (await fetch(`${base}/${file.id}`, { method: "DELETE" })).status,
-    ).toBe(204);
+    ).toBe(500);
     expect(hiddenBeforeRemoval).toBe(true);
     expect(await objectStore.head(file.key)).not.toBeNull();
     const repeated = await fetch(`${base}/${file.id}`, { method: "DELETE" });
-    expect(repeated.status).toBe(404);
-    expect(await repeated.json()).toMatchObject({
-      error: { code: "FILE_NOT_FOUND" },
-    });
+    expect(repeated.status).toBe(500);
+    vi.mocked(objectStore.remove).mockRestore();
+    await files.sweepTerminated();
+    expect(await objectStore.head(file.key)).toBeNull();
     expect(await (await fetch(base)).json()).toMatchObject({ items: [] });
   });
   it("сохраняет файл при сбое API и разрешает повтор удаления", async () => {

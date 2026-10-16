@@ -107,8 +107,9 @@ export function buildHarness(
     policy,
     clock,
   });
+  const operations = createMemoryUploadOperations(fileRows);
   const uploads = createUploadsModule({
-    operations: createMemoryUploadOperations(fileRows),
+    operations,
     objectStore,
     fileRows,
     directories,
@@ -117,6 +118,7 @@ export function buildHarness(
     clock,
   });
   const catalog = createCatalogModule({
+    operations,
     objectStore,
     fileRows,
     directories,

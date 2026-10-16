@@ -13,10 +13,13 @@ import { createAppRouter } from "./router";
 
 useTheme();
 
+const upload = useUpload();
+upload.restore();
+
 const router = createAppRouter({
   history: createWebHistory(),
   auth: useAuth(),
-  upload: useUpload(),
+  upload,
   browser: useFileBrowser(),
   notify: (message) => toast.error(message),
 });

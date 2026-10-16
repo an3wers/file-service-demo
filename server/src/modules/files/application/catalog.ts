@@ -1,7 +1,8 @@
 import type { DirectoryDto } from "../domain/ports/directories.js";
 import { requireDirectory } from "../domain/directories.js";
 import type { DirectoriesForCatalog } from "../domain/ports/directories.js";
-import { logger } from "../../../logger.js";
+import { randomUUID } from "node:crypto";
+import type { UploadOperations } from "../domain/ports/upload-operations.js";
 import { normalizeDirectory, normalizeDirectoryName } from "../domain/keys.js";
 import type { Clock } from "../domain/ports/clock.js";
 import {
@@ -20,6 +21,7 @@ import type { FileStatus, StoredFile } from "../domain/stored-file.js";
 import type { UploadPolicy } from "../domain/upload-policy.js";
 
 export interface CatalogModuleDeps {
+  operations: UploadOperations;
   objectStore: ObjectStoreForFiles;
   fileRows: FileRowsForFiles;
   directories: DirectoriesForCatalog;
@@ -83,6 +85,7 @@ function fileNotFound(id: string) {
 }
 
 export function createCatalogModule({
+  operations,
   objectStore,
   fileRows,
   directories,
@@ -174,27 +177,48 @@ export function createCatalogModule({
     },
 
     async deleteFile(id): Promise<void> {
-      // Сервер скрывает файл из списка, пытается удалить и возвращает успех даже при сбое хранилища
-      const file = await fileRows.softDeleteFile(id);
-
-      if (!file) {
-        throw fileNotFound(id);
+      const file = await fileRows.findFileById(id);
+      const operationId = await operations.findIdByFileId(id);
+      if (!file && !operationId) throw fileNotFound(id);
+      const cleanupId = operationId ?? randomUUID();
+      if (!operationId && file) {
+        await operations.exclusive(cleanupId, async (session) => {
+          await session.save({
+            reservation: {
+              id: file.id,
+              key: file.key,
+              directory: file.directory,
+              originalName: file.originalName,
+              extension: file.extension,
+              contentType: file.contentType,
+            },
+            size:
+              file.kind === "ready" || file.kind === "reserved"
+                ? file.size
+                : null,
+          });
+        });
       }
-
-      try {
-        if (file.kind === "multipart") {
-          // No object exists under this key yet — the uploaded parts are what
-          // has to go, and only an abort removes those.
-          await objectStore.abortMultipart(file.key, file.uploadId);
-        } else {
-          await objectStore.remove(file.key);
-        }
-      } catch (error) {
-        logger.error(
-          { err: error, id, key: file.key },
-          "File marked deleted but the stored object could not be removed",
-        );
-      }
+      await operations.terminate(
+        cleanupId,
+        "deleted",
+        file?.kind === "multipart" ? file.uploadId : undefined,
+      );
+      await fileRows.softDeleteFile(id);
+      const result = await operations.exclusive(cleanupId, async (session) => {
+        const record = await session.read();
+        const termination = await session.termination();
+        if (!record) return;
+        if (termination?.uploadId)
+          await objectStore.abortMultipart(
+            record.reservation.key,
+            termination.uploadId,
+          );
+        await objectStore.remove(record.reservation.key);
+        await session.checked();
+      });
+      if (result === null)
+        throw new FileNotReadyError("Удаление ещё выполняется");
     },
 
     async createDirectory(input) {

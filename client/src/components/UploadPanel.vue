@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch } from "vue";
+import { computed, ref, shallowRef, watch } from "vue";
 import { useFileDialog } from "@vueuse/core";
 import {
   CloudUploadIcon,
@@ -8,6 +8,7 @@ import {
   UploadIcon,
 } from "@lucide/vue";
 import DeleteFileDialog from "./DeleteFileDialog.vue";
+import UploadListItem from "./UploadListItem.vue";
 import type { FileDto } from "@/types/api";
 import { Button } from "@/components/ui/button";
 import {
@@ -25,10 +26,7 @@ import {
   FieldGroup,
   FieldLabel,
 } from "@/components/ui/field";
-import { Progress } from "@/components/ui/progress";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
-import { formatBytes } from "@/lib/format";
-import { serverUploadSizeError } from "@/lib/uploadLimits";
 import { useFileBrowser } from "@/composables/useFileBrowser";
 import {
   MAX_UPLOAD_SIZE_MB,
@@ -40,11 +38,16 @@ defineProps<{ open: boolean }>();
 const emit = defineEmits<{ "update:open": [value: boolean] }>();
 const fileToDelete = ref<FileDto | null>(null);
 const deleteOpen = ref(false);
+const rowToDelete = shallowRef<UploadRow | null>(null);
 function askDelete(row: UploadRow): void {
-  const outcome = row.operation.value?.outcome.value;
-  if (outcome?.status !== "succeeded") return;
-  fileToDelete.value = outcome.file;
+  const file = row.result.value;
+  if (!file) return;
+  rowToDelete.value = row;
+  fileToDelete.value = file;
   deleteOpen.value = true;
+}
+async function deleteUpload(): Promise<void> {
+  if (rowToDelete.value) upload.remove(rowToDelete.value);
 }
 const browser = useFileBrowser();
 const upload = useUpload();
@@ -58,33 +61,8 @@ const { files, open: openFileDialog } = useFileDialog({
 watch(files, (value) => {
   if (value) upload.addFiles(Array.from(value), browser.directory.value);
 });
-const STAGE_LABELS = {
-  idle: "Ожидает",
-  presigning: "Готовим ссылку…",
-  sending: "Отправляем…",
-  processing: "Обрабатываем…",
-  completing: "Подтверждаем…",
-  cancelling: "Отменяем…",
-};
-function label(row: UploadRow): string {
-  if (row.state.value === "selected") return "Выбран";
-  if (row.state.value === "queued") return "Ожидает";
-  if (row.state.value === "cancelled") return "Отменено";
-  const outcome = row.operation.value?.outcome.value;
-  if (outcome?.status === "succeeded") return "Готово";
-  if (outcome?.status === "failed") return "Ошибка";
-  if (outcome?.status === "cancelled") return "Отменено";
-  return STAGE_LABELS[row.operation.value?.stage.value ?? "idle"];
-}
 function setMode(value: unknown): void {
   if (value === "server" || value === "presigned") upload.setMode(value);
-}
-function rowError(row: UploadRow): string | null {
-  const outcome = row.operation.value?.outcome.value;
-  if (outcome?.status === "failed") return outcome.message;
-  return row.state.value === "selected" && upload.mode.value === "server"
-    ? serverUploadSizeError(row.file)
-    : null;
 }
 </script>
 
@@ -135,151 +113,16 @@ function rowError(row: UploadRow): string | null {
           class="max-h-80 space-y-4 overflow-y-auto"
           aria-label="Выбранные файлы"
         >
-          <div
+          <UploadListItem
             v-for="row in upload.rows.value"
             :key="row.id"
-            data-testid="upload-row"
-            class="space-y-2 rounded-md border p-3"
-          >
-            <div class="flex items-center justify-between gap-3">
-              <span
-                data-file-name
-                class="min-w-0 truncate text-sm"
-                :title="row.file.name"
-                >{{ row.file.name }}</span
-              >
-              <span class="text-sm text-muted-foreground">{{
-                formatBytes(row.file.size)
-              }}</span>
-            </div>
-            <p v-if="row.operation.value" class="text-xs text-muted-foreground">
-              {{ row.operation.value.directory || "Корень" }} ·
-              {{
-                row.operation.value.mode === "server"
-                  ? "Через сервер"
-                  : "Напрямую в S3"
-              }}
-            </p>
-            <div class="flex items-center justify-between gap-2 text-sm">
-              <span>{{ label(row) }}</span>
-              <span
-                v-if="
-                  row.operation.value &&
-                  row.state.value !== 'queued' &&
-                  row.state.value !== 'cancelled'
-                "
-                >{{ row.operation.value.percent.value }}%</span
-              >
-              <Button
-                v-if="row.state.value === 'selected'"
-                variant="outline"
-                size="sm"
-                @click="upload.remove(row)"
-                >Убрать</Button
-              >
-              <Button
-                v-if="
-                  row.state.value === 'queued' || row.state.value === 'active'
-                "
-                variant="outline"
-                size="sm"
-                :disabled="
-                  row.state.value === 'active' &&
-                  !row.operation.value?.cancellable.value
-                "
-                @click="upload.cancelRow(row)"
-                >Отменить</Button
-              >
-            </div>
-            <Button
-              v-if="row.operation.value?.outcome.value?.status === 'succeeded'"
-              variant="outline"
-              size="sm"
-              @click="askDelete(row)"
-              >Удалить из хранилища</Button
-            >
-            <Button
-              v-else-if="
-                row.state.value === 'finished' ||
-                row.state.value === 'cancelled'
-              "
-              variant="outline"
-              size="sm"
-              @click="upload.remove(row)"
-              >Убрать строку</Button
-            >
-            <Button
-              v-if="
-                (row.state.value === 'finished' ||
-                  row.state.value === 'cancelled') &&
-                row.operation.value &&
-                row.operation.value.outcome.value?.status !== 'succeeded'
-              "
-              variant="outline"
-              size="sm"
-              :disabled="row.operation.value?.uploading.value"
-              @click="
-                row.operation.value?.unresolved.value
-                  ? upload.checkResult(row)
-                  : upload.retry(row)
-              "
-              >{{
-                row.operation.value?.unresolved.value
-                  ? "Выяснить результат"
-                  : row.state.value === "cancelled" ||
-                      row.operation.value?.outcome.value?.status === "cancelled"
-                    ? "Загрузить снова"
-                    : "Повторить"
-              }}</Button
-            >
-            <ToggleGroup
-              v-if="
-                row.state.value === 'finished' &&
-                row.operation.value?.outcome.value?.status !== 'succeeded'
-              "
-              type="single"
-              variant="outline"
-              aria-label="Режим повтора"
-              :disabled="
-                upload.uploading.value ||
-                row.operation.value?.unresolved.value ||
-                row.operation.value?.uploading.value
-              "
-              :model-value="row.operation.value?.mode"
-              @update:model-value="setMode"
-            >
-              <ToggleGroupItem value="server">Через сервер</ToggleGroupItem>
-              <ToggleGroupItem value="presigned">Напрямую в S3</ToggleGroupItem>
-            </ToggleGroup>
-            <template
-              v-if="row.operation.value && row.state.value === 'active'"
-            >
-              <Progress
-                :aria-label="`Прогресс ${row.file.name}`"
-                :model-value="row.operation.value.percent.value"
-                :class="
-                  row.operation.value.stage.value !== 'sending'
-                    ? 'animate-pulse'
-                    : undefined
-                "
-              />
-              <p class="text-xs text-muted-foreground">
-                {{ formatBytes(row.operation.value.sentBytes.value) }} из
-                {{ formatBytes(row.operation.value.totalBytes.value)
-                }}<template v-if="row.operation.value.partsTotal.value">
-                  · частей: {{ row.operation.value.partsDone.value }} из
-                  {{ row.operation.value.partsTotal.value }}</template
-                >
-              </p>
-            </template>
-            <p
-              v-if="rowError(row)"
-              role="alert"
-              class="text-sm text-destructive"
-            >
-              {{ rowError(row) }}
-            </p>
-          </div>
+            :row="row"
+            :mode="upload.mode.value"
+            @remove="upload.remove(row)"
+            @cancel="upload.cancelRow(row)"
+            @delete="askDelete(row)"
+            @retry="upload.retry(row, $event)"
+          />
         </div>
       </FieldGroup>
       <DialogFooter>
@@ -294,5 +137,9 @@ function rowError(row: UploadRow): string | null {
       </DialogFooter>
     </DialogContent>
   </Dialog>
-  <DeleteFileDialog v-model:open="deleteOpen" :file="fileToDelete" />
+  <DeleteFileDialog
+    v-model:open="deleteOpen"
+    :file="fileToDelete"
+    :remove="deleteUpload"
+  />
 </template>

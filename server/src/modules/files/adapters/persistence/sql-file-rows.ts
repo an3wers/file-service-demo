@@ -49,6 +49,10 @@ export async function markFileReady(
             part_count = null,
             updated_at = now()
       where id = $1 and deleted_at is null
+        and not exists (
+          select 1 from upload_operations o join upload_terminations t on t.operation_id = o.id
+          where o.file_id = files.id
+        )
       returning *`,
     [id, values.sizeBytes, values.etag, values.contentType],
   );
@@ -56,9 +60,12 @@ export async function markFileReady(
   return rows[0] ? toStoredFile(rows[0]) : null;
 }
 
-export async function markFileFailed(id: string): Promise<void> {
-  await query(
-    "update files set status = 'failed', updated_at = now() where id = $1",
+export async function markFileFailed(
+  id: string,
+  execute = query,
+): Promise<void> {
+  await execute(
+    "update files set status = 'failed', upload_id = null, part_size = null, part_count = null, updated_at = now() where id = $1",
     [id],
   );
 }
@@ -271,7 +278,7 @@ export function createSqlFileRows(bucket: string, execute = query): FileRows {
     reserveFile: (input) => insertFile(input, true),
     findFileById: (id) => findFileById(id, execute),
     markFileReady: (id, values) => markFileReady(id, values, execute),
-    markFileFailed,
+    markFileFailed: (id) => markFileFailed(id, execute),
     countActiveMultipart: () => countActiveMultipart(execute),
     claimExpiredMultipart,
     softDeleteFile,

@@ -3,7 +3,7 @@ export const MAX_UPLOAD_SIZE_MB = Number(
 );
 export const MAX_UPLOAD_SIZE_BYTES = MAX_UPLOAD_SIZE_MB * 1024 * 1024;
 
-export function serverUploadSizeError(file: File): string | null {
+export function serverUploadSizeError(file: Pick<File, "size">): string | null {
   return file.size > MAX_UPLOAD_SIZE_BYTES
     ? `Файл превышает лимит ${MAX_UPLOAD_SIZE_MB} МБ для загрузки через сервер. Выберите прямую загрузку.`
     : null;

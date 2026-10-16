@@ -2,10 +2,35 @@ import type { QueryResultRow } from "pg";
 import { createSqlFileRows } from "./sql-file-rows.js";
 import { databaseError } from "../../../../db/errors.js";
 import { pool, query } from "../../../../db/pool.js";
-import type { UploadOperations } from "../../domain/ports/upload-operations.js";
+import type {
+  UploadTerminationReason,
+  UploadOperations,
+} from "../../domain/ports/upload-operations.js";
+
+async function terminate(
+  id: string,
+  reason: UploadTerminationReason,
+  uploadId?: string,
+  execute = query,
+): Promise<void> {
+  await execute(
+    `insert into upload_terminations (operation_id, reason, upload_id) values ($1, $2, $3)
+     on conflict (operation_id) do update set
+       reason = case when excluded.reason = 'failed' then upload_terminations.reason else excluded.reason end,
+       upload_id = coalesce(excluded.upload_id, upload_terminations.upload_id), checked_at = null`,
+    [id, reason, uploadId ?? null],
+  );
+}
 
 export function createSqlUploadOperations(bucket: string): UploadOperations {
   return {
+    terminate,
+    async listTerminated() {
+      const { rows } = await query<{ operation_id: string }>(
+        "select operation_id from upload_terminations order by checked_at nulls first limit 100",
+      );
+      return rows.map((row) => row.operation_id);
+    },
     async findIdByFileId(fileId) {
       const { rows } = await query<{ id: string }>(
         "select id from upload_operations where file_id = $1",
@@ -36,6 +61,26 @@ export function createSqlUploadOperations(bucket: string): UploadOperations {
         }
         return await run({
           fileRows: createSqlFileRows(bucket, execute),
+          async termination() {
+            const { rows } = await execute<{
+              reason: UploadTerminationReason;
+              upload_id: string | null;
+            }>(
+              "select reason, upload_id from upload_terminations where operation_id = $1",
+              [id],
+            );
+            return rows[0]
+              ? { reason: rows[0].reason, uploadId: rows[0].upload_id }
+              : null;
+          },
+          terminate: (reason, uploadId) =>
+            terminate(id, reason, uploadId, execute),
+          async checked() {
+            await execute(
+              "update upload_terminations set checked_at = now() where operation_id = $1",
+              [id],
+            );
+          },
           async read() {
             const { rows } = await client.query<{
               file_id: string;

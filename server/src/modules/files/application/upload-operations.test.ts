@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   buildHarness,
   THREE_PART_SIZE,
@@ -106,9 +106,9 @@ describe.each([5, THREE_PART_SIZE])(
         expect(repeated.uploadId).toBe(first.uploadId);
         expect(repeated.partSize).toBe(first.partSize);
       }
-      await objectStore.put(first.key, Buffer.from("hello"), {
+      await objectStore.put(first.key, Buffer.alloc(size), {
         contentType: "text/plain",
-        contentLength: 5,
+        contentLength: size,
       });
       const outcome = await files.getUploadOperation(upload.operationId);
       expect(outcome).toMatchObject({
@@ -152,4 +152,166 @@ it("повторяет исчезнувшую составную загрузк�
     throw new Error("Ожидалась составная загрузка");
   expect(repeated.uploadId).not.toBe(first.uploadId);
   expect(await rowCount()).toBe(1);
+});
+
+describe("окончательная отмена и очистка", () => {
+  it("удаляет уже готовый файл при отмене и не разрешает воскресить операцию", async () => {
+    const { files, objectStore, rowOf } = buildHarness();
+    const upload = input();
+    const file = await files.uploadThroughServer(upload);
+    expect(await files.cancelUploadOperation(upload.operationId)).toEqual({
+      status: "cancelled",
+    });
+    expect(await objectStore.head(file.key)).toBeNull();
+    expect(await rowOf(file.id)).toMatchObject({ kind: "failed" });
+    await expect(files.uploadThroughServer(upload)).rejects.toMatchObject({
+      name: "FileNotFoundError",
+    });
+    expect(await files.getUploadOperation(upload.operationId)).toEqual({
+      status: "cancelled",
+    });
+  });
+
+  it("после отмены до резервирования отклоняет запоздавший запрос загрузки", async () => {
+    const { files, objectStore } = buildHarness();
+    const upload = input();
+    expect(await files.cancelUploadOperation(upload.operationId)).toEqual({
+      status: "cancelled",
+    });
+    await expect(files.uploadThroughServer(upload)).rejects.toMatchObject({
+      name: "FileNotFoundError",
+    });
+    expect(objectStore.objectKeys()).toEqual([]);
+  });
+
+  it("сохраняет отмену при ошибке удаления и завершает очистку без клиента", async () => {
+    const { files, objectStore } = buildHarness();
+    const upload = input();
+    const file = await files.uploadThroughServer(upload);
+    objectStore.failNext("remove", new Error("Хранилище недоступно"));
+    await expect(
+      files.cancelUploadOperation(upload.operationId),
+    ).rejects.toThrow();
+    expect(await objectStore.head(file.key)).not.toBeNull();
+    await files.sweepTerminated();
+    expect(await objectStore.head(file.key)).toBeNull();
+    expect(await files.getUploadOperation(upload.operationId)).toEqual({
+      status: "cancelled",
+    });
+  });
+
+  it("повторная уборка удаляет объект, появившийся после подтверждения отмены", async () => {
+    const { files, objectStore } = buildHarness();
+    const upload = input();
+    const reserved = await files.createPresignedUpload(upload);
+    await files.cancelUploadOperation(upload.operationId);
+    await objectStore.put(reserved.key, upload.bytes, {
+      contentLength: upload.size,
+      contentType: "text/plain",
+    });
+    await files.sweepTerminated();
+    expect(await objectStore.head(reserved.key)).toBeNull();
+    expect(await files.getUploadOperation(upload.operationId)).toEqual({
+      status: "cancelled",
+    });
+  });
+
+  it("не принимает объект неправильного размера как успешный результат", async () => {
+    const { files, objectStore, rowOf } = buildHarness();
+    const upload = input();
+    const reserved = await files.createPresignedUpload(upload);
+    await objectStore.put(reserved.key, Buffer.from("bad"), {
+      contentLength: 3,
+      contentType: "text/plain",
+    });
+    expect(await files.getUploadOperation(upload.operationId)).toEqual({
+      status: "failed",
+    });
+    await expect(files.completeUpload(reserved.id)).rejects.toMatchObject({
+      name: "UploadNotCompletedError",
+    });
+    expect(await files.failUploadOperation(upload.operationId)).toEqual({
+      status: "discarded",
+    });
+    expect(await rowOf(reserved.id)).toMatchObject({ kind: "failed" });
+    expect(await objectStore.head(reserved.key)).toBeNull();
+  });
+
+  it("при окончательной неудаче сохраняет обнаруженный успешный результат", async () => {
+    const { files, objectStore } = buildHarness();
+    const upload = input();
+    const reserved = await files.createPresignedUpload(upload);
+    await objectStore.put(reserved.key, upload.bytes, {
+      contentLength: upload.size,
+      contentType: "text/plain",
+    });
+    expect(await files.failUploadOperation(upload.operationId)).toMatchObject({
+      status: "succeeded",
+      file: { id: reserved.id },
+    });
+    expect(await objectStore.head(reserved.key)).not.toBeNull();
+  });
+
+  it("после исчерпания попыток удаляет части и закрывает старую операцию", async () => {
+    const { files, objectStore, rowOf } = buildHarness();
+    const upload = { ...input(), size: THREE_PART_SIZE };
+    const reserved = await files.createPresignedUpload(upload);
+    if (reserved.strategy !== "multipart")
+      throw new Error("Ожидалась составная загрузка");
+    objectStore.uploadPart(
+      reserved.uploadId,
+      1,
+      Buffer.alloc(reserved.partSize),
+    );
+    expect(await files.failUploadOperation(upload.operationId)).toEqual({
+      status: "discarded",
+    });
+    expect(objectStore.openUploads()).toEqual([]);
+    expect(await rowOf(reserved.id)).toMatchObject({ kind: "failed" });
+    await expect(files.createPresignedUpload(upload)).rejects.toMatchObject({
+      name: "FileNotFoundError",
+    });
+    expect(
+      (
+        await files.createPresignedUpload({
+          ...upload,
+          operationId: randomUUID(),
+        })
+      ).id,
+    ).not.toBe(reserved.id);
+  });
+});
+
+it("сохраняет отмену во время серверной передачи и удаляет её поздний результат", async () => {
+  const { files, objectStore } = buildHarness();
+  const upload = input();
+  let release!: () => void;
+  let entered!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const started = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+  const original = objectStore.put.bind(objectStore);
+  vi.spyOn(objectStore, "put").mockImplementation(async (...args) => {
+    entered();
+    await gate;
+    return await original(...args);
+  });
+  const running = files.uploadThroughServer(upload);
+  const rejected = expect(running).rejects.toMatchObject({
+    name: "FileNotFoundError",
+  });
+  await started;
+  expect(await files.cancelUploadOperation(upload.operationId)).toEqual({
+    status: "processing",
+  });
+  release();
+  await rejected;
+  await files.sweepTerminated();
+  expect(objectStore.objectKeys()).toEqual([]);
+  expect(await files.getUploadOperation(upload.operationId)).toEqual({
+    status: "cancelled",
+  });
 });
