@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, watch } from "vue";
+import { computed, watch } from "vue";
 import { useFileDialog } from "@vueuse/core";
 import {
   CloudUploadIcon,
@@ -26,6 +26,7 @@ import {
 import { Progress } from "@/components/ui/progress";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { formatBytes } from "@/lib/format";
+import { serverUploadSizeError } from "@/lib/uploadLimits";
 import { useFileBrowser } from "@/composables/useFileBrowser";
 import {
   MAX_UPLOAD_SIZE_MB,
@@ -33,23 +34,19 @@ import {
   type UploadRow,
 } from "@/composables/useUpload";
 
-const props = defineProps<{ open: boolean }>();
+defineProps<{ open: boolean }>();
 const emit = defineEmits<{ "update:open": [value: boolean] }>();
 const browser = useFileBrowser();
 const upload = useUpload();
-const targetDirectory = ref(browser.directory.value);
-watch(
-  () => props.open,
-  (open) => {
-    if (open) targetDirectory.value = browser.directory.value;
-  },
+const targetDirectory = computed(
+  () => upload.directory.value ?? browser.directory.value,
 );
 const { files, open: openFileDialog } = useFileDialog({
   multiple: true,
   reset: true,
 });
 watch(files, (value) => {
-  if (value) upload.addFiles(Array.from(value));
+  if (value) upload.addFiles(Array.from(value), browser.directory.value);
 });
 const STAGE_LABELS = {
   idle: "Ожидает",
@@ -70,7 +67,14 @@ function label(row: UploadRow): string {
   return STAGE_LABELS[row.operation.value?.stage.value ?? "idle"];
 }
 function setMode(value: unknown): void {
-  if (value === "server" || value === "presigned") upload.mode.value = value;
+  if (value === "server" || value === "presigned") upload.setMode(value);
+}
+function rowError(row: UploadRow): string | null {
+  const outcome = row.operation.value?.outcome.value;
+  if (outcome?.status === "failed") return outcome.message;
+  return row.state.value === "selected" && upload.mode.value === "server"
+    ? serverUploadSizeError(row.file)
+    : null;
 }
 </script>
 
@@ -195,7 +199,10 @@ function setMode(value: unknown): void {
               >{{
                 row.operation.value?.unresolved.value
                   ? "Выяснить результат"
-                  : "Повторить"
+                  : row.state.value === "cancelled" ||
+                      row.operation.value?.outcome.value?.status === "cancelled"
+                    ? "Загрузить снова"
+                    : "Повторить"
               }}</Button
             >
             <ToggleGroup
@@ -207,16 +214,12 @@ function setMode(value: unknown): void {
               variant="outline"
               aria-label="Режим повтора"
               :disabled="
+                upload.uploading.value ||
                 row.operation.value?.unresolved.value ||
                 row.operation.value?.uploading.value
               "
               :model-value="row.operation.value?.mode"
-              @update:model-value="
-                (value) => {
-                  if (value === 'server' || value === 'presigned')
-                    row.operation.value?.changeMode(value);
-                }
-              "
+              @update:model-value="setMode"
             >
               <ToggleGroupItem value="server">Через сервер</ToggleGroupItem>
               <ToggleGroupItem value="presigned">Напрямую в S3</ToggleGroupItem>
@@ -243,11 +246,11 @@ function setMode(value: unknown): void {
               </p>
             </template>
             <p
-              v-if="row.operation.value?.outcome.value?.status === 'failed'"
+              v-if="rowError(row)"
               role="alert"
               class="text-sm text-destructive"
             >
-              {{ row.operation.value.outcome.value.message }}
+              {{ rowError(row) }}
             </p>
           </div>
         </div>

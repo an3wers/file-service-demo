@@ -21,6 +21,7 @@ import {
 import { isAbortError, isApiError } from "@/api/client";
 import { chunk, range, runPool } from "@/lib/parts";
 import { errorMessage } from "@/lib/errors";
+import { serverUploadSizeError } from "@/lib/uploadLimits";
 
 export type UploadMode = "server" | "presigned";
 export type UploadStage =
@@ -323,6 +324,9 @@ export function createUploadOperation(
         }
       }
       resuming = attempted;
+      const sizeError =
+        currentMode.value === "server" ? serverUploadSizeError(file) : null;
+      if (sizeError) throw new Error(sizeError);
       attempted = true;
       const result =
         currentMode.value === "server"
@@ -348,8 +352,11 @@ export function createUploadOperation(
           unresolved.value = true;
         }
       }
-      if (isApiError(error) && error.code === "TOO_MANY_ACTIVE_UPLOADS") {
-        // Для первой версии выбран ручной повтор; позже можно автоматически ждать свободного места.
+      if (
+        isApiError(error) &&
+        (error.code === "TOO_MANY_ACTIVE_UPLOADS" ||
+          error.code === "PAYLOAD_TOO_LARGE")
+      ) {
         unresolved.value = false;
       }
       outcome.value = isAbortError(error)

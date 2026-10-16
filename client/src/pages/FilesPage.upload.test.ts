@@ -57,7 +57,7 @@ async function setup(
         const file = result(filenames.indexOf(body.filename), body.directory);
         results.set(file.id, file);
         const response = json(
-          source === "presigned"
+          source !== "multipart"
             ? {
                 strategy: "single",
                 id: file.id,
@@ -195,15 +195,16 @@ async function setup(
     }
   }
   vi.stubGlobal("XMLHttpRequest", UploadRequest);
+  let chosenFiles = filenames.map(
+    (name) => new File(["contents"], name, { type: "text/plain" }),
+  );
   vi.spyOn(HTMLInputElement.prototype, "click").mockImplementation(function (
     this: HTMLInputElement,
   ) {
     expect(this.multiple).toBe(true);
     Object.defineProperty(this, "files", {
       configurable: true,
-      value: filenames.map(
-        (name) => new File(["contents"], name, { type: "text/plain" }),
-      ),
+      value: chosenFiles,
     });
     this.dispatchEvent(new Event("change"));
   });
@@ -227,6 +228,15 @@ async function setup(
   await fireEvent.click(screen.getByRole("button", { name: "Выбрать файл" }));
   await flushPromises();
   return {
+    async choose(files: File[]) {
+      chosenFiles = files;
+      for (const file of files)
+        if (!filenames.includes(file.name)) filenames.push(file.name);
+      await fireEvent.click(
+        screen.getByRole("button", { name: "Выбрать файл" }),
+      );
+      await flushPromises();
+    },
     wrapper,
     router,
     requests,
@@ -904,5 +914,309 @@ describe("фоновая загрузка", () => {
     expect(screen.getAllByTestId("upload-row")).toHaveLength(5);
     expect(row(1).getByRole("alert")).toBeTruthy();
     expect(screen.getAllByText("Готово")).toHaveLength(3);
+  });
+});
+
+describe("итерации выбора файлов", () => {
+  it("проверяет полное имя и размер без времени изменения и помнит удалённую строку до конца итерации", async () => {
+    const { choose, requests } = await setup("server", 2);
+    await fireEvent.click(row(0).getByRole("button", { name: "Убрать" }));
+    await choose([
+      new File(["contents"], "report-1.txt", { lastModified: 1 }),
+      new File(["contents"], "report-2.txt", { lastModified: 2 }),
+      new File(["contents"], "report-2.csv"),
+      new File(["larger contents"], "report-2.txt"),
+    ]);
+    expect(screen.getAllByTestId("upload-row")).toHaveLength(3);
+    expect(screen.queryByText("report-1.txt")).toBeNull();
+    expect(requests).toHaveLength(0);
+    await launch();
+    requests.forEach((request) => request.finish());
+    await flushPromises();
+    await choose([new File(["contents"], "report-1.txt")]);
+    expect(screen.getAllByTestId("upload-row")).toHaveLength(4);
+    expect(screen.getAllByText("Готово")).toHaveLength(3);
+    expect(row(3).getByText("Выбран")).toBeTruthy();
+  });
+});
+
+describe("добавление в работающую очередь", () => {
+  it("ждёт отдельного запуска добавлений и сохраняет каталог и режим после закрытия и навигации", async () => {
+    const { choose, requests, router } = await setup("server", 1, {
+      url: "/?directory=docs",
+    });
+    await launch();
+    await fireEvent.click(screen.getByRole("button", { name: "Отмена" }));
+    await flushPromises();
+    await router.push("/?directory=other");
+    await flushPromises();
+    await fireEvent.click(screen.getByRole("button", { name: /^Загрузки:/ }));
+    await flushPromises();
+    expect(
+      (
+        screen.getByRole("button", {
+          name: "Напрямую в S3",
+        }) as HTMLButtonElement
+      ).disabled,
+    ).toBe(true);
+    await choose([new File(["contents"], "added.txt")]);
+    expect(requests).toHaveLength(1);
+    expect(row(1).getByText("Выбран")).toBeTruthy();
+    requests[0]!.finish();
+    await flushPromises();
+    await fireEvent.click(screen.getByRole("button", { name: "Отмена" }));
+    await flushPromises();
+    await fireEvent.click(screen.getByRole("button", { name: /^Загрузки:/ }));
+    await flushPromises();
+    await choose([new File(["contents"], "report.txt", { lastModified: 1 })]);
+    expect(screen.getAllByTestId("upload-row")).toHaveLength(2);
+    await launch();
+    expect(requests).toHaveLength(2);
+    expect((requests[1]!.body as FormData).get("directory")).toBe("docs");
+    requests[1]!.finish();
+    await flushPromises();
+  });
+});
+
+describe("порядок повторных попыток", () => {
+  it("ставит повтор ошибочной строки после ожидающих файлов и сохраняет строки", async () => {
+    const { requests, fetchMock } = await setup("server", 5);
+    const original = fetchMock.getMockImplementation()!;
+    fetchMock.mockImplementation((url, init) =>
+      url.includes("/upload-operations/")
+        ? Promise.resolve(json({ status: "failed" }))
+        : original(url, init),
+    );
+    await launch();
+    requests[0]!.fail();
+    await flushPromises();
+    await fireEvent.click(
+      row(0).getByRole("button", { name: "Выяснить результат" }),
+    );
+    await flushPromises();
+    await fireEvent.click(row(0).getByRole("button", { name: "Повторить" }));
+    requests[1]!.finish();
+    await flushPromises();
+    expect((requests[4]!.body as FormData).get("file")).toMatchObject({
+      name: "report-5.txt",
+    });
+    requests[2]!.finish();
+    await flushPromises();
+    expect((requests[5]!.body as FormData).get("file")).toMatchObject({
+      name: "report-1.txt",
+    });
+    expect((requests[5]!.body as FormData).get("operationId")).toBe(
+      (requests[0]!.body as FormData).get("operationId"),
+    );
+    expect(
+      screen
+        .getAllByTestId("upload-row")
+        .map((element) => within(element).getByText(/report-/).textContent),
+    ).toEqual([
+      "report-1.txt",
+      "report-2.txt",
+      "report-3.txt",
+      "report-4.txt",
+      "report-5.txt",
+    ]);
+    requests.slice(3).forEach((request) => request.finish());
+    await flushPromises();
+  });
+
+  it("ставит отменённую строку в конец очереди без нового выбора", async () => {
+    const { requests } = await setup("server", 5);
+    await launch();
+    await fireEvent.click(row(3).getByRole("button", { name: "Отменить" }));
+    await fireEvent.click(
+      row(3).getByRole("button", { name: "Загрузить снова" }),
+    );
+    requests[0]!.finish();
+    await flushPromises();
+    expect((requests[3]!.body as FormData).get("file")).toMatchObject({
+      name: "report-5.txt",
+    });
+    requests[1]!.finish();
+    await flushPromises();
+    expect((requests[4]!.body as FormData).get("file")).toMatchObject({
+      name: "report-4.txt",
+    });
+    requests.slice(2).forEach((request) => request.finish());
+    await flushPromises();
+    expect(screen.getAllByText("Готово")).toHaveLength(5);
+  });
+});
+
+describe("исправление режима и размера", () => {
+  it("показывает ошибку размера в строке, загружает остальные и повторяет большой файл напрямую с прежней операцией", async () => {
+    const { requests, choose, fetchMock, confirm } = await setup("server");
+    const large = new File(["contents"], "large.txt");
+    Object.defineProperty(large, "size", { value: 50 * 1024 * 1024 + 1 });
+    await choose([large]);
+    expect(row(1).getByRole("alert").textContent).toContain("50 МБ");
+    await launch();
+    expect(requests).toHaveLength(1);
+    expect(row(1).getByText("Ошибка")).toBeTruthy();
+    const operationId = useUpload().rows.value[1]!.operationId;
+    expect(
+      (
+        screen.getAllByRole("button", {
+          name: "Напрямую в S3",
+        })[0] as HTMLButtonElement
+      ).disabled,
+    ).toBe(true);
+    requests[0]!.finish();
+    await flushPromises();
+    await fireEvent.click(
+      screen.getAllByRole("button", { name: "Напрямую в S3" })[0]!,
+    );
+    expect(row(0).getByText("Корень · Через сервер")).toBeTruthy();
+    await fireEvent.click(row(1).getByRole("button", { name: "Повторить" }));
+    await flushPromises();
+    const body = JSON.parse(
+      String(
+        fetchMock.mock.calls.find(([url]) => url.endsWith("presign-upload"))![1]
+          ?.body,
+      ),
+    );
+    expect(body.operationId).toBe(operationId);
+    expect(body.filename).toBe("large.txt");
+    expect(requests).toHaveLength(2);
+    requests[1]!.finish();
+    await flushPromises();
+    confirm(1);
+    await flushPromises();
+    expect(screen.getAllByText("Готово")).toHaveLength(2);
+  });
+
+  it("сохраняет режим неизвестного результата и меняет его только после подтверждения неудачи", async () => {
+    const { requests, fetchMock, confirm } = await setup("server");
+    await launch();
+    const first = requests[0]!.body as FormData;
+    requests[0]!.fail();
+    await flushPromises();
+    await fireEvent.click(
+      screen.getAllByRole("button", { name: "Напрямую в S3" })[0]!,
+    );
+    expect(row(0).getByText("Корень · Через сервер")).toBeTruthy();
+    expect(
+      (
+        row(0).getByRole("button", {
+          name: "Напрямую в S3",
+        }) as HTMLButtonElement
+      ).disabled,
+    ).toBe(true);
+    fetchMock.mockResolvedValueOnce(json({ status: "failed" }));
+    await fireEvent.click(
+      row(0).getByRole("button", { name: "Выяснить результат" }),
+    );
+    await flushPromises();
+    fetchMock.mockResolvedValueOnce(json({ status: "failed" }));
+    await fireEvent.click(row(0).getByRole("button", { name: "Повторить" }));
+    await flushPromises();
+    const body = JSON.parse(
+      String(
+        fetchMock.mock.calls.find(([url]) => url.endsWith("presign-upload"))![1]
+          ?.body,
+      ),
+    );
+    expect(body.operationId).toBe(first.get("operationId"));
+    expect(row(0).getByText("Корень · Напрямую в S3")).toBeTruthy();
+    requests[1]!.finish();
+    await flushPromises();
+    confirm();
+    await flushPromises();
+    expect(row(0).getByText("Готово")).toBeTruthy();
+  });
+});
+
+describe("границы итерации и последующие добавления", () => {
+  it("запускает добавленный файл во время работы только после кнопки и начинает новую операцию того же файла после завершения", async () => {
+    const { requests, choose } = await setup("server");
+    await launch();
+    await choose([new File(["contents"], "extra.txt")]);
+    expect(requests).toHaveLength(1);
+    await launch();
+    expect(requests).toHaveLength(2);
+    const firstId = (requests[0]!.body as FormData).get("operationId");
+    requests.forEach((request) => request.finish());
+    await flushPromises();
+    await choose([new File(["contents"], "report.txt", { lastModified: 0 })]);
+    expect(screen.getAllByText("Готово")).toHaveLength(2);
+    expect(row(2).getByText("Выбран")).toBeTruthy();
+    expect(requests).toHaveLength(2);
+    await launch();
+    expect((requests[2]!.body as FormData).get("operationId")).not.toBe(
+      firstId,
+    );
+    requests[2]!.finish();
+    await flushPromises();
+    expect(screen.getAllByText("Готово")).toHaveLength(3);
+  });
+
+  it("разрешает новый выбор после удаления всех неотправленных строк", async () => {
+    const { choose } = await setup("server");
+    await fireEvent.click(row(0).getByRole("button", { name: "Убрать" }));
+    await choose([new File(["contents"], "report.txt")]);
+    expect(screen.getAllByTestId("upload-row")).toHaveLength(1);
+    expect(row(0).getByText("Выбран")).toBeTruthy();
+  });
+
+  it("оставляет серверную ошибку размера в строке и разрешает безопасный повтор другим режимом", async () => {
+    const { requests, fetchMock, confirm } = await setup("server");
+    await launch();
+    const operationId = (requests[0]!.body as FormData).get("operationId");
+    requests[0]!.status = 413;
+    requests[0]!.responseText = JSON.stringify({
+      error: { code: "PAYLOAD_TOO_LARGE", message: "Превышен лимит" },
+    });
+    requests[0]!.finish();
+    await flushPromises();
+    expect(row(0).getByRole("alert").textContent).toContain(
+      "Файл слишком большой",
+    );
+    await fireEvent.click(
+      screen.getAllByRole("button", { name: "Напрямую в S3" })[0]!,
+    );
+    fetchMock.mockResolvedValueOnce(json({ status: "failed" }));
+    await fireEvent.click(row(0).getByRole("button", { name: "Повторить" }));
+    await flushPromises();
+    const body = JSON.parse(
+      String(
+        fetchMock.mock.calls.find(([url]) => url.endsWith("presign-upload"))![1]
+          ?.body,
+      ),
+    );
+    expect(body.operationId).toBe(operationId);
+    requests[1]!.finish();
+    await flushPromises();
+    confirm();
+    await flushPromises();
+    expect(row(0).getByText("Готово")).toBeTruthy();
+  });
+});
+
+describe("завершённая итерация", () => {
+  it("не открывает завершённую итерацию повтором старой строки и разрешает независимый выбор того же файла", async () => {
+    const { requests, choose, fetchMock } = await setup("server");
+    const original = fetchMock.getMockImplementation()!;
+    fetchMock.mockImplementation((url, init) =>
+      url.includes("/upload-operations/")
+        ? Promise.resolve(json({ status: "failed" }))
+        : original(url, init),
+    );
+    await launch();
+    requests[0]!.fail();
+    await flushPromises();
+    await fireEvent.click(
+      row(0).getByRole("button", { name: "Выяснить результат" }),
+    );
+    await flushPromises();
+    await fireEvent.click(row(0).getByRole("button", { name: "Повторить" }));
+    await flushPromises();
+    await choose([new File(["contents"], "report.txt")]);
+    expect(screen.getAllByTestId("upload-row")).toHaveLength(2);
+    expect(row(1).getByText("Выбран")).toBeTruthy();
+    requests[1]!.finish();
+    await flushPromises();
   });
 });
