@@ -13,6 +13,13 @@ export interface SmtpSettings {
   socketTimeoutMs: number;
 }
 
+function normalizeDomain(address: string): string {
+  const separator = address.lastIndexOf("@");
+  return (
+    address.slice(0, separator + 1) + address.slice(separator + 1).toLowerCase()
+  );
+}
+
 export function createSmtpTransport(settings: SmtpSettings): MailTransport {
   return {
     async send(message) {
@@ -37,7 +44,8 @@ export function createSmtpTransport(settings: SmtpSettings): MailTransport {
           typeof result.messageId !== "string" ||
           result.messageId.trim().length === 0 ||
           result.accepted.length !== 1 ||
-          result.accepted[0] !== message.to ||
+          typeof result.accepted[0] !== "string" ||
+          normalizeDomain(result.accepted[0]) !== normalizeDomain(message.to) ||
           result.rejected.length > 0
         ) {
           throw new NotificationError("EMAIL_SEND_FAILED");

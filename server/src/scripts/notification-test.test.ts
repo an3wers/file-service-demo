@@ -2,16 +2,17 @@ import { Socket, Server } from "node:net";
 import { inspect } from "node:util";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 
-const { sendMail, info, error } = vi.hoisted(() => ({
+const { sendMail, info, error, warn } = vi.hoisted(() => ({
   sendMail: vi.fn(),
   info: vi.fn(),
   error: vi.fn(),
+  warn: vi.fn(),
 }));
 
 vi.mock("nodemailer", () => ({
   default: { createTransport: () => ({ sendMail }) },
 }));
-vi.mock("../logger.js", () => ({ logger: { info, error } }));
+vi.mock("../logger.js", () => ({ logger: { info, error, warn } }));
 
 const originalArgv = process.argv;
 const originalExitCode = process.exitCode;
@@ -108,6 +109,17 @@ it("скрывает детали сбоя SMTP и завершает коман
     "Email submission failed",
   );
   expect(info).not.toHaveBeenCalled();
+  expect(warn).toHaveBeenCalledExactlyOnceWith(
+    {
+      err: expect.objectContaining({
+        code: "EMAIL_SEND_FAILED",
+        message: "Email submission failed",
+      }),
+    },
+    "Email submission failed",
+  );
+  expect(inspect(warn.mock.calls)).not.toContain("smtp-secret-value");
+  expect(inspect(warn.mock.calls)).not.toContain("This is a test email");
   expect(inspect(error.mock.calls)).not.toContain("smtp-secret-value");
   expect(inspect(error.mock.calls)).not.toContain("This is a test email");
 });

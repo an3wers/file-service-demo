@@ -57,6 +57,34 @@ describe("SMTP-транспорт", () => {
       debug: false,
     });
   });
+  it("принимает адрес с нормализованным регистром домена SMTP", async () => {
+    sendMail.mockResolvedValue({
+      messageId: "smtp-id",
+      accepted: ["Recipient@example.com"],
+      rejected: [],
+    });
+    await expect(
+      createSmtpTransport(settings).send({
+        ...message,
+        to: "Recipient@EXAMPLE.COM",
+      }),
+    ).resolves.toEqual({ messageId: "smtp-id" });
+  });
+
+  it("отклоняет принятие адреса с другим регистром локальной части", async () => {
+    sendMail.mockResolvedValue({
+      messageId: "smtp-id",
+      accepted: ["recipient@example.com"],
+      rejected: [],
+    });
+    await expect(
+      createSmtpTransport(settings).send({
+        ...message,
+        to: "Recipient@EXAMPLE.COM",
+      }),
+    ).rejects.toMatchObject({ code: "EMAIL_SEND_FAILED" });
+  });
+
   it("требует STARTTLS и применяет отдельные таймауты без пула", async () => {
     await createSmtpTransport({
       ...settings,
