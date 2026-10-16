@@ -34,6 +34,20 @@ const envSchema = z.object({
   CORS_ORIGIN: z.string().default("http://localhost:5173"),
   API_DOCS_ENABLED: booleanish.optional(),
 
+  NOTIFICATION_ENABLED: booleanish.default(false),
+  SMTP_HOST: z.string().trim().min(1).optional(),
+  SMTP_PORT: z.coerce.number().int().min(1).max(65535).optional(),
+  SMTP_TLS_MODE: z.enum(["implicit", "starttls"]).optional(),
+  SMTP_USER: z.string().trim().min(1).optional(),
+  SMTP_PASSWORD: z
+    .string()
+    .refine((value) => value.trim().length > 0)
+    .optional(),
+  SMTP_FROM: z.email().optional(),
+  SMTP_CONNECTION_TIMEOUT_MS: z.coerce.number().positive().default(10000),
+  SMTP_GREETING_TIMEOUT_MS: z.coerce.number().positive().default(10000),
+  SMTP_SOCKET_TIMEOUT_MS: z.coerce.number().positive().default(30000),
+
   S3_ENDPOINT: z.url(),
   S3_REGION: z.string().min(1),
   S3_BUCKET_NAME: z.string().min(1),
@@ -96,7 +110,27 @@ const envSchema = z.object({
   MAX_OBJECT_SIZE_GB: z.coerce.number().int().positive().max(5120).default(200),
 });
 
-const parsed = envSchema.safeParse(process.env);
+const notificationEnvSchema = envSchema.superRefine((value, context) => {
+  if (value.NOTIFICATION_ENABLED) {
+    for (const key of [
+      "SMTP_HOST",
+      "SMTP_PORT",
+      "SMTP_TLS_MODE",
+      "SMTP_USER",
+      "SMTP_PASSWORD",
+      "SMTP_FROM",
+    ] as const) {
+      if (value[key] === undefined)
+        context.addIssue({
+          code: "custom",
+          path: [key],
+          message: "Required when notifications are enabled",
+        });
+    }
+  }
+});
+
+const parsed = notificationEnvSchema.safeParse(process.env);
 
 if (!parsed.success) {
   const issues = parsed.error.issues
@@ -118,6 +152,23 @@ export const config = {
     .map((origin) => origin.trim())
     .filter(Boolean),
   apiDocsEnabled: env.API_DOCS_ENABLED ?? env.NODE_ENV !== "production",
+
+  notification: env.NOTIFICATION_ENABLED
+    ? {
+        enabled: true as const,
+        from: env.SMTP_FROM!,
+        smtp: {
+          host: env.SMTP_HOST!,
+          port: env.SMTP_PORT!,
+          tlsMode: env.SMTP_TLS_MODE!,
+          user: env.SMTP_USER!,
+          password: env.SMTP_PASSWORD!,
+          connectionTimeoutMs: env.SMTP_CONNECTION_TIMEOUT_MS,
+          greetingTimeoutMs: env.SMTP_GREETING_TIMEOUT_MS,
+          socketTimeoutMs: env.SMTP_SOCKET_TIMEOUT_MS,
+        },
+      }
+    : { enabled: false as const },
 
   auth: {
     login: env.LOGIN_USER_APP,

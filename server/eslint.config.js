@@ -17,6 +17,7 @@ const VENDOR_PACKAGES = [
   "express",
   "multer",
   "jose",
+  "nodemailer",
   "@aws-sdk/client-s3",
   "@aws-sdk/s3-request-presigner",
 ];
