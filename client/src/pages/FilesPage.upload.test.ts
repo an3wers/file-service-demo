@@ -26,6 +26,7 @@ async function setup(
   } = {},
 ) {
   const ready: FileDto[] = [];
+  const deleteResponses: Response[] = [];
   const confirmations = new Map<string, () => void>();
   const deletions = new Map<string, () => void>();
   const preparations: (() => void)[] = [];
@@ -113,13 +114,20 @@ async function setup(
         });
       }
       if (init?.method === "DELETE") {
+        const response =
+          deleteResponses.shift() ?? new Response(null, { status: 204 });
+        const finish = () => {
+          if (response.ok || response.status === 404) {
+            const index = ready.findIndex((file) => file.id === id);
+            if (index !== -1) ready.splice(index, 1);
+          }
+          return response;
+        };
         if (options.delayedDelete)
           return new Promise((resolve) => {
-            deletions.set(id, () =>
-              resolve(new Response(null, { status: 204 })),
-            );
+            deletions.set(id, () => resolve(finish()));
           });
-        return new Response(null, { status: 204 });
+        return finish();
       }
       if (url.startsWith("/api/directories"))
         return json({ parent: "", items: [] });
@@ -245,6 +253,7 @@ async function setup(
     finishDelete: (index = 0) => deletions.get(`file-${index + 1}`)!(),
     preparations,
     ready,
+    deleteResponses,
     file: result(0),
   };
 }
@@ -1220,3 +1229,238 @@ describe("завершённая итерация", () => {
     await flushPromises();
   });
 });
+
+describe("удаление готового файла из загрузок", () => {
+  it("подтверждает удаление из хранилища и синхронизирует модалку со списком", async () => {
+    const { wrapper, requests, fetchMock } = await setup("server");
+    await fireEvent.click(screen.getByRole("button", { name: /^Загрузить$/ }));
+    await flushPromises();
+    requests[0]!.finish();
+    await flushPromises();
+    await fireEvent.click(
+      screen.getByRole("button", { name: "Удалить из хранилища" }),
+    );
+    const confirmation = screen.getByRole("alertdialog");
+    expect(
+      within(confirmation).getByText("Удалить файл из хранилища?"),
+    ).toBeTruthy();
+    expect(confirmation.textContent).toContain("report.txt");
+    expect(
+      fetchMock.mock.calls.filter(([, init]) => init?.method === "DELETE"),
+    ).toHaveLength(0);
+    await fireEvent.click(
+      within(confirmation).getByRole("button", { name: "Отмена" }),
+    );
+    await flushPromises();
+    expect(screen.getByText("Готово")).toBeTruthy();
+    await fireEvent.click(
+      screen.getByRole("button", { name: "Удалить из хранилища" }),
+    );
+    await fireEvent.click(
+      within(screen.getByRole("alertdialog")).getByRole("button", {
+        name: "Удалить",
+      }),
+    );
+    await flushPromises();
+    expect(screen.queryByText("Готово")).toBeNull();
+    expect(
+      fetchMock.mock.calls.filter(([, init]) => init?.method === "DELETE"),
+    ).toHaveLength(1);
+    expect(useFileBrowser().files.value).toHaveLength(0);
+    wrapper.unmount();
+  });
+});
+
+it.each(["модалка", "список"])(
+  "сохраняет строку при ошибке, разрешает повтор и блокирует повторное подтверждение: %s",
+  async (origin) => {
+    const { requests, fetchMock, finishDelete, deleteResponses } = await setup(
+      "server",
+      1,
+      { delayedDelete: true },
+    );
+    deleteResponses.push(
+      new Response(
+        JSON.stringify({
+          error: { code: "INTERNAL_ERROR", message: "Ошибка сервера" },
+        }),
+        { status: 500 },
+      ),
+    );
+    await fireEvent.click(screen.getByRole("button", { name: /^Загрузить$/ }));
+    await flushPromises();
+    requests[0]!.finish();
+    await flushPromises();
+    if (origin === "список") {
+      await fireEvent.click(screen.getByRole("button", { name: "Отмена" }));
+      await flushPromises();
+    }
+    await fireEvent.click(
+      screen.getByRole("button", {
+        name: origin === "список" ? "Удалить файл" : "Удалить из хранилища",
+      }),
+    );
+    const confirm = within(screen.getByRole("alertdialog")).getByRole(
+      "button",
+      { name: "Удалить" },
+    );
+    await fireEvent.click(confirm);
+    await flushPromises();
+    expect((confirm as HTMLButtonElement).disabled).toBe(true);
+    (confirm as HTMLButtonElement).click();
+    expect(
+      fetchMock.mock.calls.filter(([, init]) => init?.method === "DELETE"),
+    ).toHaveLength(1);
+    finishDelete();
+    await flushPromises();
+    expect(screen.getByRole("alertdialog")).toBeTruthy();
+    expect(useFileBrowser().files.value).toHaveLength(1);
+    expect((confirm as HTMLButtonElement).disabled).toBe(false);
+    await fireEvent.click(confirm);
+    await flushPromises();
+    finishDelete();
+    await flushPromises();
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+    expect(screen.queryByText("Готово")).toBeNull();
+    expect(useFileBrowser().files.value).toHaveLength(0);
+  },
+);
+
+it.each(["модалка", "список"])(
+  "синхронизирует уже удалённый файл по FILE_NOT_FOUND: %s",
+  async (origin) => {
+    const { requests, deleteResponses } = await setup("server");
+    deleteResponses.push(
+      new Response(
+        JSON.stringify({
+          error: { code: "FILE_NOT_FOUND", message: "Файл не найден" },
+        }),
+        { status: 404 },
+      ),
+    );
+    await fireEvent.click(screen.getByRole("button", { name: /^Загрузить$/ }));
+    await flushPromises();
+    requests[0]!.finish();
+    await flushPromises();
+    if (origin === "список") {
+      await fireEvent.click(screen.getByRole("button", { name: "Отмена" }));
+      await flushPromises();
+    }
+    await fireEvent.click(
+      screen.getByRole("button", {
+        name: origin === "список" ? "Удалить файл" : "Удалить из хранилища",
+      }),
+    );
+    await fireEvent.click(
+      within(screen.getByRole("alertdialog")).getByRole("button", {
+        name: "Удалить",
+      }),
+    );
+    await flushPromises();
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+    expect(screen.queryByText("Готово")).toBeNull();
+    expect(useFileBrowser().files.value).toHaveLength(0);
+  },
+);
+
+it("удаляет из списка сохранённый результат прошлой итерации по идентификатору, сохраняя одноимённый файл", async () => {
+  const { requests, file, choose } = await setup("server");
+  await fireEvent.click(screen.getByRole("button", { name: /^Загрузить$/ }));
+  await flushPromises();
+  requests[0]!.finish();
+  await flushPromises();
+  await choose([new File(["contents"], file.name, { type: "text/plain" })]);
+  await fireEvent.click(screen.getByRole("button", { name: /^Загрузить$/ }));
+  await flushPromises();
+  requests[1]!.file = { ...file, id: "file-2", key: "file-2.txt" };
+  requests[1]!.responseText = JSON.stringify(requests[1]!.file);
+  requests[1]!.finish();
+  await flushPromises();
+  await fireEvent.click(screen.getByRole("button", { name: "Отмена" }));
+  await flushPromises();
+  await fireEvent.click(
+    screen.getAllByRole("button", { name: "Удалить файл" })[0]!,
+  );
+  await fireEvent.click(
+    within(screen.getByRole("alertdialog")).getByRole("button", {
+      name: "Удалить",
+    }),
+  );
+  await flushPromises();
+  expect(useFileBrowser().files.value.map((item) => item.id)).toEqual([
+    "file-2",
+  ]);
+  await fireEvent.click(screen.getByRole("button", { name: /^Загрузки:/ }));
+  await flushPromises();
+  expect(screen.getAllByText("Готово")).toHaveLength(1);
+  expect(
+    within(screen.getByRole("dialog")).getAllByText("report.txt"),
+  ).toHaveLength(1);
+});
+
+it("не разрешает повторно выбрать удалённый готовый файл до конца текущей итерации", async () => {
+  const { requests, choose, file } = await setup("server");
+  await fireEvent.click(screen.getByRole("button", { name: /^Загрузить$/ }));
+  await flushPromises();
+  const other = new File(["other"], "other.txt");
+  await choose([other]);
+  requests[0]!.finish();
+  await flushPromises();
+  await fireEvent.click(
+    screen.getByRole("button", { name: "Удалить из хранилища" }),
+  );
+  await fireEvent.click(
+    within(screen.getByRole("alertdialog")).getByRole("button", {
+      name: "Удалить",
+    }),
+  );
+  await flushPromises();
+  await choose([new File(["contents"], file.name)]);
+  expect(within(screen.getByRole("dialog")).queryByText(file.name)).toBeNull();
+  await fireEvent.click(screen.getByRole("button", { name: "Убрать" }));
+  await choose([new File(["contents"], file.name)]);
+  expect(within(screen.getByRole("dialog")).getByText(file.name)).toBeTruthy();
+});
+
+it.each(["ошибка", "отмена"])(
+  "убирает строку с исходом %s без удаления одноимённого готового файла и сохраняет учёт выбора",
+  async (outcome) => {
+    const { requests, choose, file, fetchMock } = await setup("server");
+    await fireEvent.click(screen.getByRole("button", { name: /^Загрузить$/ }));
+    await flushPromises();
+    requests[0]!.finish();
+    await flushPromises();
+    await choose([
+      new File(["contents"], file.name),
+      new File(["other"], "other.txt"),
+    ]);
+    await fireEvent.click(screen.getByRole("button", { name: /^Загрузить$/ }));
+    await flushPromises();
+    expect(screen.queryByRole("button", { name: "Убрать строку" })).toBeNull();
+    if (outcome === "ошибка") requests[1]!.fail();
+    else
+      await fireEvent.click(
+        screen.getAllByRole("button", { name: "Отменить" })[0]!,
+      );
+    await flushPromises();
+    await fireEvent.click(
+      screen.getByRole("button", { name: "Убрать строку" }),
+    );
+    await choose([new File(["contents"], file.name)]);
+    expect(
+      within(screen.getByRole("dialog")).getAllByText(file.name),
+    ).toHaveLength(1);
+    expect(
+      fetchMock.mock.calls.filter(([, init]) => init?.method === "DELETE"),
+    ).toHaveLength(0);
+    expect(useFileBrowser().files.value.map((item) => item.id)).toEqual([
+      file.id,
+    ]);
+    requests[2]!.finish();
+    await flushPromises();
+    await choose([new File(["contents"], file.name)]);
+    expect(
+      within(screen.getByRole("dialog")).getAllByText(file.name),
+    ).toHaveLength(2);
+  },
+);

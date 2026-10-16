@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, watch } from "vue";
+import { computed, ref, watch } from "vue";
 import { useFileDialog } from "@vueuse/core";
 import {
   CloudUploadIcon,
@@ -7,6 +7,8 @@ import {
   ServerIcon,
   UploadIcon,
 } from "@lucide/vue";
+import DeleteFileDialog from "./DeleteFileDialog.vue";
+import type { FileDto } from "@/types/api";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -36,6 +38,14 @@ import {
 
 defineProps<{ open: boolean }>();
 const emit = defineEmits<{ "update:open": [value: boolean] }>();
+const fileToDelete = ref<FileDto | null>(null);
+const deleteOpen = ref(false);
+function askDelete(row: UploadRow): void {
+  const outcome = row.operation.value?.outcome.value;
+  if (outcome?.status !== "succeeded") return;
+  fileToDelete.value = outcome.file;
+  deleteOpen.value = true;
+}
 const browser = useFileBrowser();
 const upload = useUpload();
 const targetDirectory = computed(
@@ -182,6 +192,23 @@ function rowError(row: UploadRow): string | null {
               >
             </div>
             <Button
+              v-if="row.operation.value?.outcome.value?.status === 'succeeded'"
+              variant="outline"
+              size="sm"
+              @click="askDelete(row)"
+              >Удалить из хранилища</Button
+            >
+            <Button
+              v-else-if="
+                row.state.value === 'finished' ||
+                row.state.value === 'cancelled'
+              "
+              variant="outline"
+              size="sm"
+              @click="upload.remove(row)"
+              >Убрать строку</Button
+            >
+            <Button
               v-if="
                 (row.state.value === 'finished' ||
                   row.state.value === 'cancelled') &&
@@ -267,4 +294,5 @@ function rowError(row: UploadRow): string | null {
       </DialogFooter>
     </DialogContent>
   </Dialog>
+  <DeleteFileDialog v-model:open="deleteOpen" :file="fileToDelete" />
 </template>

@@ -3,7 +3,6 @@ import { ref } from "vue";
 import type { FileDto } from "@/types/api";
 import {
   AlertDialog,
-  AlertDialogAction,
   AlertDialogCancel,
   AlertDialogContent,
   AlertDialogDescription,
@@ -11,9 +10,8 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { buttonVariants } from "@/components/ui/button";
+import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
-import { cn } from "@/lib/utils";
 import { useFileActions } from "@/composables/useFileActions";
 
 const props = defineProps<{ file: FileDto | null; open: boolean }>();
@@ -54,7 +52,7 @@ async function confirm(event: Event): Promise<void> {
   <AlertDialog :open="open" @update:open="emit('update:open', $event)">
     <AlertDialogContent>
       <AlertDialogHeader>
-        <AlertDialogTitle>Удалить файл?</AlertDialogTitle>
+        <AlertDialogTitle>Удалить файл из хранилища?</AlertDialogTitle>
         <AlertDialogDescription>
           Файл «{{ file?.name }}» будет удалён безвозвратно — отменить действие
           нельзя.
@@ -62,14 +60,10 @@ async function confirm(event: Event): Promise<void> {
       </AlertDialogHeader>
       <AlertDialogFooter>
         <AlertDialogCancel :disabled="pending"> Отмена </AlertDialogCancel>
-        <AlertDialogAction
-          :class="cn(buttonVariants({ variant: 'destructive' }))"
-          :disabled="pending"
-          @click="confirm"
-        >
+        <Button variant="destructive" :disabled="pending" @click="confirm">
           <Spinner v-if="pending" data-icon="inline-start" />
           Удалить
-        </AlertDialogAction>
+        </Button>
       </AlertDialogFooter>
     </AlertDialogContent>
   </AlertDialog>

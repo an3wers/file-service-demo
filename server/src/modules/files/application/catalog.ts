@@ -174,8 +174,7 @@ export function createCatalogModule({
     },
 
     async deleteFile(id): Promise<void> {
-      // The metadata row is the source of truth, so retire it first; a failed
-      // storage delete then only leaves an unreferenced object behind.
+      // Сервер скрывает файл из списка, пытается удалить и возвращает успех даже при сбое хранилища
       const file = await fileRows.softDeleteFile(id);
 
       if (!file) {

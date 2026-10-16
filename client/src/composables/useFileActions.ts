@@ -3,6 +3,7 @@ import type { FileDto } from "@/types/api";
 import { deleteFile, getDownloadUrl } from "@/api/files";
 import { isApiError } from "@/api/client";
 import { errorMessage, isRetryable, requestReference } from "@/lib/errors";
+import { useUpload } from "./useUpload";
 import { useFileBrowser } from "./useFileBrowser";
 
 /**
@@ -51,17 +52,19 @@ function downloadByUrl(url: string): void {
   navigateToDownload(url);
 }
 
-async function remove(file: FileDto): Promise<void> {
+async function performRemove(file: FileDto): Promise<void> {
   const browser = useFileBrowser();
 
   try {
     await deleteFile(file.id);
     toast.success(`Файл «${file.name}» удалён`);
+    useUpload().removeFile(file.id);
     browser.refresh();
   } catch (error) {
     // 404 означает «уже удалён» — список всё равно надо обновить.
-    if (isApiError(error) && error.status === 404) {
+    if (isApiError(error) && error.code === "FILE_NOT_FOUND") {
       toast.info(`Файл «${file.name}» уже был удалён`);
+      useUpload().removeFile(file.id);
       browser.refresh();
       return;
     }
@@ -73,6 +76,16 @@ async function remove(file: FileDto): Promise<void> {
     });
     throw error;
   }
+}
+
+const removals = new Map<string, Promise<void>>();
+
+function remove(file: FileDto): Promise<void> {
+  const pending = removals.get(file.id);
+  if (pending) return pending;
+  const request = performRemove(file).finally(() => removals.delete(file.id));
+  removals.set(file.id, request);
+  return request;
 }
 
 export function useFileActions() {

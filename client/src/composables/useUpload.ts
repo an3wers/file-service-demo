@@ -95,11 +95,26 @@ function addFiles(files: readonly File[], targetDirectory = ""): void {
 }
 
 function remove(row: UploadRow): void {
-  if (row.state.value === "selected") {
+  if (
+    row.state.value === "selected" ||
+    ((row.state.value === "finished" || row.state.value === "cancelled") &&
+      row.operation.value?.outcome.value?.status !== "succeeded")
+  ) {
     iterationRows.delete(row);
     rows.value = rows.value.filter((item) => item !== row);
     finishIteration();
   }
+}
+
+function removeFile(id: string): void {
+  for (const row of rows.value) {
+    const outcome = row.operation.value?.outcome.value;
+    if (outcome?.status === "succeeded" && outcome.file.id === id) {
+      iterationRows.delete(row);
+      rows.value = rows.value.filter((item) => item !== row);
+    }
+  }
+  finishIteration();
 }
 
 async function run(row: UploadRow): Promise<void> {
@@ -198,6 +213,7 @@ export function useUpload() {
     summary,
     addFiles,
     remove,
+    removeFile,
     submit,
     retry,
     async checkResult(row: UploadRow) {
