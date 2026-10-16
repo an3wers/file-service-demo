@@ -58,6 +58,20 @@ function assemble(objectStore: ReturnType<typeof buildHarness>["objectStore"]) {
     ...createCatalogModule(deps),
   };
 }
+async function withSingleConnection(run: () => Promise<void>) {
+  const previousLimit = pool.options.max ?? 10;
+  const previousTimeout = pool.options.connectionTimeoutMillis;
+  while (pool.idleCount > 0) (await pool.connect()).release(true);
+  pool.options.max = 1;
+  pool.options.connectionTimeoutMillis = 1_000;
+  try {
+    await run();
+    expect(pool.totalCount).toBe(1);
+  } finally {
+    pool.options.max = previousLimit;
+    pool.options.connectionTimeoutMillis = previousTimeout;
+  }
+}
 function input() {
   return {
     operationId: randomUUID(),
@@ -69,9 +83,7 @@ function input() {
 
 describe("операции загрузки в PostgreSQL", () => {
   it("загружает файл и выясняет результат с одним соединением в пуле", async () => {
-    const previousLimit = pool.options.max ?? 10;
-    pool.options.max = 1;
-    try {
+    await withSingleConnection(async () => {
       const { objectStore } = buildHarness();
       const module = assemble(objectStore);
       const upload = input();
@@ -81,10 +93,7 @@ describe("операции загрузки в PostgreSQL", () => {
         file,
       });
       expect(await module.uploadThroughServer(upload)).toEqual(file);
-      expect(pool.totalCount).toBe(1);
-    } finally {
-      pool.options.max = previousLimit;
-    }
+    });
   });
 
   it("не запускает конкурентную обработку в другом экземпляре модуля", async () => {
@@ -190,9 +199,7 @@ describe.each([5, THREE_PART_SIZE])(
   "прямая операция PostgreSQL размером %i",
   (size) => {
     it("сохраняет резервирование, план и подтверждение после перезапуска и удаления", async () => {
-      const previousLimit = pool.options.max ?? 10;
-      pool.options.max = 1;
-      try {
+      await withSingleConnection(async () => {
         const { objectStore } = buildHarness();
         const upload = { ...input(), size };
         const first = await assemble(objectStore).createPresignedUpload(upload);
@@ -241,9 +248,7 @@ describe.each([5, THREE_PART_SIZE])(
             })
           ).id,
         ).not.toBe(file.id);
-      } finally {
-        pool.options.max = previousLimit;
-      }
+      });
     });
 
     it("не создаёт второе резервирование при конкурентном повторе из другого экземпляра", async () => {
