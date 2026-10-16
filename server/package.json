@@ -14,6 +14,7 @@
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
     "db:migrate": "node --env-file-if-exists=.env --import tsx src/db/migrate.ts",
+    "notification:test": "node --env-file-if-exists=.env --import tsx src/scripts/notification-test.ts",
     "db:cleanup": "node --env-file-if-exists=.env --import tsx src/scripts/cleanup-pending.ts",
     "openapi": "node --env-file-if-exists=.env --import tsx src/scripts/openapi.ts",
     "s3:cors": "node --env-file-if-exists=.env --import tsx src/scripts/s3-cors.ts",
