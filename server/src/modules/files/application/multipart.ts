@@ -148,7 +148,8 @@ export function createMultipartModule({
       reservation,
       rows = fileRows,
     ): Promise<PresignMultipartResult> {
-      await requireDirectory(directories, normalizeDirectory(body.directory));
+      if (!reservation)
+        await requireDirectory(directories, normalizeDirectory(body.directory));
       const { id, key, directory, originalName, extension, contentType } =
         reservation ?? reserveKey(body);
 
