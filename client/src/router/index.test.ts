@@ -59,7 +59,7 @@ class FakeChannel implements AuthChannel {
 function setup() {
   const channel = new FakeChannel();
   const auth = createAuth(channel);
-  const upload = { cancel: vi.fn() };
+  const upload = { stop: vi.fn(), reset: vi.fn() };
   const browser = { reset: vi.fn() };
   const notify = vi.fn();
   const router = createAppRouter({
@@ -144,7 +144,8 @@ describe("роутер", () => {
     });
     await settle();
 
-    expect(upload.cancel).toHaveBeenCalled();
+    expect(upload.stop).toHaveBeenCalled();
+    expect(upload.reset).not.toHaveBeenCalled();
     expect(browser.reset).not.toHaveBeenCalled();
     expect(notify).toHaveBeenCalledWith("Сессия истекла — войдите снова");
     expect(router.currentRoute.value.name).toBe("login");
@@ -161,7 +162,7 @@ describe("роутер", () => {
 
     expect(channel.posted).toEqual([{ type: "logout" }]);
     expect(getAccessToken()).toBeNull();
-    expect(upload.cancel).toHaveBeenCalled();
+    expect(upload.reset).toHaveBeenCalled();
     expect(browser.reset).toHaveBeenCalled();
     expect(router.currentRoute.value.name).toBe("login");
   });
@@ -191,7 +192,7 @@ describe("канал между вкладками", () => {
     await settle();
 
     expect(getAccessToken()).toBeNull();
-    expect(upload.cancel).toHaveBeenCalled();
+    expect(upload.reset).toHaveBeenCalled();
     expect(browser.reset).toHaveBeenCalled();
     expect(notify).toHaveBeenCalledWith("Вы вышли в другой вкладке");
     expect(router.currentRoute.value.name).toBe("login");
@@ -208,7 +209,8 @@ describe("канал между вкладками", () => {
     channel.deliver({ type: "logout" });
     await settle();
 
-    expect(upload.cancel).not.toHaveBeenCalled();
+    expect(upload.reset).not.toHaveBeenCalled();
+    expect(upload.stop).not.toHaveBeenCalled();
     expect(browser.reset).not.toHaveBeenCalled();
     expect(notify).not.toHaveBeenCalled();
   });

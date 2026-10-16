@@ -1,16 +1,20 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { flushPromises, mount } from "@vue/test-utils";
 import { fireEvent, screen, within } from "@testing-library/vue";
-import { createMemoryHistory, createRouter } from "vue-router";
+import { createMemoryHistory, createRouter, RouterView } from "vue-router";
+import { createAppRouter } from "@/router";
+import { useAuth } from "@/composables/useAuth";
+import { apiRequest } from "@/api/client";
 import FilesPage from "./FilesPage.vue";
 import UploadPanel from "@/components/UploadPanel.vue";
 import { useUpload } from "@/composables/useUpload";
 import { useFileBrowser } from "@/composables/useFileBrowser";
-import { startSession } from "@/api/session";
+import { expireSession, startSession } from "@/api/session";
 import type { FileDto, UploadSource } from "@/types/api";
 
-function json(body: unknown) {
+function json(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), {
+    status,
     headers: { "Content-Type": "application/json" },
   });
 }
@@ -22,6 +26,10 @@ async function setup(
     delayedAbort?: boolean;
     delayedDelete?: boolean;
     delayedPreparation?: boolean;
+    ignorePreparationAbort?: boolean;
+    preparationResponse?: Response;
+    lifecycle?: boolean;
+    delayedLogout?: boolean;
     url?: string;
   } = {},
 ) {
@@ -30,6 +38,7 @@ async function setup(
   const confirmations = new Map<string, () => void>();
   const deletions = new Map<string, () => void>();
   const preparations: (() => void)[] = [];
+  let finishLogout = () => {};
   const filenames = Array.from({ length: count }, (_, index) =>
     count === 1 ? "report.txt" : `report-${index + 1}.txt`,
   );
@@ -53,46 +62,62 @@ async function setup(
   const results = new Map<string, FileDto>();
   const fetchMock = vi.fn(
     async (url: string, init?: RequestInit): Promise<Response> => {
+      if (url === "/api/auth/logout") {
+        if (options.delayedLogout)
+          return new Promise((resolve) => {
+            finishLogout = () => resolve(new Response(null, { status: 204 }));
+          });
+        return new Response(null, { status: 204 });
+      }
+      if (url === "/api/auth/refresh" || url === "/api/auth/login")
+        return json({
+          accessToken: "token",
+          expiresIn: 3600,
+          user: { login: "operator" },
+        });
       if (url === "/api/files/presign-upload") {
         const body = JSON.parse(String(init?.body));
         const file = result(filenames.indexOf(body.filename), body.directory);
         results.set(file.id, file);
-        const response = json(
-          source !== "multipart"
-            ? {
-                strategy: "single",
-                id: file.id,
-                key: file.key,
-                directory: file.directory,
-                uploadUrl: `https://storage.test/${file.id}`,
-                requiredHeaders: { "Content-Type": "text/plain" },
-                expiresAt: "2026-01-01T01:00:00Z",
-              }
-            : {
-                strategy: "multipart",
-                id: file.id,
-                key: file.key,
-                directory: file.directory,
-                uploadId: `upload-${file.id}`,
-                size: 8,
-                partSize: 4,
-                partCount: 2,
-                maxConcurrency: 2,
-                expiresAt: "2026-01-01T01:00:00Z",
-                parts: [1, 2].map((partNumber) => ({
-                  partNumber,
-                  offset: (partNumber - 1) * 4,
-                  size: 4,
-                  url: `https://storage.test/${file.id}/part-${partNumber}`,
-                })),
-              },
-        );
+        const response =
+          options.preparationResponse ??
+          json(
+            source !== "multipart"
+              ? {
+                  strategy: "single",
+                  id: file.id,
+                  key: file.key,
+                  directory: file.directory,
+                  uploadUrl: `https://storage.test/${file.id}`,
+                  requiredHeaders: { "Content-Type": "text/plain" },
+                  expiresAt: "2026-01-01T01:00:00Z",
+                }
+              : {
+                  strategy: "multipart",
+                  id: file.id,
+                  key: file.key,
+                  directory: file.directory,
+                  uploadId: `upload-${file.id}`,
+                  size: 8,
+                  partSize: 4,
+                  partCount: 2,
+                  maxConcurrency: 2,
+                  expiresAt: "2026-01-01T01:00:00Z",
+                  parts: [1, 2].map((partNumber) => ({
+                    partNumber,
+                    offset: (partNumber - 1) * 4,
+                    size: 4,
+                    url: `https://storage.test/${file.id}/part-${partNumber}`,
+                  })),
+                },
+          );
         if (options.delayedPreparation)
           return new Promise((resolve, reject) => {
             preparations.push(() => resolve(response));
-            init?.signal?.addEventListener("abort", () =>
-              reject(new DOMException("Отменено", "AbortError")),
-            );
+            if (!options.ignorePreparationAbort)
+              init?.signal?.addEventListener("abort", () =>
+                reject(new DOMException("Отменено", "AbortError")),
+              );
           });
         return response;
       }
@@ -160,6 +185,7 @@ async function setup(
     body: XMLHttpRequestBodyInit | null = null;
     url = "";
     file: FileDto | null = null;
+    aborted = false;
     open(_method: string, url: string) {
       this.url = url;
     }
@@ -199,6 +225,7 @@ async function setup(
       this.dispatchEvent(new Event("abort"));
     }
     abort() {
+      this.aborted = true;
       if (!options.delayedAbort) this.finishAbort();
     }
   }
@@ -216,13 +243,21 @@ async function setup(
     });
     this.dispatchEvent(new Event("change"));
   });
-  const router = createRouter({
-    history: createMemoryHistory(),
-    routes: [{ path: "/", component: FilesPage }],
-  });
+  const router = options.lifecycle
+    ? createAppRouter({
+        history: createMemoryHistory(),
+        auth: useAuth(),
+        upload: useUpload(),
+        browser: useFileBrowser(),
+        notify: () => {},
+      })
+    : createRouter({
+        history: createMemoryHistory(),
+        routes: [{ path: "/", component: FilesPage }],
+      });
   await router.push(options.url ?? "/");
   await router.isReady();
-  const wrapper = mount(FilesPage, {
+  const wrapper = mount(options.lifecycle ? RouterView : FilesPage, {
     attachTo: document.body,
     global: { plugins: [router] },
   });
@@ -245,6 +280,17 @@ async function setup(
       );
       await flushPromises();
     },
+    operationId(index = 0): string {
+      return source === "server"
+        ? String((requests[index]!.body as FormData).get("operationId"))
+        : JSON.parse(
+            String(
+              fetchMock.mock.calls.filter(([url]) =>
+                url.endsWith("presign-upload"),
+              )[index]![1]?.body,
+            ),
+          ).operationId;
+    },
     wrapper,
     router,
     requests,
@@ -252,6 +298,7 @@ async function setup(
     confirm: (index = 0) => confirmations.get(`file-${index + 1}`)!(),
     finishDelete: (index = 0) => deletions.get(`file-${index + 1}`)!(),
     preparations,
+    finishLogout: () => finishLogout(),
     ready,
     deleteResponses,
     file: result(0),
@@ -268,6 +315,371 @@ beforeEach(() => {
     user: { login: "operator" },
   });
 });
+
+it("предупреждает об уходе с неотправленными и активными файлами и снимает предупреждение после завершения", async () => {
+  const { requests, wrapper } = await setup("server");
+  const leaving = () => {
+    const event = new Event("beforeunload", { cancelable: true });
+    window.dispatchEvent(event);
+    return event.defaultPrevented;
+  };
+  expect(leaving()).toBe(true);
+  await launch();
+  expect(leaving()).toBe(true);
+  requests[0]!.finish();
+  await flushPromises();
+  expect(leaving()).toBe(false);
+  wrapper.unmount();
+  expect(leaving()).toBe(false);
+});
+
+it("при отказе от выхода сохраняет выбранные файлы, историю и запуск очереди", async () => {
+  const { requests, fetchMock, choose } = await setup("server", 5, {
+    lifecycle: true,
+  });
+  await launch();
+  await choose([new File(["extra"], "extra.txt")]);
+  await requestLogout();
+  const confirmation = screen.getByRole("alertdialog");
+  expect(confirmation.textContent).toContain("могут завершиться после выхода");
+  await fireEvent.click(
+    within(confirmation).getByRole("button", { name: "Остаться" }),
+  );
+  await flushPromises();
+  expect(fetchMock.mock.calls.some(([url]) => url === "/api/auth/logout")).toBe(
+    false,
+  );
+  requests[0]!.finish();
+  await flushPromises();
+  expect(requests).toHaveLength(4);
+  await fireEvent.click(screen.getByRole("button", { name: /^Загрузки:/ }));
+  await flushPromises();
+  expect(row(0).getByText("Готово")).toBeTruthy();
+  expect(row(5).getByText("Выбран")).toBeTruthy();
+});
+
+it("подтверждённый выход сразу очищает работу и игнорирует поздний ответ обработки до ответа выхода", async () => {
+  const { requests, router, finishLogout, fetchMock } = await setup(
+    "server",
+    5,
+    {
+      lifecycle: true,
+      delayedLogout: true,
+    },
+  );
+  await launch();
+  requests[0]!.upload.dispatchEvent(new Event("load"));
+  await confirmLogout();
+  expect(router.currentRoute.value.name).toBe("login");
+  expect(useUpload().rows.value).toHaveLength(0);
+  expect(requests.every((request) => request.aborted)).toBe(true);
+  requests[0]!.finish();
+  await flushPromises();
+  expect(requests).toHaveLength(3);
+  expect(useUpload().rows.value).toHaveLength(0);
+  await loginAgain();
+  expect(fetchMock.mock.calls.some(([url]) => url === "/api/auth/login")).toBe(
+    false,
+  );
+  finishLogout();
+  await flushPromises();
+  expect(router.currentRoute.value.name).toBe("files");
+});
+
+it.each(["server", "presigned", "multipart"] as const)(
+  "истечение сессии сохраняет строки и причину, а вход позволяет вручную выяснить исходную операцию без дубликата: %s",
+  async (source) => {
+    const {
+      requests,
+      router,
+      fetchMock,
+      confirm,
+      file,
+      choose,
+      operationId: sentOperationId,
+    } = await setup(source, 5, { lifecycle: true });
+    await launch();
+    await choose([new File(["extra"], "extra.txt")]);
+    const initialRequests = requests.length;
+    const operationId = sentOperationId();
+    if (source === "server")
+      requests[0]!.upload.dispatchEvent(new Event("load"));
+    else {
+      requests
+        .slice(0, source === "multipart" ? 2 : 1)
+        .forEach((request) => request.finish());
+      await flushPromises();
+    }
+    expireSession();
+    await flushPromises();
+    expect(router.currentRoute.value.name).toBe("login");
+    expect(useUpload().rows.value).toHaveLength(6);
+    if (source === "server") requests[0]!.finish();
+    else confirm();
+    await flushPromises();
+    expect(requests).toHaveLength(initialRequests);
+    await loginAgain();
+    expect(router.currentRoute.value.name).toBe("files");
+    expect(requests).toHaveLength(initialRequests);
+    await fireEvent.click(screen.getByRole("button", { name: /^Загрузки:/ }));
+    await flushPromises();
+    expect(row(0).getByRole("alert").textContent).toContain("сессия истекла");
+    expect(row(3).getByRole("alert").textContent).toContain("сессия истекла");
+    expect(row(5).getByRole("alert").textContent).toContain("сессия истекла");
+    expect(row(0).queryByText("Готово")).toBeNull();
+    fetchMock.mockResolvedValueOnce(json({ status: "succeeded", file }));
+    await fireEvent.click(
+      row(0).getByRole("button", { name: "Выяснить результат" }),
+    );
+    await flushPromises();
+    expect(
+      fetchMock.mock.calls.some(
+        ([url]) => url === `/api/files/upload-operations/${operationId}`,
+      ),
+    ).toBe(true);
+    expect(row(0).getByText("Готово")).toBeTruthy();
+    expect(requests).toHaveLength(initialRequests);
+  },
+);
+
+async function requestLogout(): Promise<void> {
+  await fireEvent.click(screen.getByRole("button", { name: "Отмена" }));
+  await flushPromises();
+  await fireEvent.click(screen.getByRole("button", { name: "Выйти" }));
+}
+
+async function confirmLogout(): Promise<void> {
+  await requestLogout();
+  await fireEvent.click(
+    within(screen.getByRole("alertdialog")).getByRole("button", {
+      name: "Выйти",
+    }),
+  );
+  await flushPromises();
+}
+
+async function loginAgain(): Promise<void> {
+  await fireEvent.update(screen.getByLabelText("Логин"), "operator");
+  await fireEvent.update(screen.getByLabelText("Пароль"), "password");
+  await fireEvent.click(screen.getByRole("button", { name: "Войти" }));
+  await flushPromises();
+}
+
+it.each(["server", "presigned"] as const)(
+  "после отказа продления останавливает передачу и вручную повторяет исходную операцию после выяснения неудачи: %s",
+  async (source) => {
+    const {
+      requests,
+      fetchMock,
+      operationId: sentOperationId,
+    } = await setup(source, 5, { lifecycle: true });
+    await launch();
+    const operationId = sentOperationId();
+    fetchMock.mockResolvedValueOnce(
+      json({ error: { code: "UNAUTHORIZED", message: "" } }, 401),
+    );
+    fetchMock.mockResolvedValueOnce(
+      json({ error: { code: "SESSION_EXPIRED", message: "" } }, 401),
+    );
+    await expect(apiRequest("/files/session-probe")).rejects.toMatchObject({
+      status: 401,
+    });
+    await flushPromises();
+    expect(requests.every((request) => request.aborted)).toBe(true);
+    await loginAgain();
+    await fireEvent.click(screen.getByRole("button", { name: /^Загрузки:/ }));
+    await flushPromises();
+    expect(row(0).getByRole("alert").textContent).toContain("сессия истекла");
+    expect(requests).toHaveLength(3);
+    fetchMock.mockResolvedValueOnce(json({ status: "processing" }));
+    await fireEvent.click(
+      row(0).getByRole("button", { name: "Выяснить результат" }),
+    );
+    await flushPromises();
+    expect(row(0).getByRole("alert").textContent).toContain(
+      "Не удалось выяснить результат",
+    );
+    expect(requests).toHaveLength(3);
+    fetchMock.mockResolvedValueOnce(json({ status: "failed" }));
+    await fireEvent.click(
+      row(0).getByRole("button", { name: "Выяснить результат" }),
+    );
+    await flushPromises();
+    fetchMock.mockResolvedValueOnce(json({ status: "failed" }));
+    await fireEvent.click(row(0).getByRole("button", { name: "Повторить" }));
+    await flushPromises();
+    expect(
+      fetchMock.mock.calls.some(
+        ([url]) => url === `/api/files/upload-operations/${operationId}`,
+      ),
+    ).toBe(true);
+    expect(requests).toHaveLength(4);
+    const retriedId = sentOperationId(3);
+    expect(retriedId).toBe(operationId);
+  },
+);
+
+it.each(["подтверждение", "отмена"])(
+  "после выхода и нового входа игнорирует поздний ответ: %s",
+  async (stage) => {
+    const { requests, confirm, finishDelete, fetchMock, router } = await setup(
+      "presigned",
+      5,
+      {
+        lifecycle: true,
+        delayedDelete: true,
+      },
+    );
+    await launch();
+    if (stage === "подтверждение") requests[0]!.finish();
+    else
+      await fireEvent.click(row(0).getByRole("button", { name: "Отменить" }));
+    await flushPromises();
+    await confirmLogout();
+    expect(router.currentRoute.value.name).toBe("login");
+    await loginAgain();
+    const callsAfterLogin = fetchMock.mock.calls.length;
+    if (stage === "подтверждение") confirm();
+    else finishDelete();
+    await flushPromises();
+    expect(useUpload().rows.value).toHaveLength(0);
+    expect(requests).toHaveLength(3);
+    expect(fetchMock.mock.calls).toHaveLength(callsAfterLogin);
+    await fireEvent.click(
+      screen.getByRole("button", { name: "Загрузить файл" }),
+    );
+    await flushPromises();
+    expect(screen.queryAllByTestId("upload-row")).toHaveLength(0);
+  },
+);
+
+it("требует подтверждения выхода при выбранных файлах до запуска и очищает выбор", async () => {
+  const { requests, router } = await setup("server", 1, { lifecycle: true });
+  await confirmLogout();
+  expect(router.currentRoute.value.name).toBe("login");
+  await loginAgain();
+  await fireEvent.click(screen.getByRole("button", { name: "Загрузить файл" }));
+  await flushPromises();
+  expect(screen.queryAllByTestId("upload-row")).toHaveLength(0);
+  expect(requests).toHaveLength(0);
+});
+
+it("игнорирует поздний отказ сессии при резервировании после выхода и повторного входа", async () => {
+  const { preparations, requests, router } = await setup("presigned", 5, {
+    lifecycle: true,
+    delayedPreparation: true,
+    ignorePreparationAbort: true,
+    preparationResponse: json(
+      { error: { code: "SESSION_EXPIRED", message: "" } },
+      401,
+    ),
+  });
+  await launch();
+  await confirmLogout();
+  await loginAgain();
+  preparations.forEach((finish) => finish());
+  await flushPromises();
+  expect(router.currentRoute.value.name).toBe("files");
+  expect(requests).toHaveLength(0);
+  expect(useUpload().rows.value).toHaveLength(0);
+});
+
+it("выходит после завершения без подтверждения и очищает историю готовых файлов", async () => {
+  const { requests, router } = await setup("server", 1, { lifecycle: true });
+  await launch();
+  requests[0]!.finish();
+  await flushPromises();
+  await requestLogout();
+  await flushPromises();
+  expect(screen.queryByRole("alertdialog")).toBeNull();
+  expect(router.currentRoute.value.name).toBe("login");
+  expect(useUpload().rows.value).toHaveLength(0);
+});
+
+it("предупреждает при выяснении результата и не восстанавливает историю его поздним ответом после выхода", async () => {
+  const { requests, fetchMock, file } = await setup("server", 1, {
+    lifecycle: true,
+  });
+  await launch();
+  requests[0]!.fail();
+  await flushPromises();
+  let finishCheck = () => {};
+  fetchMock.mockImplementationOnce(
+    () =>
+      new Promise((resolve) => {
+        finishCheck = () => resolve(json({ status: "succeeded", file }));
+      }),
+  );
+  await fireEvent.click(
+    row(0).getByRole("button", { name: "Выяснить результат" }),
+  );
+  await flushPromises();
+  const leaving = new Event("beforeunload", { cancelable: true });
+  window.dispatchEvent(leaving);
+  expect(leaving.defaultPrevented).toBe(true);
+  await confirmLogout();
+  await loginAgain();
+  const callsAfterLogin = fetchMock.mock.calls.length;
+  finishCheck();
+  await flushPromises();
+  expect(useUpload().rows.value).toHaveLength(0);
+  expect(fetchMock.mock.calls).toHaveLength(callsAfterLogin);
+});
+
+it.each([200, 401])(
+  "игнорирует поздний ответ продления старой сессии после выхода и нового входа: %s",
+  async (status) => {
+    const { fetchMock, requests, router } = await setup("presigned", 5, {
+      lifecycle: true,
+    });
+    let finishRenewal = () => {};
+    let rejected = false;
+    let renewing = false;
+    const original = fetchMock.getMockImplementation()!;
+    fetchMock.mockImplementation((url, init) => {
+      if (url === "/api/files/presign-upload" && !rejected) {
+        rejected = true;
+        return Promise.resolve(
+          json({ error: { code: "UNAUTHORIZED", message: "" } }, 401),
+        );
+      }
+      if (url === "/api/auth/refresh")
+        return new Promise((resolve) => {
+          renewing = true;
+          finishRenewal = () =>
+            resolve(
+              status === 401
+                ? json({ error: { code: "SESSION_EXPIRED", message: "" } }, 401)
+                : json({
+                    accessToken: "old-session-token",
+                    expiresIn: 3600,
+                    user: { login: "old-session" },
+                  }),
+            );
+        });
+      return original(url, init);
+    });
+    await launch();
+    expect(renewing).toBe(true);
+    await requestLogout();
+    await fireEvent.click(
+      within(screen.getByRole("alertdialog")).getByRole("button", {
+        name: "Выйти",
+      }),
+    );
+    await flushPromises();
+    await loginAgain();
+    expect(
+      fetchMock.mock.calls.some(([url]) => url === "/api/auth/login"),
+    ).toBe(false);
+    finishRenewal();
+    await flushPromises();
+    expect(router.currentRoute.value.name).toBe("files");
+    expect(screen.getByText("operator")).toBeTruthy();
+    expect(requests).toHaveLength(2);
+    expect(useUpload().rows.value).toHaveLength(0);
+  },
+);
 
 describe("загрузка одного файла через страницу", () => {
   it.each([

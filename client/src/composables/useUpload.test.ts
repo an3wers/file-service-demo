@@ -127,7 +127,10 @@ describe("multipart-загрузка", () => {
     for (const call of mocked(putPart).mock.calls) {
       expect((call[1] as Blob).size).toBe(PART_SIZE);
     }
-    expect(mocked(completeUpload)).toHaveBeenCalledWith("file-1");
+    expect(mocked(completeUpload)).toHaveBeenCalledWith(
+      "file-1",
+      expect.any(AbortSignal),
+    );
     expect(result.status).toBe("ready");
     expect(operation.percent.value).toBe(100);
     expect(operation.partsDone.value).toBe(3);
@@ -213,7 +216,10 @@ describe("multipart-загрузка", () => {
       createUploadOperation(bigFile(2), "docs", "presigned").start(),
     ).rejects.toThrow(DOMException);
 
-    expect(cancelUploadOperation).toHaveBeenCalledWith(expect.any(String));
+    expect(cancelUploadOperation).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.any(AbortSignal),
+    );
     expect(deleteFile).not.toHaveBeenCalled();
     expect(mocked(completeUpload)).not.toHaveBeenCalled();
   });
@@ -286,7 +292,10 @@ describe("single-загрузка", () => {
     await createUploadOperation(bigFile(1), "docs", "presigned").start();
 
     expect(mocked(putPart)).not.toHaveBeenCalled();
-    expect(mocked(completeUpload)).toHaveBeenCalledWith("file-2");
+    expect(mocked(completeUpload)).toHaveBeenCalledWith(
+      "file-2",
+      expect.any(AbortSignal),
+    );
   });
 });
 
@@ -444,7 +453,10 @@ describe("ручной повтор серверной операции", () => 
       message: "Не удалось выяснить результат",
     });
     await expect(operation.retry()).resolves.toEqual(readyFile());
-    expect(getUploadOperation).toHaveBeenCalledWith(operation.operationId);
+    expect(getUploadOperation).toHaveBeenCalledWith(
+      operation.operationId,
+      expect.any(AbortSignal),
+    );
     expect(uploadViaServer).toHaveBeenCalledOnce();
     expect(vi.mocked(uploadViaServer).mock.calls[0]?.[3]).toBe(
       operation.operationId,
@@ -524,7 +536,10 @@ describe.each(["single", "multipart"] as const)(
       expect(
         vi.mocked(presignUpload).mock.calls.map(([body]) => body.operationId),
       ).toEqual([operation.operationId, operation.operationId]);
-      expect(getUploadOperation).toHaveBeenCalledWith(operation.operationId);
+      expect(getUploadOperation).toHaveBeenCalledWith(
+        operation.operationId,
+        expect.any(AbortSignal),
+      );
       expect(operation.outcome.value?.status).toBe("succeeded");
     });
 
@@ -542,7 +557,11 @@ describe.each(["single", "multipart"] as const)(
         strategy === "single" ? 1 : 0,
       );
       expect(putPart).toHaveBeenCalledTimes(strategy === "multipart" ? 2 : 0);
-      expect(completeUpload).toHaveBeenNthCalledWith(2, "file-1");
+      expect(completeUpload).toHaveBeenNthCalledWith(
+        2,
+        "file-1",
+        expect.any(AbortSignal),
+      );
     });
 
     it.each(["processing", "deleted", "unavailable"])(
@@ -630,7 +649,10 @@ describe.each(["single", "multipart"] as const)(
       const operation = createUploadOperation(bigFile(2), "docs", "presigned");
       await expect(operation.start()).rejects.toThrow(DOMException);
       expect(operation.outcome.value?.status).toBe("cancelled");
-      expect(cancelUploadOperation).toHaveBeenCalledWith(operation.operationId);
+      expect(cancelUploadOperation).toHaveBeenCalledWith(
+        operation.operationId,
+        expect.any(AbortSignal),
+      );
       await operation.retry();
       expect(operation.outcome.value?.status).toBe("succeeded");
     });

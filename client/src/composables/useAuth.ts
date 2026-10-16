@@ -96,9 +96,10 @@ export function createAuth(channel: AuthChannel | null) {
   }
 
   async function logout(): Promise<void> {
-    await authApi.logout().catch(() => {});
-    channel?.postMessage({ type: "logout" });
+    const request = authApi.logout();
     announceSignOut("logout");
+    channel?.postMessage({ type: "logout" });
+    await request.catch(() => {});
   }
 
   async function renew(): Promise<boolean> {

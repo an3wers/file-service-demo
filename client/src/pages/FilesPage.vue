@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref } from "vue";
+import { onUnmounted, ref, watch } from "vue";
 import { HardDriveIcon, LogOutIcon } from "@lucide/vue";
 import {
   AlertDialog,
@@ -25,6 +25,23 @@ const upload = useUpload();
 const confirmOpen = ref(false);
 const loggingOut = ref(false);
 
+function warnBeforeLeaving(event: BeforeUnloadEvent): void {
+  event.preventDefault();
+  event.returnValue = true;
+}
+
+watch(
+  () => upload.uploading.value || upload.hasSelected.value,
+  (unfinished) => {
+    if (unfinished) window.addEventListener("beforeunload", warnBeforeLeaving);
+    else window.removeEventListener("beforeunload", warnBeforeLeaving);
+  },
+  { immediate: true, flush: "sync" },
+);
+onUnmounted(() =>
+  window.removeEventListener("beforeunload", warnBeforeLeaving),
+);
+
 async function logout(): Promise<void> {
   loggingOut.value = true;
 
@@ -36,7 +53,7 @@ async function logout(): Promise<void> {
 }
 
 function requestLogout(): void {
-  if (upload.uploading.value) {
+  if (upload.uploading.value || upload.hasSelected.value) {
     confirmOpen.value = true;
     return;
   }
@@ -83,7 +100,9 @@ function confirmLogout(): void {
         <AlertDialogHeader>
           <AlertDialogTitle>Выйти?</AlertDialogTitle>
           <AlertDialogDescription>
-            Идёт загрузка файла — она прервётся
+            Ожидающие загрузки будут остановлены, выбранные файлы и история
+            очищены. Уже принятые сервером обработка и подтверждение могут
+            завершиться после выхода.
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>

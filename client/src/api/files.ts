@@ -48,8 +48,11 @@ export function getFile(id: string, withUrl = false): Promise<FileDto> {
 /** `options` даёт прогресс отправки и отмену: тело уходит через XHR, а не fetch. */
 export function getUploadOperation(
   id: string,
+  signal?: AbortSignal,
 ): Promise<UploadOperationResponse> {
-  return apiRequest<UploadOperationResponse>(`/files/upload-operations/${id}`);
+  return apiRequest<UploadOperationResponse>(`/files/upload-operations/${id}`, {
+    signal,
+  });
 }
 
 export function uploadViaServer(
@@ -71,10 +74,11 @@ export function uploadViaServer(
 
 export function cancelUploadOperation(
   id: string,
+  signal?: AbortSignal,
 ): Promise<UploadOperationResponse> {
   return apiRequest<UploadOperationResponse>(
     `/files/upload-operations/${id}/cancel`,
-    { method: "POST" },
+    { method: "POST", signal },
   );
 }
 
@@ -184,8 +188,14 @@ export function getMultipartStatus(
   });
 }
 
-export function completeUpload(id: string): Promise<FileDto> {
-  return apiRequest<FileDto>(`/files/${id}/complete`, { method: "POST" });
+export function completeUpload(
+  id: string,
+  signal?: AbortSignal,
+): Promise<FileDto> {
+  return apiRequest<FileDto>(`/files/${id}/complete`, {
+    method: "POST",
+    signal,
+  });
 }
 
 export function getDownloadUrl(

@@ -54,6 +54,8 @@ export function createUploadOperation(
   const outcome = shallowRef<UploadOutcome | null>(null);
   const reservationState = shallowRef<PresignUploadResponse | null>(null);
   let controller = new AbortController();
+  let cancellationController = new AbortController();
+  let generation = 0;
   let attempted = false;
   let confirmationPending = false;
   let deleted = false;
@@ -91,13 +93,18 @@ export function createUploadOperation(
     };
   }
 
-  async function confirmUpload(id: string): Promise<FileDto> {
+  async function confirmUpload(
+    id: string,
+    signal: AbortSignal,
+  ): Promise<FileDto> {
     confirmationPending = true;
     unresolved.value = true;
     for (let attempt = 1; ; attempt += 1) {
+      signal.throwIfAborted();
       try {
-        return await completeUpload(id);
+        return await completeUpload(id, signal);
       } catch (error) {
+        signal.throwIfAborted();
         if (
           attempt === 1 &&
           isApiError(error) &&
@@ -131,9 +138,10 @@ export function createUploadOperation(
       trackSending(signal, "processing"),
     );
 
+    signal.throwIfAborted();
     stage.value = "completing";
 
-    return await confirmUpload(reservation.id);
+    return await confirmUpload(reservation.id, signal);
   }
 
   type PartProgress = (partNumber: number, loaded: number) => void;
@@ -148,6 +156,7 @@ export function createUploadOperation(
     let current = part;
 
     for (let attempt = 1; ; attempt += 1) {
+      signal.throwIfAborted();
       const { partNumber, offset, size, url } = current;
 
       try {
@@ -155,16 +164,19 @@ export function createUploadOperation(
           signal,
           onProgress: ({ loaded }) => report(partNumber, loaded),
         });
+        signal.throwIfAborted();
         report(partNumber, size);
         partsDone.value += 1;
 
         return;
       } catch (error) {
+        signal.throwIfAborted();
         if (isAbortError(error) || attempt >= PART_ATTEMPTS) {
           throw error;
         }
         report(partNumber, 0);
         await delay(attempt * 500);
+        signal.throwIfAborted();
 
         const refreshed = await fetchPartUrls(id, [partNumber], signal);
 
@@ -184,10 +196,12 @@ export function createUploadOperation(
     const batchSize = Math.max(1, plan.parts.length);
 
     for (const batch of chunk(numbers, batchSize)) {
+      signal.throwIfAborted();
       const parts = batch.every((partNumber) => known.has(partNumber))
         ? batch.map((partNumber) => known.get(partNumber) as MultipartPartDto)
         : (await fetchPartUrls(plan.id, batch, signal)).parts;
 
+      signal.throwIfAborted();
       await runPool(parts, plan.maxConcurrency, (part) =>
         sendPart(file, plan.id, part, signal, report),
       );
@@ -201,6 +215,7 @@ export function createUploadOperation(
   ): Promise<FileDto> {
     const loaded = new Map<number, number>();
     const report: PartProgress = (partNumber, bytes) => {
+      if (signal.aborted) return;
       loaded.set(partNumber, bytes);
 
       let total = 0;
@@ -221,6 +236,7 @@ export function createUploadOperation(
     let numbers = range(1, plan.partCount);
     if (attempted && reservationState.value?.id === plan.id && resuming) {
       const status = await getMultipartStatus(plan.id, signal);
+      signal.throwIfAborted();
       const uploaded = new Set(status.uploadedParts);
       numbers = numbers.filter((number) => !uploaded.has(number));
       partsDone.value = uploaded.size;
@@ -233,15 +249,18 @@ export function createUploadOperation(
     }
     await uploadParts(file, plan, numbers, known, signal, report);
 
+    signal.throwIfAborted();
     stage.value = "completing";
 
     try {
-      return await confirmUpload(plan.id);
+      return await confirmUpload(plan.id, signal);
     } catch (error) {
+      signal.throwIfAborted();
       if (!isApiError(error) || error.code !== "MULTIPART_INCOMPLETE") {
         throw error;
       }
       const status = await getMultipartStatus(plan.id, signal);
+      signal.throwIfAborted();
       const uploaded = new Set(status.uploadedParts);
       const missing = range(1, plan.partCount).filter(
         (partNumber) => !uploaded.has(partNumber),
@@ -251,9 +270,10 @@ export function createUploadOperation(
       stage.value = "sending";
       await uploadParts(file, plan, missing, new Map(), signal, report);
 
+      signal.throwIfAborted();
       stage.value = "completing";
 
-      return await confirmUpload(plan.id);
+      return await confirmUpload(plan.id, signal);
     }
   }
 
@@ -265,8 +285,9 @@ export function createUploadOperation(
     if (confirmationPending && reservationState.value) {
       stage.value = "completing";
       try {
-        return await confirmUpload(reservationState.value.id);
+        return await confirmUpload(reservationState.value.id, signal);
       } catch (error) {
+        signal.throwIfAborted();
         if (
           !isApiError(error) ||
           error.code !== "MULTIPART_INCOMPLETE" ||
@@ -299,25 +320,29 @@ export function createUploadOperation(
       : await uploadSingle(file, reservation, signal);
   }
 
-  async function uploadServer(): Promise<FileDto> {
+  async function uploadServer(signal: AbortSignal): Promise<FileDto> {
     unresolved.value = true;
     stage.value = "sending";
     return await uploadViaServer(
       file,
       directory,
-      trackSending(controller.signal, "processing"),
+      trackSending(signal, "processing"),
       operationId,
     );
   }
 
   async function run(): Promise<FileDto> {
+    const started = generation;
+    const signal = controller.signal;
+    const cancellationSignal = cancellationController.signal;
     uploading.value = true;
     stage.value = currentMode.value === "server" ? "sending" : "presigning";
 
     try {
       if (deleted) throw new Error("Результат операции удалён");
       if (attempted) {
-        const result = await resolveResult();
+        const result = await resolveResult(signal);
+        signal.throwIfAborted();
         if (result) {
           outcome.value = { status: "succeeded", file: result };
           return result;
@@ -330,17 +355,22 @@ export function createUploadOperation(
       attempted = true;
       const result =
         currentMode.value === "server"
-          ? await uploadServer()
-          : await uploadPresigned(file, directory, controller.signal);
+          ? await uploadServer(signal)
+          : await uploadPresigned(file, directory, signal);
 
-      controller.signal.throwIfAborted();
+      signal.throwIfAborted();
       unresolved.value = false;
       outcome.value = { status: "succeeded", file: result };
       return result;
     } catch (error) {
+      if (started !== generation) throw error;
       if (isAbortError(error) && currentMode.value === "presigned") {
         try {
-          const result = await cancelUploadOperation(operationId);
+          const result = await cancelUploadOperation(
+            operationId,
+            cancellationSignal,
+          );
+          if (started !== generation) throw error;
           unresolved.value = result.status === "processing";
           confirmationPending = false;
           reservationState.value = null;
@@ -349,6 +379,7 @@ export function createUploadOperation(
             return result.file;
           }
         } catch {
+          if (started !== generation) throw error;
           unresolved.value = true;
         }
       }
@@ -371,14 +402,15 @@ export function createUploadOperation(
           };
       throw error;
     } finally {
-      uploading.value = false;
+      if (started === generation) uploading.value = false;
     }
   }
 
-  async function resolveResult(): Promise<FileDto | null> {
+  async function resolveResult(signal: AbortSignal): Promise<FileDto | null> {
     unresolved.value = true;
     stage.value = "processing";
-    const result = await getUploadOperation(operationId);
+    const result = await getUploadOperation(operationId, signal);
+    signal.throwIfAborted();
     if (result.status === "processing")
       throw new Error("Не удалось выяснить результат");
     unresolved.value = false;
@@ -392,9 +424,12 @@ export function createUploadOperation(
 
   async function checkResult(): Promise<void> {
     if (uploading.value) return;
+    const started = generation;
+    controller = new AbortController();
+    const signal = controller.signal;
     uploading.value = true;
     try {
-      const file = await resolveResult();
+      const file = await resolveResult(signal);
       if (file) outcome.value = { status: "succeeded", file };
       else
         outcome.value = {
@@ -403,13 +438,14 @@ export function createUploadOperation(
           message: "Загрузка не завершена. Можно повторить операцию.",
         };
     } catch (error) {
+      if (started !== generation) return;
       outcome.value = {
         status: "failed",
         error,
         message: errorMessage(error, "Не удалось выяснить результат"),
       };
     } finally {
-      uploading.value = false;
+      if (started === generation) uploading.value = false;
     }
   }
 
@@ -438,6 +474,7 @@ export function createUploadOperation(
     if (uploading.value || outcome.value?.status === "succeeded")
       return start();
     controller = new AbortController();
+    cancellationController = new AbortController();
     outcome.value = null;
     sentBytes.value = 0;
     running = run();
@@ -449,6 +486,21 @@ export function createUploadOperation(
       stage.value = "cancelling";
       controller.abort();
     }
+  }
+
+  function stop(): void {
+    generation += 1;
+    controller.abort();
+    cancellationController.abort();
+    uploading.value = false;
+    stage.value = "idle";
+    unresolved.value = attempted;
+    outcome.value = {
+      status: "failed",
+      error: null,
+      message:
+        "Загрузка остановлена: сессия истекла. Войдите снова и повторите вручную. Уже принятая сервером работа может завершиться.",
+    };
   }
 
   return {
@@ -474,6 +526,7 @@ export function createUploadOperation(
     cancellable,
     start,
     cancel,
+    stop,
   } as const;
 }
 

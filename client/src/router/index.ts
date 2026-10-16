@@ -34,7 +34,7 @@ const SIGN_OUT_NOTICES: Partial<Record<SignOutReason, string>> = {
 export interface AppRouterOptions {
   history: RouterHistory;
   auth: Auth;
-  upload: { cancel(): void };
+  upload: { stop(): void; reset(): void };
   browser: { reset(): void };
   notify: (message: string) => void;
 }
@@ -67,9 +67,10 @@ export function createAppRouter({
   });
 
   auth.onSignOut((reason) => {
-    upload.cancel();
-
-    if (reason !== "expired") {
+    if (reason === "expired") {
+      upload.stop();
+    } else {
+      upload.reset();
       browser.reset();
     }
 

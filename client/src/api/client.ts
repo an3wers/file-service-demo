@@ -138,7 +138,9 @@ export async function sendRequest<T>(
   let response: Response;
 
   try {
+    init.signal?.throwIfAborted();
     response = await fetch(`/api${path}`, init);
+    init.signal?.throwIfAborted();
   } catch (error) {
     // AbortError вызывающий код гасит молча, сетевой сбой — показывает.
     if (isAbortError(error)) {
@@ -167,20 +169,37 @@ export async function sendRequest<T>(
   return parseBody(text) as T;
 }
 
+let pendingAuthRequest: Promise<void> | null = null;
+
+export function sendAuthRequest<T>(
+  path: "/auth/login" | "/auth/logout" | "/auth/refresh",
+  init: RequestInit,
+): Promise<T> {
+  const run = () => sendRequest<T>(path, init);
+  const request = pendingAuthRequest ? pendingAuthRequest.then(run) : run();
+  const settled = request.then(
+    () => {},
+    () => {},
+  );
+  pendingAuthRequest = settled;
+  void settled.then(() => {
+    if (pendingAuthRequest === settled) pendingAuthRequest = null;
+  });
+  return request;
+}
+
 export function renewSession(): Promise<void> {
-  return shareRenewal(async () => {
-    try {
-      return await sendRequest<AuthSession>("/auth/refresh", {
+  return shareRenewal(
+    () =>
+      sendAuthRequest<AuthSession>("/auth/refresh", {
         method: "POST",
-      });
-    } catch (error) {
+      }),
+    (error) => {
       if (isApiError(error) && error.status === 401) {
         expireSession();
       }
-
-      throw error;
-    }
-  });
+    },
+  );
 }
 
 async function withSession<T>(
@@ -346,6 +365,7 @@ async function sendUpload<T>(
   options: XhrOptions,
 ): Promise<T> {
   const { status, text } = await xhrSend("POST", `/api${path}`, body, options);
+  options.signal?.throwIfAborted();
 
   if (status === 204) {
     return undefined as unknown as T;

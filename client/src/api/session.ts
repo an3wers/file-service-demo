@@ -46,7 +46,10 @@ export function isRenewalDue(): boolean {
   return accessToken !== null && expiresAt - Date.now() < RENEW_AHEAD_MS;
 }
 
-export function shareRenewal(run: () => Promise<AuthSession>): Promise<void> {
+export function shareRenewal(
+  run: () => Promise<AuthSession>,
+  onRejected: (error: unknown) => void,
+): Promise<void> {
   if (renewal) {
     return renewal;
   }
@@ -57,6 +60,10 @@ export function shareRenewal(run: () => Promise<AuthSession>): Promise<void> {
       if (epoch === started) {
         startSession(session);
       }
+    })
+    .catch((error: unknown) => {
+      if (epoch === started) onRejected(error);
+      throw error;
     })
     .finally(() => {
       if (renewal === current) {
