@@ -1291,13 +1291,10 @@ describe("фоновая загрузка", () => {
 
   it("показывает сводку и сохраняет ошибки, отмены и результаты после закрытия", async () => {
     const { requests } = await setup("server", 5);
-    expect(screen.getByLabelText("Сводка загрузок").textContent).toContain(
-      "Ожидают: 5",
-    );
+    expect(screen.queryByLabelText("Сводка загрузок")).toBeNull();
+    expect(screen.getAllByText("Выбран")).toHaveLength(5);
     await launch();
-    expect(screen.getByLabelText("Сводка загрузок").textContent).toContain(
-      "Загружаются: 3",
-    );
+    expect(requests).toHaveLength(3);
     await fireEvent.click(row(4).getByRole("button", { name: "Отменить" }));
     await fireEvent.click(screen.getByRole("button", { name: "Отмена" }));
     await flushPromises();
@@ -1325,9 +1322,7 @@ describe("фоновая загрузка", () => {
     requests[3]!.finish();
     await flushPromises();
     expect(screen.getByRole("dialog")).toBeTruthy();
-    expect(screen.getByLabelText("Сводка загрузок").textContent).toContain(
-      "Готовы: 3",
-    );
+    expect(screen.getAllByText("Готово")).toHaveLength(3);
     await fireEvent.click(screen.getByRole("button", { name: "Отмена" }));
     await flushPromises();
     await fireEvent.click(screen.getByRole("button", { name: /^Загрузки:/ }));

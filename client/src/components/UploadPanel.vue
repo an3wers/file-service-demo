@@ -128,9 +128,6 @@ function rowError(row: UploadRow): string | null {
         <Button type="button" variant="outline" @click="openFileDialog()"
           ><PaperclipIcon />Выбрать файл</Button
         >
-        <p aria-label="Сводка загрузок" role="status" class="text-sm">
-          {{ upload.summary.value }}
-        </p>
         <div
           class="max-h-80 space-y-4 overflow-y-auto"
           aria-label="Выбранные файлы"
