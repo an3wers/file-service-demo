@@ -11,6 +11,7 @@ import { defineConfig } from "vitest/config";
  */
 const testEnv = {
   NODE_ENV: "test",
+  NOTIFICATION_ENABLED: "false",
   LOG_LEVEL: "silent",
   PORT: "3000",
   LOGIN_USER_APP: "operator",

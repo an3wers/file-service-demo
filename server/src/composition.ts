@@ -1,3 +1,5 @@
+import { createNotification as assembleNotification } from "./modules/notification/index.js";
+import type { Notification } from "./modules/notification/index.js";
 import type { Express } from "express";
 import { createApp } from "./app.js";
 import { config } from "./config.js";
@@ -89,4 +91,8 @@ export function buildApp(): Express {
     filesRouter,
     directoriesRouter,
   });
+}
+
+export function createNotification(): Notification {
+  return assembleNotification(config.notification);
 }
