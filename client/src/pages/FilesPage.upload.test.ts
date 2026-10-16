@@ -956,3 +956,37 @@ it("после подтверждения удаления готового фа
   expect(screen.queryAllByTestId("upload-row")).toHaveLength(0);
   expect(useFileBrowser().files.value).toHaveLength(0);
 });
+
+it("показывает сводку только в кнопке загрузок и сохраняет состояния после открытия диалога", async () => {
+  const { requests } = await setup("server", 5);
+  expect(screen.queryByLabelText("Сводка загрузок")).toBeNull();
+  expect(screen.getAllByText("Выбран")).toHaveLength(5);
+  await launch();
+  expect(requests).toHaveLength(3);
+  await fireEvent.click(row(4).getByRole("button", { name: "Отменить" }));
+  await flushPromises();
+  await fireEvent.click(screen.getByRole("button", { name: "Отмена" }));
+  await flushPromises();
+  const indicator = screen.getByRole("button", { name: /^Загрузки:/ });
+  expect(indicator.textContent).toContain("Загружаются: 3");
+  expect(indicator.textContent).toContain("Ожидают: 1");
+  expect(indicator.textContent).toContain("Отменены: 1");
+  requests[1]!.fail();
+  requests[2]!.finish();
+  await flushPromises();
+  expect(requests).toHaveLength(4);
+  expect(indicator.textContent).toContain("Загружаются: 2");
+  expect(indicator.textContent).toContain("Готовы: 1");
+  expect(indicator.textContent).toContain("Ошибки: 1");
+  await fireEvent.click(indicator);
+  await flushPromises();
+  expect(screen.queryByLabelText("Сводка загрузок")).toBeNull();
+  expect(screen.getAllByTestId("upload-row")).toHaveLength(5);
+  expect(row(1).getByText("Ошибка загрузки")).toBeTruthy();
+  expect(row(2).getByText("Успех")).toBeTruthy();
+  expect(row(4).getByText("Отменено")).toBeTruthy();
+  requests[0]!.finish();
+  requests[3]!.finish();
+  await flushPromises();
+  expect(screen.getAllByText("Успех")).toHaveLength(3);
+});
