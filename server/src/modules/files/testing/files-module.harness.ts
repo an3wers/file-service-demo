@@ -115,7 +115,15 @@ export function buildHarness(
     clock,
   });
   const operations = createMemoryUploadOperations(fileRows);
+  const confirmation = createConfirmationModule({
+    objectStore,
+    fileRows,
+    multipart,
+    clock,
+    policy,
+  });
   const uploads = createUploadsModule({
+    confirmation,
     operations,
     objectStore,
     fileRows,
@@ -123,13 +131,6 @@ export function buildHarness(
     policy,
     multipart,
     clock,
-  });
-  const confirmation = createConfirmationModule({
-    objectStore,
-    fileRows,
-    multipart,
-    clock,
-    policy,
   });
   const catalog = createCatalogModule({
     confirmation,

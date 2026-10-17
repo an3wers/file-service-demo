@@ -32,6 +32,10 @@ export type ReconciliationResult =
 export type CleanupResult = { status: "cancelled" | "discarded" | "deleted" };
 
 export interface ConfirmationModule {
+  prepareRetry(
+    id: string,
+    session: UploadOperationSession,
+  ): Promise<ReconciliationResult>;
   cleanup(session: UploadOperationSession): Promise<CleanupResult | null>;
   confirm(id: string, context?: ConfirmationContext): Promise<StoredFile>;
   reconcile(
@@ -88,6 +92,16 @@ export function createConfirmationModule({
     }
   }
 
+  async function failAttempt(
+    file: StoredFile,
+    rows: typeof fileRows,
+  ): Promise<boolean> {
+    if (!(await rows.failFileIfUnchanged(file))) return false;
+    if (file.kind === "multipart")
+      await objectStore.abortMultipart(file.key, file.uploadId);
+    return true;
+  }
+
   async function inspect(
     id: string,
     context?: ConfirmationContext,
@@ -140,10 +154,7 @@ export function createConfirmationModule({
               { key: file.key },
             );
       if (file.kind !== "failed" && (expired || stored)) {
-        if (file.kind === "multipart" && liveParts)
-          await objectStore.abortMultipart(file.key, file.uploadId);
-        if (!(await rows.failFileIfUnchanged(file)))
-          return await inspect(id, context);
+        if (!(await failAttempt(file, rows))) return await inspect(id, context);
         if (file.kind === "multipart" && liveParts)
           return {
             status: "failed",
@@ -179,6 +190,16 @@ export function createConfirmationModule({
   }
   return {
     cleanup,
+    async prepareRetry(id, session) {
+      const result = await inspect(id, session);
+      if (result.status !== "failed") return result;
+      const file = await session.fileRows.findFileById(id);
+      if (file?.kind === "multipart") {
+        if (!(await failAttempt(file, session.fileRows)))
+          return await inspect(id, session);
+      }
+      return result;
+    },
     reconcile: (id, context, stoppedUploadId) =>
       inspect(id, context, false, stoppedUploadId),
     async confirm(id, context) {

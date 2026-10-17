@@ -419,3 +419,79 @@ it("уборка перечитывает попытку, сменившуюся
   expect(await h.rowOf(first.id)).toEqual(retry);
   expect(retry.kind).toBe("reserved");
 });
+
+it("подготовка повтора освобождает остановленную составную загрузку для серверной передачи", async () => {
+  const h = buildHarness();
+  const operationId = "server-retry";
+  const started = await h.files.createPresignedUpload({
+    operationId,
+    filename: "a.bin",
+    size: 12 * 1024 * 1024,
+  });
+  if (started.strategy !== "multipart")
+    throw new Error("Ожидалась составная загрузка");
+  h.objectStore.uploadPart(started.uploadId, 1, Buffer.alloc(5 * 1024 * 1024));
+  await h.files.resolveUploadOperation(operationId, started.uploadId);
+  expect(
+    await h.operations.exclusive(operationId, (session) =>
+      h.confirmation.prepareRetry(started.id, session),
+    ),
+  ).toEqual({ status: "failed" });
+  expect(h.objectStore.openUploads()).toEqual([]);
+  expect(await h.confirmation.reconcile(started.id)).toEqual({
+    status: "failed",
+  });
+});
+
+it("решение о просрочке не отменяет составную загрузку до конкурентного подтверждения", async () => {
+  const h = buildHarness();
+  const started = await h.multipart.createMultipartUpload({
+    filename: "a.bin",
+    size: 12 * 1024 * 1024,
+  });
+  for (const [index, size] of [5, 5, 2].entries())
+    h.objectStore.uploadPart(
+      started.uploadId,
+      index + 1,
+      Buffer.alloc(size * 1024 * 1024),
+    );
+  h.advance(25);
+  h.fileRows.beforeNextClaim(async () => {
+    await h.confirmation.confirm(started.id);
+  });
+  expect(await h.confirmation.reconcile(started.id)).toMatchObject({
+    status: "succeeded",
+    file: { kind: "ready", size: 12 * 1024 * 1024 },
+  });
+});
+
+it("сбой отмены после установленной просрочки оставляет части уборке сирот и допускает позднее подтверждение", async () => {
+  const h = buildHarness();
+  const started = await h.multipart.createMultipartUpload({
+    filename: "a.bin",
+    size: 12 * 1024 * 1024,
+  });
+  h.advance(25);
+  h.objectStore.failNext("abortMultipart", new Error("Нет хранилища"));
+  await expect(h.confirmation.reconcile(started.id)).rejects.toThrow(
+    "Нет хранилища",
+  );
+  expect(await h.confirmation.reconcile(started.id)).toEqual({
+    status: "failed",
+  });
+  expect(h.objectStore.openUploads()).toHaveLength(1);
+  expect(await h.cleanup.sweepOrphanUploads()).toEqual({
+    examined: 1,
+    aborted: 1,
+  });
+  expect(h.objectStore.openUploads()).toEqual([]);
+  h.objectStore.uploadObject(
+    started.key,
+    Buffer.alloc(12 * 1024 * 1024),
+    "application/octet-stream",
+  );
+  expect(await h.confirmation.reconcile(started.id)).toMatchObject({
+    status: "succeeded",
+    file: { kind: "ready" },
+  });
+});

@@ -367,22 +367,6 @@ it("повтор подписанной ссылки не продлевает �
   expect((await h.files.uploadThroughServer(upload)).kind).toBe("ready");
 });
 
-it("ошибка отмены просроченных частей не меняет сохранённое ожидание", async () => {
-  const h = buildHarness();
-  const upload = { ...input(), size: THREE_PART_SIZE };
-  const first = await h.files.createPresignedUpload(upload);
-  const before = await h.rowOf(first.id);
-  h.advance(25);
-  h.objectStore.failNext("abortMultipart", new Error("Нет хранилища"));
-  await expect(
-    h.files.resolveUploadOperation(upload.operationId),
-  ).rejects.toThrow("Нет хранилища");
-  expect(await h.files.getUploadOperation(upload.operationId)).toEqual({
-    status: "pending",
-  });
-  expect(await h.rowOf(first.id)).toEqual(before);
-});
-
 it("устанавливает остановку только текущей составной передачи и сохраняет части и срок при повторе", async () => {
   const h = buildHarness();
   const upload = { ...input(), size: THREE_PART_SIZE };

@@ -58,6 +58,7 @@ function assemble(objectStore: ReturnType<typeof buildHarness>["objectStore"]) {
   return {
     confirmation,
     ...createUploadsModule({
+      confirmation,
       ...deps,
       operations: createSqlUploadOperations("test"),
       multipart,

@@ -81,36 +81,6 @@ export async function countActiveMultipart(execute = query): Promise<number> {
   return rows[0]?.count ?? 0;
 }
 
-/**
- * Takes an abandoned multipart upload out of circulation and hands back the
- * `upload_id` that has to be aborted in storage, in one statement. Claiming first is
- * what keeps the cleanup pass from cancelling an upload a client is finishing
- * right now: whoever updates the row wins, and the loser gets no rows back.
- *
- * `returning` yields the *new* values, so the old `upload_id` has to come out of
- * the subquery in `from` — reading it off `f` would return the null just written.
- */
-export async function claimExpiredMultipart(
-  id: string,
-  ttlHours: number,
-  execute = query,
-): Promise<string | null> {
-  const { rows } = await execute<{ upload_id: string | null }>(
-    `update files f
-        set status = 'failed', upload_id = null, updated_at = now()
-       from (select id, upload_id from files where id = $1 for update) old
-      where f.id = old.id
-        and f.status = 'pending'
-        and f.upload_id is not null
-        and f.deleted_at is null
-        and f.attempt_started_at < now() - make_interval(hours => $2)
-      returning old.upload_id`,
-    [id, ttlHours],
-  );
-
-  return rows[0]?.upload_id ?? null;
-}
-
 export async function softDeleteFile(id: string): Promise<StoredFile | null> {
   const { rows } = await query<FileRow>(
     `update files
@@ -304,8 +274,6 @@ export function createSqlFileRows(bucket: string, execute = query): FileRows {
       return rows.length > 0;
     },
     countActiveMultipart: () => countActiveMultipart(execute),
-    claimExpiredMultipart: (id, ttlHours) =>
-      claimExpiredMultipart(id, ttlHours, execute),
     softDeleteFile,
     listFiles,
     findKnownUploadIds,

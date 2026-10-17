@@ -1,4 +1,4 @@
-import { createConfirmationModule } from "./confirmation.js";
+import type { ConfirmationModule } from "./confirmation.js";
 import { logger } from "../../../logger.js";
 import { randomUUID } from "node:crypto";
 import type {
@@ -16,10 +16,7 @@ import type { DirectoriesForUpload } from "../domain/ports/directories.js";
 import type { Clock } from "../domain/ports/clock.js";
 import { FileNotFoundError, MultipartNotFoundError } from "../domain/errors.js";
 import type { FileRowsForFiles } from "../domain/ports/file-rows.js";
-import type {
-  ObjectStoreForFiles,
-  ObjectStoreForMultipart,
-} from "../domain/ports/object-storage.js";
+import type { ObjectStoreForFiles } from "../domain/ports/object-storage.js";
 import type {
   MultipartModule,
   MultipartStatus,
@@ -33,8 +30,9 @@ import type { StoredFile } from "../domain/stored-file.js";
 import type { UploadPolicy } from "../domain/upload-policy.js";
 
 export interface UploadsModuleDeps {
+  confirmation: ConfirmationModule;
   operations: UploadOperations;
-  objectStore: ObjectStoreForFiles & Pick<ObjectStoreForMultipart, "listParts">;
+  objectStore: Pick<ObjectStoreForFiles, "put" | "signUpload">;
   directories: DirectoriesForUpload;
   fileRows: FileRowsForFiles;
   policy: UploadPolicy;
@@ -118,6 +116,7 @@ function fileNotFound(id: string) {
 }
 
 export function createUploadsModule({
+  confirmation,
   operations,
   objectStore,
   fileRows,
@@ -135,14 +134,6 @@ export function createUploadsModule({
 
     return file;
   }
-
-  const confirmation = createConfirmationModule({
-    objectStore,
-    fileRows,
-    multipart,
-    clock,
-    policy,
-  });
 
   async function resolveOperation(
     record: UploadOperationRecord,
@@ -306,7 +297,10 @@ export function createUploadsModule({
         async (session) => {
           await requireOpen(session);
           const record = await requireOperation(session, input);
-          const outcome = await resolveOperation(record, session);
+          const outcome = await confirmation.prepareRetry(
+            record.reservation.id,
+            session,
+          );
           if (outcome.status === "succeeded") return outcome.file;
           if (outcome.status === "pending")
             throw new UploadOperationProcessingError(
@@ -314,11 +308,6 @@ export function createUploadsModule({
             );
           if (outcome.status !== "failed")
             throw fileNotFound(record.reservation.id);
-          const file = await session.fileRows.findFileById(
-            record.reservation.id,
-          );
-          if (file?.kind === "multipart")
-            await objectStore.abortMultipart(file.key, file.uploadId);
           await session.fileRows.reserveFile(pendingInput(record, "server"));
           const { key, contentType, id } = record.reservation;
           await objectStore.put(key, input.bytes, {

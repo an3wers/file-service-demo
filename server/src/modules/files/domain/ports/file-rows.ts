@@ -76,19 +76,6 @@ export interface FileRowsForCleanup {
   /** Reserved rows past their TTL, oldest first. */
   listExpiredPending(ttlHours: number): Promise<StoredFile[]>;
 
-  /** The upload turned out to have succeeded; the confirmation was just lost. */
-  markFileReady(id: string, values: ReadyValues): Promise<StoredFile | null>;
-
-  markFileFailed(id: string): Promise<void>;
-
-  /**
-   * Takes an abandoned multipart upload out of circulation and hands back the
-   * upload id that now has to be aborted in storage. Exactly one caller wins:
-   * everybody else gets `null` and leaves the row alone, which is what keeps a
-   * sweep from cancelling an upload a client is finishing right now.
-   */
-  claimExpiredMultipart(id: string, ttlHours: number): Promise<string | null>;
-
   /**
    * Which of these upload ids the metadata table still knows about. The orphan
    * sweep treats anything missing here as an upload no row can reach, so this

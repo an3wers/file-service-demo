@@ -238,37 +238,6 @@ describe("memory file rows", () => {
         old.createdAt.getTime(),
       );
     });
-
-    it("hands the claimed upload id back exactly once when two sweeps race", async () => {
-      const store = createMemoryFileRows();
-      const row = await multipartRow(store, { uploadId: "upload-race" });
-
-      store.advance(4);
-
-      // The claim is one read-modify-write with nothing awaited in between, so
-      // the second caller can only ever find the row already settled.
-      const claims = await Promise.all([
-        store.claimExpiredMultipart(row.id, 3),
-        store.claimExpiredMultipart(row.id, 3),
-      ]);
-
-      expect(claims.filter((claim) => claim !== null)).toEqual(["upload-race"]);
-      expect(await store.findFileById(row.id)).toMatchObject({
-        kind: "failed",
-      });
-    });
-
-    it("claims nothing while the row is still within its ttl", async () => {
-      const store = createMemoryFileRows();
-      const row = await multipartRow(store);
-
-      store.advance(1);
-
-      expect(await store.claimExpiredMultipart(row.id, 3)).toBeNull();
-      expect(await store.findFileById(row.id)).toMatchObject({
-        kind: "multipart",
-      });
-    });
   });
 
   describe("listing", () => {

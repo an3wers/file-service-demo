@@ -266,41 +266,6 @@ export function createMemoryFileRows(
       ).length;
     },
 
-    async claimExpiredMultipart(
-      id: string,
-      ttlHours: number,
-    ): Promise<string | null> {
-      failures.check("claimExpiredMultipart");
-
-      if (interleaved) {
-        const run = interleaved;
-
-        interleaved = null;
-        await run();
-      }
-
-      const row = rows.get(id);
-
-      if (
-        !row ||
-        !live(row) ||
-        row.status !== "pending" ||
-        row.upload_id === null ||
-        !expired(row, ttlHours)
-      ) {
-        return null;
-      }
-
-      // Read before write: the answer is the id being taken out of circulation.
-      const claimed = row.upload_id;
-
-      row.status = "failed";
-      row.upload_id = null;
-      row.updated_at = clock.now();
-
-      return claimed;
-    },
-
     async softDeleteFile(id: string): Promise<StoredFile | null> {
       failures.check("softDeleteFile");
 
