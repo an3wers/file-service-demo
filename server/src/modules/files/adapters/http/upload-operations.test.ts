@@ -2,15 +2,9 @@ import { randomUUID } from "node:crypto";
 import type { Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { Router } from "express";
 import { ERROR_CODES, serviceUnavailable } from "../../../../errors.js";
-import { createApp } from "../../../../app.js";
-import { createUploadMiddleware } from "../../../../middleware/upload.js";
-import {
-  buildHarness,
-  THREE_PART_SIZE,
-} from "../../testing/files-module.harness.js";
-import { createFilesRouter } from "./routes.js";
+import { buildHttpHarness } from "../../testing/http.harness.js";
+import { THREE_PART_SIZE } from "../../testing/files-module.harness.js";
 import { uploadOperationResponseSchema } from "./responses.js";
 
 let server: Server | undefined;
@@ -21,19 +15,7 @@ afterEach(async () => {
 
 describe("HTTP-контракт операций загрузки", () => {
   it("выясняет потерянный ответ, повторяет подтверждённую неудачу и сохраняет удаление", async () => {
-    const { files, objectStore, advance } = buildHarness();
-    const app = createApp({
-      healthRouter: Router(),
-      authRouter: Router(),
-      requireAuth: (_req, _res, next) => next(),
-      filesRouter: createFilesRouter({
-        uploads: files,
-        catalog: files,
-        uploadSingleFile: createUploadMiddleware(1024),
-      }),
-      directoriesRouter: Router(),
-      corsOrigin: [],
-    });
+    const { objectStore, advance, app } = buildHttpHarness();
     await new Promise<void>((resolve, reject) => {
       server = app.listen(0, "127.0.0.1", (error) =>
         error ? reject(error) : resolve(),
@@ -110,19 +92,7 @@ describe.each([5, THREE_PART_SIZE])(
   "HTTP-повтор прямой загрузки размером %i",
   (size) => {
     it("сохраняет резервирование, повторяет подтверждение и не воссоздаёт удалённый результат", async () => {
-      const { files, objectStore, fileRows } = buildHarness();
-      const app = createApp({
-        healthRouter: Router(),
-        authRouter: Router(),
-        requireAuth: (_req, _res, next) => next(),
-        filesRouter: createFilesRouter({
-          uploads: files,
-          catalog: files,
-          uploadSingleFile: createUploadMiddleware(1024),
-        }),
-        directoriesRouter: Router(),
-        corsOrigin: [],
-      });
+      const { objectStore, fileRows, app } = buildHttpHarness();
       await new Promise<void>((resolve, reject) => {
         server = app.listen(0, "127.0.0.1", (error) =>
           error ? reject(error) : resolve(),
@@ -200,19 +170,8 @@ describe.each([5, THREE_PART_SIZE])(
 );
 
 it("HTTP чтение не блокирует и не сверяет, а команда различает ожидание, занятость, размер и недоступность", async () => {
-  const h = buildHarness();
-  const app = createApp({
-    healthRouter: Router(),
-    authRouter: Router(),
-    requireAuth: (_req, _res, next) => next(),
-    filesRouter: createFilesRouter({
-      uploads: h.files,
-      catalog: h.files,
-      uploadSingleFile: createUploadMiddleware(1024),
-    }),
-    directoriesRouter: Router(),
-    corsOrigin: [],
-  });
+  const h = buildHttpHarness();
+  const app = h.app;
   await new Promise<void>((resolve, reject) => {
     server = app.listen(0, "127.0.0.1", (error) =>
       error ? reject(error) : resolve(),
@@ -273,19 +232,8 @@ it("HTTP чтение не блокирует и не сверяет, а ком�
 });
 
 it("HTTP принимает сообщение об остановке только текущей составной загрузки", async () => {
-  const h = buildHarness();
-  const app = createApp({
-    healthRouter: Router(),
-    authRouter: Router(),
-    directoriesRouter: Router(),
-    requireAuth: (_req, _res, next) => next(),
-    corsOrigin: [],
-    filesRouter: createFilesRouter({
-      uploads: h.files,
-      catalog: h.files,
-      uploadSingleFile: createUploadMiddleware(1024),
-    }),
-  });
+  const h = buildHttpHarness();
+  const app = h.app;
   await new Promise<void>((resolve) => {
     server = app.listen(0, "127.0.0.1", () => resolve());
   });

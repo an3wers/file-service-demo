@@ -1,11 +1,7 @@
 import type { Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { Router } from "express";
-import { createApp } from "../../../../app.js";
-import { createUploadMiddleware } from "../../../../middleware/upload.js";
-import { buildHarness } from "../../testing/files-module.harness.js";
-import { createFilesRouter } from "./routes.js";
+import { buildHttpHarness } from "../../testing/http.harness.js";
 
 let server: Server | undefined;
 afterEach(async () => {
@@ -14,19 +10,8 @@ afterEach(async () => {
 });
 
 async function setup() {
-  const harness = buildHarness();
-  const app = createApp({
-    healthRouter: Router(),
-    authRouter: Router(),
-    requireAuth: (_req, _res, next) => next(),
-    filesRouter: createFilesRouter({
-      uploads: harness.files,
-      catalog: harness.files,
-      uploadSingleFile: createUploadMiddleware(1024),
-    }),
-    directoriesRouter: Router(),
-    corsOrigin: [],
-  });
+  const harness = buildHttpHarness();
+  const app = harness.app;
   await new Promise<void>((resolve, reject) => {
     server = app.listen(0, "127.0.0.1", (error) =>
       error ? reject(error) : resolve(),

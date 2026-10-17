@@ -1,3 +1,4 @@
+import { createFilesPersistence } from "./modules/files/persistence.js";
 import { readFileSync } from "node:fs";
 import type { Router } from "express";
 import { describe, expect, it } from "vitest";
@@ -69,7 +70,7 @@ describe("OpenAPI-документ", () => {
     const objectStore = createMemoryObjectStore();
     const { filesRouter, directoriesRouter } = createFilesHttp({
       objectStore,
-      bucket: "test-bucket",
+      ...createFilesPersistence("test-bucket"),
       policy,
       uploadSingleFile: (_req, _res, next) => next(),
     });

@@ -1,6 +1,6 @@
+import { assembleFiles } from "../../assembly.js";
 import { readFile, readdir } from "node:fs/promises";
 import type { QueryResultRow } from "pg";
-import { createConfirmationModule } from "../../application/confirmation.js";
 import { randomUUID } from "node:crypto";
 import {
   beforeAll,
@@ -16,9 +16,6 @@ import { migrate } from "../../../../db/migrate.js";
 import { createSqlDirectories } from "./sql-directories.js";
 import { createSqlFileRows } from "./sql-file-rows.js";
 import { createSqlUploadOperations } from "./sql-upload-operations.js";
-import { createUploadsModule } from "../../application/uploads.js";
-import { createMultipartModule } from "../../application/multipart.js";
-import { createCatalogModule } from "../../application/catalog.js";
 import {
   buildHarness,
   THREE_PART_SIZE,
@@ -53,19 +50,10 @@ function assemble(objectStore: ReturnType<typeof buildHarness>["objectStore"]) {
     policy,
     clock: systemClock,
   };
-  const multipart = createMultipartModule(deps);
-  const confirmation = createConfirmationModule({ ...deps, multipart });
-  return {
-    confirmation,
-    ...createUploadsModule({
-      confirmation,
-      ...deps,
-      operations: createSqlUploadOperations("test"),
-      multipart,
-    }),
-    ...createCatalogModule({ ...deps, confirmation }),
-  };
+  const { confirmation, uploads, catalog } = assembleFiles(deps);
+  return { confirmation, ...uploads, ...catalog };
 }
+
 async function withSingleConnection(run: () => Promise<void>) {
   const previousLimit = pool.options.max ?? 10;
   const previousTimeout = pool.options.connectionTimeoutMillis;
@@ -554,11 +542,9 @@ it("миграция сохраняет историческую дату соз
       id,
     ]);
     const h = buildHarness();
-    const confirmation = createConfirmationModule({
+    const { confirmation } = assembleFiles({
+      ...h.dependencies,
       fileRows: rows,
-      objectStore: h.objectStore,
-      multipart: h.multipart,
-      policy: h.policy,
       clock: systemClock,
     });
     expect(await confirmation.reconcile(id)).toEqual({ status: "failed" });

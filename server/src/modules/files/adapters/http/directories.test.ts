@@ -1,10 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import type { Server } from "node:http";
 import type { AddressInfo } from "node:net";
-import { Router } from "express";
-import { createApp } from "../../../../app.js";
-import { createDirectoriesRouter } from "./routes.js";
-import { buildHarness } from "../../testing/files-module.harness.js";
+import { buildHttpHarness } from "../../testing/http.harness.js";
 import { directoriesResponseSchema, directoryDtoSchema } from "./responses.js";
 
 let server: Server | undefined;
@@ -18,15 +15,7 @@ afterEach(async () => {
 
 describe("HTTP-контракт каталогов", () => {
   it("создаёт каталог, читает пустой и различает ошибки родителя, дубликата и имени", async () => {
-    const { files } = buildHarness();
-    const app = createApp({
-      healthRouter: Router(),
-      authRouter: Router(),
-      requireAuth: (_req, _res, next) => next(),
-      filesRouter: Router(),
-      directoriesRouter: createDirectoriesRouter(files),
-      corsOrigin: [],
-    });
+    const { app } = buildHttpHarness();
     await new Promise<void>((resolve, reject) => {
       server = app.listen(0, "127.0.0.1", (error) =>
         error ? reject(error) : resolve(),

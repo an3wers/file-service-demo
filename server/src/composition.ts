@@ -1,3 +1,6 @@
+import { createFilesPersistence } from "./modules/files/persistence.js";
+import type { FilesModuleDependencies } from "./modules/files/index.js";
+import type { AppDeps } from "./app.js";
 import { createNotification as assembleNotification } from "./modules/notification/index.js";
 import type { Notification } from "./modules/notification/index.js";
 import type { Express } from "express";
@@ -20,15 +23,6 @@ import {
 import { createAuthHttp } from "./modules/auth/index.js";
 import type { UploadPolicy } from "./modules/files/index.js";
 
-/**
- * The assembly: the one place that names concrete adapters and reads the
- * environment. Everything below it takes what it needs as an argument, so the
- * choice of vendor and the choice of limits are made here and nowhere else.
- *
- * The cleanup script is a second, independent assembly and builds only the
- * pieces its module needs out of the same parts.
- */
-
 export function createObjectStore(): ObjectStore {
   return createS3ObjectStore(
     createS3Client({
@@ -39,11 +33,6 @@ export function createObjectStore(): ObjectStore {
     }),
     config.s3.bucket,
   );
-}
-
-/** The bucket every row is written under; the object store keeps its own copy. */
-export function bucket(): string {
-  return config.s3.bucket;
 }
 
 /** This deployment's upload policy, read off the environment exactly once. */
@@ -74,25 +63,51 @@ export function uploadPolicy(): UploadPolicy {
   };
 }
 
-export function buildApp(): Express {
-  const objectStore = createObjectStore();
-  const { filesRouter, directoriesRouter } = createFilesHttp({
-    objectStore,
-    bucket: bucket(),
+export interface AppAssemblyDependencies {
+  files: FilesModuleDependencies;
+  healthRouter: AppDeps["healthRouter"];
+  auth: Pick<AppDeps, "authRouter" | "requireAuth">;
+  corsOrigin: string[];
+  maxUploadSizeBytes: number;
+  apiDocs?: object | undefined;
+}
+
+function productionFiles() {
+  return {
+    ...createFilesPersistence(config.s3.bucket),
+    objectStore: createObjectStore(),
     policy: uploadPolicy(),
-    uploadSingleFile: createUploadMiddleware(config.uploads.maxSizeBytes),
-  });
+  };
+}
 
-  const { authRouter, requireAuth } = createAuthHttp(config.auth);
-
-  return createApp({
+function productionAppDependencies(): AppAssemblyDependencies {
+  const files = productionFiles();
+  return {
+    files,
+    healthRouter: createHealthRouter({
+      objectStore: files.objectStore,
+      checkDatabase,
+    }),
+    auth: createAuthHttp(config.auth),
     corsOrigin: config.corsOrigin,
+    maxUploadSizeBytes: config.uploads.maxSizeBytes,
     apiDocs: config.apiDocsEnabled ? buildOpenApiDocument() : undefined,
-    healthRouter: createHealthRouter({ objectStore, checkDatabase }),
-    authRouter,
-    requireAuth,
-    filesRouter,
-    directoriesRouter,
+  };
+}
+
+export function buildApp(
+  deps: AppAssemblyDependencies = productionAppDependencies(),
+): Express {
+  const routers = createFilesHttp({
+    ...deps.files,
+    uploadSingleFile: createUploadMiddleware(deps.maxUploadSizeBytes),
+  });
+  return createApp({
+    ...routers,
+    ...deps.auth,
+    corsOrigin: deps.corsOrigin,
+    apiDocs: deps.apiDocs,
+    healthRouter: deps.healthRouter,
   });
 }
 
@@ -101,9 +116,5 @@ export function createNotification(): Notification {
 }
 
 export function createUploadMaintenance(): () => Promise<void> {
-  return createFilesMaintenance({
-    objectStore: createObjectStore(),
-    bucket: bucket(),
-    policy: uploadPolicy(),
-  });
+  return createFilesMaintenance(productionFiles());
 }

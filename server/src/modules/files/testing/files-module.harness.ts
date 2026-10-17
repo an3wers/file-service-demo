@@ -1,8 +1,6 @@
+import { assembleFiles, type FilesModuleDependencies } from "../assembly.js";
 import type { UploadOperations } from "../domain/ports/upload-operations.js";
-import {
-  createConfirmationModule,
-  type ConfirmationModule,
-} from "../application/confirmation.js";
+import type { ConfirmationModule } from "../application/confirmation.js";
 import { createMemoryUploadOperations } from "./memory-upload-operations.js";
 import { createMemoryDirectories } from "./memory-directories.js";
 import { createTestClock } from "../../../testing/clock.js";
@@ -10,33 +8,12 @@ import { createMemoryObjectStore } from "../../../storage/memory-object-store.js
 import type { MemoryObjectStore } from "../../../storage/memory-object-store.js";
 import { createMemoryFileRows } from "./memory-file-rows.js";
 import type { MemoryFileRows } from "./memory-file-rows.js";
-import { createUploadsModule } from "../application/uploads.js";
 import type { UploadsModule } from "../application/uploads.js";
-import { createCatalogModule } from "../application/catalog.js";
 import type { CatalogModule } from "../application/catalog.js";
-import { createMultipartModule } from "../application/multipart.js";
 import type { MultipartModule } from "../application/multipart.js";
-import { createCleanupModule } from "../application/cleanup.js";
 import type { CleanupModule } from "../application/cleanup.js";
 import type { UploadPolicy } from "../domain/upload-policy.js";
 import type { StoredFile } from "../domain/stored-file.js";
-
-/**
- * The files module as a test drives it: the real modules, assembled the way
- * `index.ts` assembles them, on the two second implementations.
- *
- * The multipart module is the real one and the uploads module drives it through
- * the same interface; only the storage seam and the rows seam are substituted.
- * That is what lets a test assert an observable result — what came back to the
- * caller, and what state the metadata row and storage ended in — rather than a
- * list of calls.
- *
- * The cleanup module is assembled here too, on the same two second
- * implementations and the same clock, because what it settles is what the other
- * two modules left behind: a reservation nobody confirmed, an upload nobody
- * finished. `advance` is the only way past a TTL, and it moves the one clock
- * the rows, storage and the cleanup's age filter all read.
- */
 
 export const MIB = 1024 * 1024;
 const GIB = 1024 * MIB;
@@ -76,6 +53,7 @@ function testPolicy(overrides: Partial<UploadPolicy> = {}): UploadPolicy {
 }
 
 export interface Harness {
+  dependencies: FilesModuleDependencies;
   /** The uploads and catalog scenarios merged behind one facade, as routes see it. */
   files: UploadsModule & CatalogModule;
   /** The same multipart module the uploads module drives. */
@@ -107,54 +85,25 @@ export function buildHarness(
   const fileRows = createMemoryFileRows({ clock, bucket: BUCKET });
   const policy = testPolicy(policyOverrides);
   const directories = createMemoryDirectories(fileRows);
-  const multipart = createMultipartModule({
-    objectStore,
-    fileRows,
-    directories,
-    policy,
-    clock,
-  });
   const operations = createMemoryUploadOperations(fileRows);
-  const confirmation = createConfirmationModule({
-    objectStore,
-    fileRows,
-    multipart,
-    clock,
-    policy,
-  });
-  const uploads = createUploadsModule({
-    confirmation,
-    operations,
+  const dependencies = {
     objectStore,
     fileRows,
     directories,
-    policy,
-    multipart,
-    clock,
-  });
-  const catalog = createCatalogModule({
-    confirmation,
     operations,
-    objectStore,
-    fileRows,
-    directories,
     policy,
     clock,
-  });
+  };
+  const { multipart, confirmation, uploads, catalog, cleanup } =
+    assembleFiles(dependencies);
 
   return {
+    dependencies,
     confirmation,
     operations,
     multipart,
     files: { ...uploads, ...catalog },
-    cleanup: createCleanupModule({
-      objectStore,
-      fileRows,
-      policy,
-      clock,
-      confirmation,
-      operations,
-    }),
+    cleanup,
     objectStore,
     fileRows,
     policy,

@@ -59,7 +59,10 @@ const moduleBoundaryRules = MODULE_NAMES.map((name) => ({
       {
         patterns: [
           {
-            group: [`**/modules/${name}/*/**`],
+            group: [
+              `**/modules/${name}/*/**`,
+              `**/modules/${name}/assembly.js`,
+            ],
             message: `Снаружи модуля видно только modules/${name}/index.ts`,
           },
         ],
