@@ -279,6 +279,25 @@ export function createSqlFileRows(bucket: string, execute = query): FileRows {
     findFileById: (id) => findFileById(id, execute),
     markFileReady: (id, values) => markFileReady(id, values, execute),
     markFileFailed: (id) => markFileFailed(id, execute),
+    async failFileIfUnchanged(expected) {
+      const { rows } = await execute<{ id: string }>(
+        `update files set status = 'failed', upload_id = null, part_size = null,
+            part_count = null, updated_at = now()
+          where id = $1 and status = 'pending' and deleted_at is null
+            and date_trunc('milliseconds', updated_at) = $2
+            and upload_id is not distinct from $3
+            and not exists (
+              select 1 from upload_operations o join upload_terminations t on t.operation_id = o.id
+              where o.file_id = files.id
+            ) returning id`,
+        [
+          expected.id,
+          expected.updatedAt,
+          expected.kind === "multipart" ? expected.uploadId : null,
+        ],
+      );
+      return rows.length > 0;
+    },
     countActiveMultipart: () => countActiveMultipart(execute),
     claimExpiredMultipart,
     softDeleteFile,

@@ -163,7 +163,7 @@ describe("cleanup", () => {
 
       expect(counters).toMatchObject({
         examined: 1,
-        skipped: 1,
+        recovered: 1,
         aborted: 0,
         failed: 0,
       });

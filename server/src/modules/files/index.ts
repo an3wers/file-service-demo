@@ -1,3 +1,4 @@
+import { createConfirmationModule } from "./application/confirmation.js";
 import { createSqlUploadOperations } from "./adapters/persistence/sql-upload-operations.js";
 import { createSqlDirectories } from "./adapters/persistence/sql-directories.js";
 import type { Router } from "express";
@@ -105,7 +106,16 @@ export function createFilesCleanup(
   const clock = deps.clock ?? systemClock;
   const fileRows = createSqlFileRows(deps.bucket);
 
+  const directories = createSqlDirectories();
+  const multipart = createMultipartModule({
+    ...deps,
+    fileRows,
+    directories,
+    clock,
+  });
   return createCleanupModule({
+    confirmation: createConfirmationModule({ ...deps, fileRows, multipart }),
+    operations: createSqlUploadOperations(deps.bucket),
     objectStore: deps.objectStore,
     fileRows,
     policy: deps.policy,
@@ -138,16 +148,8 @@ export function createFilesMaintenance(
     ...deps,
     fileRows,
     clock,
-    async settleOperation(file) {
-      const operationId = await operations.findIdByFileId(file.id);
-      if (!operationId) return null;
-      const result = await uploads.failUploadOperation(operationId);
-      return result.status === "succeeded"
-        ? "recovered"
-        : result.status === "processing"
-          ? "skipped"
-          : "failed";
-    },
+    operations,
+    confirmation: createConfirmationModule({ ...deps, fileRows, multipart }),
   });
   return async () => {
     await uploads.sweepTerminated();

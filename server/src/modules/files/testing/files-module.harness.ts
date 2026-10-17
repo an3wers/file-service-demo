@@ -1,3 +1,8 @@
+import type { UploadOperations } from "../domain/ports/upload-operations.js";
+import {
+  createConfirmationModule,
+  type ConfirmationModule,
+} from "../application/confirmation.js";
 import { createMemoryUploadOperations } from "./memory-upload-operations.js";
 import { createMemoryDirectories } from "./memory-directories.js";
 import { createTestClock } from "../../../testing/clock.js";
@@ -75,6 +80,8 @@ export interface Harness {
   files: UploadsModule & CatalogModule;
   /** The same multipart module the uploads module drives. */
   multipart: MultipartModule;
+  confirmation: ConfirmationModule;
+  operations: UploadOperations;
   /** The real cleanup module, on the same storage and rows. */
   cleanup: CleanupModule;
   objectStore: MemoryObjectStore;
@@ -126,10 +133,24 @@ export function buildHarness(
     clock,
   });
 
+  const confirmation = createConfirmationModule({
+    objectStore,
+    fileRows,
+    multipart,
+  });
   return {
+    confirmation,
+    operations,
     multipart,
     files: { ...uploads, ...catalog },
-    cleanup: createCleanupModule({ objectStore, fileRows, policy, clock }),
+    cleanup: createCleanupModule({
+      objectStore,
+      fileRows,
+      policy,
+      clock,
+      confirmation,
+      operations,
+    }),
     objectStore,
     fileRows,
     policy,

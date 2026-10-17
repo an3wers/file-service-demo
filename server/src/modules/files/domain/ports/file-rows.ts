@@ -38,6 +38,7 @@ export interface ReadyValues {
 /** Rows as the files module handles them: reserve, confirm, list, delete. */
 export interface FileRowsForFiles {
   markFileFailed(id: string): Promise<void>;
+  failFileIfUnchanged(expected: StoredFile): Promise<boolean>;
   reserveFile(input: InsertFileInput): Promise<StoredFile>;
   isFileDeleted(id: string): Promise<boolean>;
   insertFile(input: InsertFileInput): Promise<StoredFile>;

@@ -21,6 +21,7 @@ export type UploadOperationFileRows = Pick<
   | "reserveFile"
   | "markFileReady"
   | "markFileFailed"
+  | "failFileIfUnchanged"
 > &
   Pick<FileRowsForMultipart, "countActiveMultipart">;
 

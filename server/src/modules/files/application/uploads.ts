@@ -1,9 +1,9 @@
+import { createConfirmationModule } from "./confirmation.js";
 import { logger } from "../../../logger.js";
 import { randomUUID } from "node:crypto";
 import type {
   UploadOperations,
   UploadOperationRecord,
-  UploadOperationFileRows,
   UploadOperationSession,
 } from "../domain/ports/upload-operations.js";
 import {
@@ -14,13 +14,12 @@ import { normalizeDirectory } from "../domain/keys.js";
 import { requireDirectory } from "../domain/directories.js";
 import type { DirectoriesForUpload } from "../domain/ports/directories.js";
 import type { Clock } from "../domain/ports/clock.js";
-import {
-  FileNotFoundError,
-  MultipartNotFoundError,
-  UploadNotCompletedError,
-} from "../domain/errors.js";
+import { FileNotFoundError, MultipartNotFoundError } from "../domain/errors.js";
 import type { FileRowsForFiles } from "../domain/ports/file-rows.js";
-import type { ObjectStoreForFiles } from "../domain/ports/object-storage.js";
+import type {
+  ObjectStoreForFiles,
+  ObjectStoreForMultipart,
+} from "../domain/ports/object-storage.js";
 import type {
   MultipartModule,
   MultipartStatus,
@@ -35,7 +34,7 @@ import type { UploadPolicy } from "../domain/upload-policy.js";
 
 export interface UploadsModuleDeps {
   operations: UploadOperations;
-  objectStore: ObjectStoreForFiles;
+  objectStore: ObjectStoreForFiles & Pick<ObjectStoreForMultipart, "listParts">;
   directories: DirectoriesForUpload;
   fileRows: FileRowsForFiles;
   policy: UploadPolicy;
@@ -132,28 +131,17 @@ export function createUploadsModule({
     return file;
   }
 
+  const confirmation = createConfirmationModule({
+    objectStore,
+    fileRows,
+    multipart,
+  });
+
   async function resolveOperation(
     record: UploadOperationRecord,
-    rows: UploadOperationFileRows,
+    session: UploadOperationSession,
   ): Promise<UploadOperationResult> {
-    const file = await rows.findFileById(record.reservation.id);
-    if (!file)
-      return {
-        status: (await rows.isFileDeleted(record.reservation.id))
-          ? "deleted"
-          : "failed",
-      };
-    if (file.kind === "ready") return { status: "succeeded", file };
-    const stored = await objectStore.head(file.key);
-    if (!stored || (record.size !== null && stored.size !== record.size)) {
-      return { status: "failed" };
-    }
-    const ready = await rows.markFileReady(file.id, {
-      sizeBytes: stored.size,
-      etag: stored.etag,
-      contentType: stored.contentType ?? file.contentType,
-    });
-    return ready ? { status: "succeeded", file: ready } : { status: "deleted" };
+    return await confirmation.reconcile(record.reservation.id, session);
   }
 
   async function exclusive<T>(
@@ -213,40 +201,6 @@ export function createUploadsModule({
       status,
       uploadSource: source,
     };
-  }
-
-  async function complete(
-    file: StoredFile,
-    rows: Pick<FileRowsForFiles, "markFileReady">,
-  ): Promise<StoredFile> {
-    if (file.kind === "ready") return file;
-    if (file.kind === "multipart")
-      await multipart.completeMultipartUpload(file);
-    const stored = await objectStore.head(file.key);
-    if (!stored) {
-      const message =
-        "No object was found at the reserved key; upload the file before confirming";
-      throw file.kind === "multipart"
-        ? new MultipartNotFoundError(message, { key: file.key })
-        : new UploadNotCompletedError(message, { key: file.key });
-    }
-    const expectedSize =
-      file.kind === "multipart"
-        ? file.plan.size
-        : file.kind === "reserved"
-          ? file.size
-          : null;
-    if (expectedSize !== null && stored.size !== expectedSize)
-      throw new UploadNotCompletedError(
-        "Размер загруженного файла не совпадает с ожидаемым",
-      );
-    const ready = await rows.markFileReady(file.id, {
-      sizeBytes: stored.size,
-      etag: stored.etag,
-      contentType: stored.contentType ?? file.contentType,
-    });
-    if (!ready) throw fileNotFound(file.id);
-    return ready;
   }
 
   async function dispose(
@@ -311,7 +265,7 @@ export function createUploadsModule({
           if (disposed) return disposed;
           const record = await session.read();
           return record
-            ? await resolveOperation(record, session.fileRows)
+            ? await resolveOperation(record, session)
             : { status: "absent" as const };
         })) ?? { status: "processing" }
       );
@@ -331,7 +285,7 @@ export function createUploadsModule({
           if (disposed) return disposed;
           const record = await session.read();
           if (record) {
-            const outcome = await resolveOperation(record, session.fileRows);
+            const outcome = await resolveOperation(record, session);
             if (outcome.status === "succeeded" || outcome.status === "deleted")
               return outcome;
           }
@@ -348,7 +302,7 @@ export function createUploadsModule({
         async (session) => {
           await requireOpen(session);
           const record = await requireOperation(session, input);
-          const outcome = await resolveOperation(record, session.fileRows);
+          const outcome = await resolveOperation(record, session);
           if (outcome.status === "succeeded") return outcome.file;
           if (outcome.status === "deleted")
             throw fileNotFound(record.reservation.id);
@@ -359,18 +313,12 @@ export function createUploadsModule({
             await objectStore.abortMultipart(file.key, file.uploadId);
           await session.fileRows.reserveFile(pendingInput(record, "server"));
           const { key, contentType, id } = record.reservation;
-          const { etag } = await objectStore.put(key, input.bytes, {
+          await objectStore.put(key, input.bytes, {
             contentType,
             contentLength: input.size,
           });
           await requireOpen(session);
-          const ready = await session.fileRows.markFileReady(id, {
-            sizeBytes: input.size,
-            etag,
-            contentType,
-          });
-          if (!ready) throw fileNotFound(id);
-          return ready;
+          return await confirmation.confirm(id, session);
         },
       );
     },
@@ -382,7 +330,7 @@ export function createUploadsModule({
         async (session) => {
           await requireOpen(session);
           const record = await requireOperation(session, input);
-          const outcome = await resolveOperation(record, session.fileRows);
+          const outcome = await resolveOperation(record, session);
           if (outcome.status === "succeeded")
             return {
               strategy: "ready",
@@ -456,14 +404,14 @@ export function createUploadsModule({
 
     async completeUpload(id) {
       const operationId = await operations.findIdByFileId(id);
-      if (!operationId) return await complete(await requireFile(id), fileRows);
+      if (!operationId) return await confirmation.confirm(id);
       return await exclusive(
         operationId,
         async (session) => {
           await requireOpen(session);
           const file = await session.fileRows.findFileById(id);
           if (!file) throw fileNotFound(id);
-          const result = await complete(file, session.fileRows);
+          const result = await confirmation.confirm(id, session);
           await requireOpen(session);
           return result;
         },

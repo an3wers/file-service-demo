@@ -2,7 +2,11 @@ import { logger } from "../../../logger.js";
 import type { Clock } from "../domain/ports/clock.js";
 import type { FileRowsForCleanup } from "../domain/ports/file-rows.js";
 import type { ObjectStoreForCleanup } from "../domain/ports/object-storage.js";
-import type { StoredFile } from "../domain/stored-file.js";
+import type { UploadOperations } from "../domain/ports/upload-operations.js";
+import type {
+  ConfirmationModule,
+  ReconciliationResult,
+} from "./confirmation.js";
 import type { UploadPolicy } from "../domain/upload-policy.js";
 
 export interface CleanupModuleDeps {
@@ -17,9 +21,8 @@ export interface CleanupModuleDeps {
    * sweep's age filter age together.
    */
   clock: Clock;
-  settleOperation?: (
-    file: StoredFile,
-  ) => Promise<"recovered" | "failed" | "skipped" | null>;
+  confirmation: ConfirmationModule;
+  operations: UploadOperations;
 }
 
 /** What one pass over the expired rows settled. */
@@ -69,103 +72,10 @@ export function createCleanupModule({
   fileRows,
   policy,
   clock,
-  settleOperation,
+  confirmation,
+  operations,
 }: CleanupModuleDeps): CleanupModule {
   const ttlHours = policy.pendingTtlHours;
-
-  /** Did the upload succeed after all, with only the confirmation lost? */
-  async function recoverFromObject(file: StoredFile): Promise<boolean> {
-    const stored = await objectStore.head(file.key);
-
-    const expectedSize =
-      file.kind === "multipart"
-        ? file.plan.size
-        : file.kind === "reserved"
-          ? file.size
-          : null;
-    if (!stored || (expectedSize !== null && stored.size !== expectedSize)) {
-      return false;
-    }
-
-    const ready = await fileRows.markFileReady(file.id, {
-      sizeBytes: stored.size,
-      etag: stored.etag,
-      contentType: stored.contentType ?? file.contentType,
-    });
-
-    return ready !== null;
-  }
-
-  /**
-   * An abandoned multipart upload. The row is claimed first, in one statement: a
-   * client can still be finishing this upload right now, and whoever updates the
-   * row wins. Losing the claim means somebody else settled it, so it is left
-   * alone.
-   *
-   * The claim marks the row failed before the abort runs. If the abort then
-   * fails, the upload becomes an orphan — which is exactly what the second pass
-   * is for. The other order is worse: it leaves a window where a live client
-   * still sees `pending` and keeps pushing parts into an upload already
-   * condemned.
-   */
-  async function settleMultipart(
-    file: StoredFile,
-    counters: SettleCounters,
-  ): Promise<void> {
-    const uploadId = await fileRows.claimExpiredMultipart(file.id, ttlHours);
-
-    if (!uploadId) {
-      counters.skipped += 1;
-      logger.debug(
-        { id: file.id },
-        "Pending upload was settled by someone else; skipping",
-      );
-      return;
-    }
-
-    const parts = await objectStore.listParts(file.key, uploadId);
-
-    if (!parts) {
-      // The upload is gone: either it completed and only the confirmation was
-      // lost, or it never landed at all.
-      if (await recoverFromObject(file)) {
-        counters.recovered += 1;
-        logger.info({ id: file.id, key: file.key }, "Recovered pending upload");
-      } else {
-        counters.failed += 1;
-        logger.info(
-          { id: file.id, key: file.key },
-          "Marked pending upload failed",
-        );
-      }
-
-      return;
-    }
-
-    await objectStore.abortMultipart(file.key, uploadId);
-    counters.aborted += 1;
-    counters.failed += 1;
-    logger.info(
-      { id: file.id, key: file.key, uploadId },
-      "Aborted abandoned multipart upload",
-    );
-  }
-
-  /** A single presigned PUT: only storage can say whether the object turned up. */
-  async function settleSingle(
-    file: StoredFile,
-    counters: SettleCounters,
-  ): Promise<void> {
-    if (await recoverFromObject(file)) {
-      counters.recovered += 1;
-      logger.info({ id: file.id, key: file.key }, "Recovered pending upload");
-      return;
-    }
-
-    await fileRows.markFileFailed(file.id);
-    counters.failed += 1;
-    logger.info({ id: file.id, key: file.key }, "Marked pending upload failed");
-  }
 
   return {
     /**
@@ -184,15 +94,23 @@ export function createCleanupModule({
 
       for (const file of expired) {
         try {
-          const settled = await settleOperation?.(file);
-          if (settled) {
-            counters[settled] += 1;
-            continue;
-          }
-          if (file.kind === "multipart") {
-            await settleMultipart(file, counters);
-          } else {
-            await settleSingle(file, counters);
+          const operationId = await operations.findIdByFileId(file.id);
+          const outcome: ReconciliationResult | null = operationId
+            ? await operations.exclusive(
+                operationId,
+                async (session) =>
+                  await confirmation.reconcile(file.id, session, {
+                    expired: true,
+                  }),
+              )
+            : await confirmation.reconcile(file.id, undefined, {
+                expired: true,
+              });
+          if (!outcome || outcome.status === "deleted") counters.skipped += 1;
+          else if (outcome.status === "succeeded") counters.recovered += 1;
+          else {
+            counters.failed += 1;
+            if (outcome.aborted) counters.aborted += 1;
           }
         } catch (error) {
           logger.error(

@@ -7,11 +7,19 @@ import type {
 } from "../domain/ports/upload-operations.js";
 
 export function createMemoryUploadOperations(
-  fileRows: UploadOperationFileRows,
+  fileRows: UploadOperationFileRows & {
+    setTerminationGuard?: (guard: (id: string) => boolean) => void;
+  },
 ): UploadOperations {
   const records = new Map<string, UploadOperationRecord>();
   const active = new Map<string, Promise<void>>();
   const terminations = new Map<string, UploadTermination>();
+  fileRows.setTerminationGuard?.((fileId) =>
+    [...records].some(
+      ([id, record]) =>
+        record.reservation.id === fileId && terminations.has(id),
+    ),
+  );
   async function terminate(
     id: string,
     reason: UploadTerminationReason,

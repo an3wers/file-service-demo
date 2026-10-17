@@ -332,3 +332,61 @@ describe.each([5, THREE_PART_SIZE])(
     });
   },
 );
+
+it("условная неудача PostgreSQL не перезаписывает готовый или удалённый файл", async () => {
+  const { objectStore } = buildHarness();
+  const module = assemble(objectStore);
+  const reserved = await module.createPresignedUpload(input());
+  const rows = createSqlFileRows("test");
+  const expected = (await rows.findFileById(reserved.id))!;
+  objectStore.uploadObject(reserved.key, Buffer.from("hello"), "text/plain");
+  await module.completeUpload(reserved.id);
+  expect(await rows.failFileIfUnchanged(expected)).toBe(false);
+  expect(await rows.findFileById(reserved.id)).toMatchObject({ kind: "ready" });
+  await module.deleteFile(reserved.id);
+  expect(await rows.failFileIfUnchanged(expected)).toBe(false);
+  expect(await rows.findFileById(reserved.id)).toBeNull();
+});
+
+it("PostgreSQL сохраняет окончательное намерение при попытках подтверждения и условной неудачи", async () => {
+  const { objectStore } = buildHarness();
+  const upload = input();
+  const reserved = await assemble(objectStore).createPresignedUpload(upload);
+  const rows = createSqlFileRows("test");
+  const expected = (await rows.findFileById(reserved.id))!;
+  await createSqlUploadOperations("test").terminate(
+    upload.operationId,
+    "cancelled",
+  );
+  expect(
+    await rows.markFileReady(reserved.id, {
+      sizeBytes: 5,
+      etag: "etag",
+      contentType: "text/plain",
+    }),
+  ).toBeNull();
+  expect(await rows.failFileIfUnchanged(expected)).toBe(false);
+  expect(await rows.findFileById(reserved.id)).toMatchObject({
+    kind: "reserved",
+  });
+});
+
+it("PostgreSQL атомарно устанавливает временную неудачу старого файла без операции", async () => {
+  const rows = createSqlFileRows("test");
+  const id = randomUUID();
+  const file = await rows.insertFile({
+    id,
+    objectKey: id,
+    directory: "",
+    originalName: "a.txt",
+    extension: "txt",
+    contentType: "text/plain",
+    sizeBytes: 5,
+    etag: null,
+    status: "pending",
+    uploadSource: "presigned",
+  });
+  expect(await rows.failFileIfUnchanged(file)).toBe(true);
+  expect(await rows.failFileIfUnchanged(file)).toBe(false);
+  expect(await rows.findFileById(id)).toMatchObject({ kind: "failed" });
+});

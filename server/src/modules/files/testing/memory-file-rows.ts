@@ -43,6 +43,7 @@ import type { StoredFile } from "../domain/stored-file.js";
  */
 
 export interface MemoryFileRows extends FileRows {
+  setTerminationGuard(guard: (id: string) => boolean): void;
   /** Moves the clock forward, which is how a reserved row becomes expired. */
   advance(hours: number): void;
   /** Makes the next call to this method fail, for the error paths. */
@@ -95,6 +96,7 @@ export function createMemoryFileRows(
   const clock = options.clock ?? createTestClock();
   const bucket = options.bucket ?? "test-bucket";
   const failures = createFailureSwitch<keyof FileRows>();
+  let terminated = (_id: string) => false;
   let interleaved: (() => Promise<void>) | null = null;
 
   /** Rows leave by value: a caller mutating one must not rewrite the table. */
@@ -189,7 +191,7 @@ export function createMemoryFileRows(
 
       const row = rows.get(id);
 
-      if (!row || !live(row)) {
+      if (!row || !live(row) || terminated(id)) {
         return null;
       }
 
@@ -203,6 +205,32 @@ export function createMemoryFileRows(
       row.updated_at = clock.now();
 
       return toStoredFile(copy(row));
+    },
+
+    async failFileIfUnchanged(expected) {
+      failures.check("failFileIfUnchanged");
+      if (interleaved) {
+        const run = interleaved;
+        interleaved = null;
+        await run();
+      }
+      const row = rows.get(expected.id);
+      if (
+        !row ||
+        !live(row) ||
+        terminated(expected.id) ||
+        row.status !== "pending" ||
+        row.updated_at.getTime() !== expected.updatedAt.getTime() ||
+        row.upload_id !==
+          (expected.kind === "multipart" ? expected.uploadId : null)
+      )
+        return false;
+      row.status = "failed";
+      row.upload_id = null;
+      row.part_size = null;
+      row.part_count = null;
+      row.updated_at = clock.now();
+      return true;
     },
 
     /** Unlike the rest, the SQL statement carries no `deleted_at` check. */
@@ -392,6 +420,9 @@ export function createMemoryFileRows(
 
   return {
     ...files,
+    setTerminationGuard(guard) {
+      terminated = guard;
+    },
 
     advance(hours: number): void {
       clock.advance(hours);
