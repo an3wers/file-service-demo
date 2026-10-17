@@ -90,6 +90,7 @@ describe("постоянные каталоги на PostgreSQL", () => {
   it("один конкурентный запрос создаёт каталог, второй получает ошибку дубликата", async () => {
     const harness = buildHarness();
     const catalog = createCatalogModule({
+      confirmation: harness.confirmation,
       operations: createSqlUploadOperations("test"),
       objectStore: harness.objectStore,
       fileRows: createSqlFileRows("test"),

@@ -1,3 +1,4 @@
+import type { ConfirmationModule } from "./confirmation.js";
 import type { DirectoryDto } from "../domain/ports/directories.js";
 import { requireDirectory } from "../domain/directories.js";
 import type { DirectoriesForCatalog } from "../domain/ports/directories.js";
@@ -21,6 +22,7 @@ import type { FileStatus, StoredFile } from "../domain/stored-file.js";
 import type { UploadPolicy } from "../domain/upload-policy.js";
 
 export interface CatalogModuleDeps {
+  confirmation: Pick<ConfirmationModule, "cleanup">;
   operations: UploadOperations;
   objectStore: ObjectStoreForFiles;
   fileRows: FileRowsForFiles;
@@ -86,6 +88,7 @@ function fileNotFound(id: string) {
 
 export function createCatalogModule({
   operations,
+  confirmation,
   objectStore,
   fileRows,
   directories,
@@ -205,18 +208,10 @@ export function createCatalogModule({
         file?.kind === "multipart" ? file.uploadId : undefined,
       );
       await fileRows.softDeleteFile(id);
-      const result = await operations.exclusive(cleanupId, async (session) => {
-        const record = await session.read();
-        const termination = await session.termination();
-        if (!record) return;
-        if (termination?.uploadId)
-          await objectStore.abortMultipart(
-            record.reservation.key,
-            termination.uploadId,
-          );
-        await objectStore.remove(record.reservation.key);
-        await session.checked();
-      });
+      const result = await operations.exclusive(
+        cleanupId,
+        confirmation.cleanup,
+      );
       if (result === null)
         throw new FileNotReadyError("Удаление ещё выполняется");
     },

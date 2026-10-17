@@ -14,13 +14,17 @@ import type { MultipartModule } from "./multipart.js";
 
 export type ConfirmationContext = Pick<
   UploadOperationSession,
-  "fileRows" | "read" | "termination"
+  "fileRows" | "read" | "termination" | "terminate" | "checked"
 >;
 export type ReconciliationResult =
   | { status: "succeeded"; file: StoredFile }
-  | { status: "failed" | "deleted"; aborted?: boolean };
+  | { status: "failed"; aborted?: boolean }
+  | CleanupResult;
+
+export type CleanupResult = { status: "cancelled" | "discarded" | "deleted" };
 
 export interface ConfirmationModule {
+  cleanup(session: UploadOperationSession): Promise<CleanupResult | null>;
   confirm(id: string, context?: ConfirmationContext): Promise<StoredFile>;
   reconcile(
     id: string,
@@ -34,7 +38,7 @@ export function createConfirmationModule({
   fileRows,
   multipart,
 }: {
-  objectStore: Pick<ObjectStoreForFiles, "head" | "abortMultipart"> &
+  objectStore: Pick<ObjectStoreForFiles, "head" | "abortMultipart" | "remove"> &
     Pick<ObjectStoreForMultipart, "listParts">;
   fileRows: Pick<
     FileRowsForFiles,
@@ -42,6 +46,36 @@ export function createConfirmationModule({
   >;
   multipart: Pick<MultipartModule, "completeMultipartUpload">;
 }): ConfirmationModule {
+  async function cleanup(
+    session: ConfirmationContext,
+  ): Promise<CleanupResult | null> {
+    let termination = await session.termination();
+    if (!termination) return null;
+    try {
+      const record = await session.read();
+      if (record) {
+        const file = await session.fileRows.findFileById(record.reservation.id);
+        if (file?.kind === "multipart") {
+          await session.terminate(termination.reason, file.uploadId);
+          termination = (await session.termination())!;
+        }
+        await session.fileRows.markFileFailed(record.reservation.id);
+        if (termination.uploadId)
+          await objectStore.abortMultipart(
+            record.reservation.key,
+            termination.uploadId,
+          );
+        await objectStore.remove(record.reservation.key);
+      }
+      return {
+        status:
+          termination.reason === "failed" ? "discarded" : termination.reason,
+      };
+    } finally {
+      await session.checked();
+    }
+  }
+
   async function inspect(
     id: string,
     context?: ConfirmationContext,
@@ -49,14 +83,25 @@ export function createConfirmationModule({
     expired = false,
   ): Promise<ReconciliationResult> {
     const rows = context?.fileRows ?? fileRows;
-    if (await context?.termination()) return { status: "deleted" };
+    if (context) {
+      const cleaned = await cleanup(context);
+      if (cleaned) return cleaned;
+    }
     const file = await rows.findFileById(id);
+    if (file?.kind === "ready" && context) {
+      const cleaned = await cleanup(context);
+      if (cleaned) return cleaned;
+    }
     if (!file)
       return { status: (await rows.isFileDeleted(id)) ? "deleted" : "failed" };
     if (file.kind === "ready") return { status: "succeeded", file };
     if (complete && file.kind === "multipart")
       await multipart.completeMultipartUpload(file);
     const stored = await objectStore.head(file.key);
+    if (context) {
+      const cleaned = await cleanup(context);
+      if (cleaned) return cleaned;
+    }
     const record = await context?.read();
     const expected = record
       ? record.size
@@ -94,9 +139,14 @@ export function createConfirmationModule({
       etag: stored.etag,
       contentType: stored.contentType ?? file.contentType,
     });
+    if (context) {
+      const cleaned = await cleanup(context);
+      if (cleaned) return cleaned;
+    }
     return ready ? { status: "succeeded", file: ready } : { status: "deleted" };
   }
   return {
+    cleanup,
     reconcile: (id, context, options) =>
       inspect(id, context, false, options?.expired),
     async confirm(id, context) {

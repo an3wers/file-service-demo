@@ -200,22 +200,6 @@ describe("окончательная отмена и очистка", () => {
     });
   });
 
-  it("повторная уборка удаляет объект, появившийся после подтверждения отмены", async () => {
-    const { files, objectStore } = buildHarness();
-    const upload = input();
-    const reserved = await files.createPresignedUpload(upload);
-    await files.cancelUploadOperation(upload.operationId);
-    await objectStore.put(reserved.key, upload.bytes, {
-      contentLength: upload.size,
-      contentType: "text/plain",
-    });
-    await files.sweepTerminated();
-    expect(await objectStore.head(reserved.key)).toBeNull();
-    expect(await files.getUploadOperation(upload.operationId)).toEqual({
-      status: "cancelled",
-    });
-  });
-
   it("не принимает объект неправильного размера как успешный результат", async () => {
     const { files, objectStore, rowOf } = buildHarness();
     const upload = input();

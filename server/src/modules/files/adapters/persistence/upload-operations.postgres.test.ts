@@ -1,3 +1,4 @@
+import { createConfirmationModule } from "../../application/confirmation.js";
 import { randomUUID } from "node:crypto";
 import {
   beforeAll,
@@ -50,13 +51,16 @@ function assemble(objectStore: ReturnType<typeof buildHarness>["objectStore"]) {
     policy,
     clock: systemClock,
   };
+  const multipart = createMultipartModule(deps);
+  const confirmation = createConfirmationModule({ ...deps, multipart });
   return {
+    confirmation,
     ...createUploadsModule({
       ...deps,
       operations: createSqlUploadOperations("test"),
-      multipart: createMultipartModule(deps),
+      multipart,
     }),
-    ...createCatalogModule(deps),
+    ...createCatalogModule({ ...deps, confirmation }),
   };
 }
 async function withSingleConnection(run: () => Promise<void>) {
@@ -389,4 +393,41 @@ it("PostgreSQL атомарно устанавливает временную н
   expect(await rows.failFileIfUnchanged(file)).toBe(true);
   expect(await rows.failFileIfUnchanged(file)).toBe(false);
   expect(await rows.findFileById(id)).toMatchObject({ kind: "failed" });
+});
+
+it("общая очистка PostgreSQL переживает частичный сбой и перезапуск без нового срока намерения", async () => {
+  await withSingleConnection(async () => {
+    const { objectStore } = buildHarness();
+    const upload = { ...input(), size: THREE_PART_SIZE };
+    const reserved = await assemble(objectStore).createPresignedUpload(upload);
+    const operations = createSqlUploadOperations("test");
+    await operations.terminate(upload.operationId, "failed");
+    objectStore.failNext("remove", new Error("Нет связи"));
+    await expect(
+      operations.exclusive(upload.operationId, (session) =>
+        assemble(objectStore).confirmation.cleanup(session),
+      ),
+    ).rejects.toThrow("Нет связи");
+    expect(objectStore.openUploads()).toEqual([]);
+    objectStore.uploadObject(reserved.key, Buffer.alloc(1), "text/plain");
+    const restarted = assemble(objectStore);
+    const restartedOperations = createSqlUploadOperations("test");
+    expect(await restartedOperations.listTerminated()).toContain(
+      upload.operationId,
+    );
+    expect(
+      await restartedOperations.exclusive(upload.operationId, (session) =>
+        restarted.confirmation.cleanup(session),
+      ),
+    ).toEqual({ status: "discarded" });
+    expect(objectStore.objectKeys()).toEqual([]);
+    expect(
+      await restartedOperations.exclusive(upload.operationId, (session) =>
+        restarted.confirmation.reconcile(reserved.id, session),
+      ),
+    ).toEqual({ status: "discarded" });
+    await expect(restarted.completeUpload(reserved.id)).rejects.toMatchObject({
+      name: "FileNotFoundError",
+    });
+  });
 });

@@ -106,12 +106,11 @@ export function createCleanupModule({
             : await confirmation.reconcile(file.id, undefined, {
                 expired: true,
               });
-          if (!outcome || outcome.status === "deleted") counters.skipped += 1;
-          else if (outcome.status === "succeeded") counters.recovered += 1;
-          else {
+          if (outcome?.status === "succeeded") counters.recovered += 1;
+          else if (outcome?.status === "failed") {
             counters.failed += 1;
             if (outcome.aborted) counters.aborted += 1;
-          }
+          } else counters.skipped += 1;
         } catch (error) {
           logger.error(
             { err: error, id: file.id },

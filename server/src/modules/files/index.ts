@@ -79,6 +79,7 @@ export function createFilesHttp(
     clock,
   });
   const catalog = createCatalogModule({
+    confirmation: createConfirmationModule({ ...deps, fileRows, multipart }),
     operations,
     objectStore: deps.objectStore,
     fileRows,

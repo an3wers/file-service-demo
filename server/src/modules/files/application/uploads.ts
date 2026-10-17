@@ -203,36 +203,9 @@ export function createUploadsModule({
     };
   }
 
-  async function dispose(
-    session: UploadOperationSession,
-  ): Promise<UploadOperationResult | null> {
-    let termination = await session.termination();
-    if (!termination) return null;
-    const record = await session.read();
-    if (record) {
-      const file = await session.fileRows.findFileById(record.reservation.id);
-      if (file?.kind === "multipart") {
-        await session.terminate(termination.reason, file.uploadId);
-        termination = (await session.termination())!;
-      }
-      await session.fileRows.markFileFailed(record.reservation.id);
-      if (termination.uploadId)
-        await objectStore.abortMultipart(
-          record.reservation.key,
-          termination.uploadId,
-        );
-      await objectStore.remove(record.reservation.key);
-    }
-    await session.checked();
-    return {
-      status:
-        termination.reason === "failed" ? "discarded" : termination.reason,
-    };
-  }
-
   async function requireOpen(session: UploadOperationSession): Promise<void> {
     if (await session.termination()) {
-      await dispose(session);
+      await confirmation.cleanup(session);
       throw new FileNotFoundError(
         "Операция завершена и больше не принимает данные",
       );
@@ -243,13 +216,7 @@ export function createUploadsModule({
     async sweepTerminated() {
       for (const id of await operations.listTerminated()) {
         try {
-          await operations.exclusive(id, async (session) => {
-            try {
-              return await dispose(session);
-            } finally {
-              await session.checked();
-            }
-          });
+          await operations.exclusive(id, confirmation.cleanup);
         } catch (error) {
           logger.error(
             { err: error, operationId: id },
@@ -261,7 +228,7 @@ export function createUploadsModule({
     async getUploadOperation(id) {
       return (
         (await operations.exclusive(id, async (session) => {
-          const disposed = await dispose(session);
+          const disposed = await confirmation.cleanup(session);
           if (disposed) return disposed;
           const record = await session.read();
           return record
@@ -274,23 +241,24 @@ export function createUploadsModule({
     async cancelUploadOperation(id) {
       await operations.terminate(id, "cancelled");
       return (
-        (await operations.exclusive(id, dispose)) ?? { status: "processing" }
+        (await operations.exclusive(id, confirmation.cleanup)) ?? {
+          status: "processing",
+        }
       );
     },
 
     async failUploadOperation(id) {
       return (
         (await operations.exclusive(id, async (session) => {
-          const disposed = await dispose(session);
+          const disposed = await confirmation.cleanup(session);
           if (disposed) return disposed;
           const record = await session.read();
           if (record) {
             const outcome = await resolveOperation(record, session);
-            if (outcome.status === "succeeded" || outcome.status === "deleted")
-              return outcome;
+            if (outcome.status !== "failed") return outcome;
           }
           await session.terminate("failed");
-          return (await dispose(session))!;
+          return (await confirmation.cleanup(session))!;
         })) ?? { status: "processing" }
       );
     },
@@ -304,7 +272,7 @@ export function createUploadsModule({
           const record = await requireOperation(session, input);
           const outcome = await resolveOperation(record, session);
           if (outcome.status === "succeeded") return outcome.file;
-          if (outcome.status === "deleted")
+          if (outcome.status !== "failed")
             throw fileNotFound(record.reservation.id);
           const file = await session.fileRows.findFileById(
             record.reservation.id,
@@ -339,7 +307,7 @@ export function createUploadsModule({
               key: outcome.file.key,
               file: outcome.file,
             };
-          if (outcome.status === "deleted")
+          if (outcome.status !== "failed")
             throw fileNotFound(record.reservation.id);
           const file = await session.fileRows.findFileById(
             record.reservation.id,

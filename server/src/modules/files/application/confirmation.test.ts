@@ -174,3 +174,78 @@ it("отказ проверки хранилища при просрочке с�
     uploadId: started.uploadId,
   });
 });
+
+it.each(["cancelled", "deleted"] as const)(
+  "очищает готовый результат по намерению %s и удаляет поздний объект повторно",
+  async (reason) => {
+    const h = buildHarness();
+    const file = await h.files.uploadThroughServer({
+      operationId: "cleanup-ready",
+      filename: "a.txt",
+      size: 5,
+      bytes: Buffer.from("hello"),
+    });
+    await h.operations.terminate("cleanup-ready", reason);
+    const clean = () =>
+      h.operations.exclusive("cleanup-ready", (session) =>
+        h.confirmation.cleanup(session),
+      );
+    expect(await clean()).toEqual({ status: reason });
+    expect(await h.rowOf(file.id)).toMatchObject({ kind: "failed" });
+    expect(h.objectStore.objectKeys()).toEqual([]);
+    h.advance(24 * 365 * 30);
+    expect(await h.operations.listTerminated()).toContain("cleanup-ready");
+    h.objectStore.uploadObject(file.key, Buffer.from("hello"), "text/plain");
+    expect(await clean()).toEqual({ status: reason });
+    expect(h.objectStore.objectKeys()).toEqual([]);
+  },
+);
+
+it("сохраняет идентификатор составной загрузки при частичном сбое очистки", async () => {
+  const h = buildHarness();
+  const started = await h.files.createPresignedUpload({
+    operationId: "cleanup-multipart",
+    filename: "a.bin",
+    size: 12 * 1024 * 1024,
+  });
+  if (started.strategy !== "multipart")
+    throw new Error("Ожидалась составная загрузка");
+  await h.operations.terminate("cleanup-multipart", "failed");
+  h.objectStore.failNext("abortMultipart", new Error("Нет связи"));
+  await expect(
+    h.operations.exclusive("cleanup-multipart", (session) =>
+      h.confirmation.cleanup(session),
+    ),
+  ).rejects.toThrow("Нет связи");
+  expect(await h.rowOf(started.id)).toMatchObject({ kind: "failed" });
+  expect(h.objectStore.openUploads()).toHaveLength(1);
+  expect(
+    await h.operations.exclusive("cleanup-multipart", (session) =>
+      h.confirmation.cleanup(session),
+    ),
+  ).toEqual({ status: "discarded" });
+  expect(h.objectStore.openUploads()).toEqual([]);
+});
+
+it("подтверждение исполняет отмену, сохранённую во время проверки объекта", async () => {
+  const h = buildHarness();
+  const started = await h.files.createPresignedUpload({
+    operationId: "cancel-head",
+    filename: "a.txt",
+    size: 5,
+  });
+  h.objectStore.uploadObject(started.key, Buffer.from("hello"), "text/plain");
+  const head = h.objectStore.head.bind(h.objectStore);
+  h.objectStore.head = async (key) => {
+    const result = await head(key);
+    await h.operations.terminate("cancel-head", "cancelled");
+    return result;
+  };
+  await expect(
+    h.operations.exclusive("cancel-head", (session) =>
+      h.confirmation.confirm(started.id, session),
+    ),
+  ).rejects.toMatchObject({ name: "FileNotFoundError" });
+  expect(await h.rowOf(started.id)).toMatchObject({ kind: "failed" });
+  expect(h.objectStore.objectKeys()).toEqual([]);
+});

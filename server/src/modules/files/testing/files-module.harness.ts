@@ -124,7 +124,13 @@ export function buildHarness(
     multipart,
     clock,
   });
+  const confirmation = createConfirmationModule({
+    objectStore,
+    fileRows,
+    multipart,
+  });
   const catalog = createCatalogModule({
+    confirmation,
     operations,
     objectStore,
     fileRows,
@@ -133,11 +139,6 @@ export function buildHarness(
     clock,
   });
 
-  const confirmation = createConfirmationModule({
-    objectStore,
-    fileRows,
-    multipart,
-  });
   return {
     confirmation,
     operations,
