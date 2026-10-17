@@ -4,8 +4,8 @@ import { Buffer } from "node:buffer";
 import {
   buildHarness,
   THREE_PART_SIZE,
-} from "../../server/src/modules/files/testing/files-module.harness";
-import { toFileDto } from "../../server/src/modules/files/adapters/http/dto";
+  toFileDto,
+} from "../../server/src/modules/files/testing/index";
 import { useUpload } from "../src/composables/useUpload";
 import { clearSession, startSession } from "@/api/session";
 import { ApiError } from "@/api/client";
