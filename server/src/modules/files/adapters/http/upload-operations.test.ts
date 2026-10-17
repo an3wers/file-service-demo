@@ -21,7 +21,7 @@ afterEach(async () => {
 
 describe("HTTP-контракт операций загрузки", () => {
   it("выясняет потерянный ответ, повторяет подтверждённую неудачу и сохраняет удаление", async () => {
-    const { files, objectStore } = buildHarness();
+    const { files, objectStore, advance } = buildHarness();
     const app = createApp({
       healthRouter: Router(),
       authRouter: Router(),
@@ -60,7 +60,15 @@ describe("HTTP-контракт операций загрузки", () => {
     expect(await status()).toEqual({ status: "absent" });
     objectStore.failNext("put", new Error("Хранилище недоступно"));
     expect((await upload()).status).toBe(500);
-    expect(await status()).toEqual({ status: "failed" });
+    expect(await status()).toEqual({ status: "pending" });
+    advance(25);
+    expect(
+      await (
+        await fetch(`${base}/upload-operations/${id}/resolve`, {
+          method: "POST",
+        })
+      ).json(),
+    ).toEqual({ status: "failed" });
     const success = await upload();
     expect(success.status).toBe(201);
     const file = await success.json();
@@ -262,4 +270,68 @@ it("HTTP чтение не блокирует и не сверяет, а ком�
   expect(remove).not.toHaveBeenCalled();
   expect(await (await resolve()).json()).toEqual({ status: "cancelled" });
   expect(await h.objectStore.head(reserved.key)).toBeNull();
+});
+
+it("HTTP принимает сообщение об остановке только текущей составной загрузки", async () => {
+  const h = buildHarness();
+  const app = createApp({
+    healthRouter: Router(),
+    authRouter: Router(),
+    directoriesRouter: Router(),
+    requireAuth: (_req, _res, next) => next(),
+    corsOrigin: [],
+    filesRouter: createFilesRouter({
+      uploads: h.files,
+      catalog: h.files,
+      uploadSingleFile: createUploadMiddleware(1024),
+    }),
+  });
+  await new Promise<void>((resolve) => {
+    server = app.listen(0, "127.0.0.1", () => resolve());
+  });
+  const base = `http://127.0.0.1:${(server!.address() as AddressInfo).port}/api/files`;
+  const operationId = randomUUID();
+  const upload = { operationId, filename: "big.bin", size: THREE_PART_SIZE };
+  const first = await h.files.createPresignedUpload(upload);
+  if (first.strategy !== "multipart")
+    throw new Error("Ожидалась составная загрузка");
+  const resolve = (stoppedUploadId?: string) =>
+    fetch(`${base}/upload-operations/${operationId}/resolve`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ stoppedUploadId }),
+    });
+  expect(await (await resolve("другая загрузка")).json()).toEqual({
+    status: "pending",
+  });
+  await h.operations.exclusive(operationId, async () => {
+    expect(await (await resolve(first.uploadId)).json()).toEqual({
+      status: "processing",
+    });
+  });
+  expect(await (await resolve(first.uploadId)).json()).toEqual({
+    status: "failed",
+  });
+  expect(
+    await (await fetch(`${base}/upload-operations/${operationId}`)).json(),
+  ).toEqual({ status: "failed" });
+  expect(await h.files.createPresignedUpload(upload)).toMatchObject({
+    uploadId: first.uploadId,
+  });
+  expect(await (await resolve()).json()).toEqual({ status: "pending" });
+  const singleId = randomUUID();
+  await h.files.createPresignedUpload({
+    operationId: singleId,
+    filename: "a.txt",
+    size: 5,
+  });
+  expect(
+    await (
+      await fetch(`${base}/upload-operations/${singleId}/resolve`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ stoppedUploadId: first.uploadId }),
+      })
+    ).json(),
+  ).toEqual({ status: "pending" });
 });

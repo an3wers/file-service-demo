@@ -385,7 +385,11 @@ async function recover(row: UploadRow): Promise<void> {
         ? await cancelUploadOperation(row.operationId, controller.signal)
         : row.intent.value === "fail"
           ? await failUploadOperation(row.operationId, controller.signal)
-          : await resolveUploadOperation(row.operationId, controller.signal);
+          : await resolveUploadOperation(
+              row.operationId,
+              controller.signal,
+              row.operation.value?.stoppedUploadId,
+            );
     if (
       started !== generation ||
       controller.signal.aborted ||

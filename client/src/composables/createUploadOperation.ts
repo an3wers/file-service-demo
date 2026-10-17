@@ -57,6 +57,7 @@ export function createUploadOperation(
   let generation = 0;
   let attempted = false;
   let confirmationPending = false;
+  let stoppedMultipartUploadId: string | undefined;
   let deleted = false;
   let resuming = false;
   const unresolved = ref(false);
@@ -367,6 +368,8 @@ export function createUploadOperation(
       ) {
         unresolved.value = false;
       }
+      if (!signal.aborted && reservationState.value?.strategy === "multipart")
+        stoppedMultipartUploadId = reservationState.value.uploadId;
       outcome.value = isAbortError(error)
         ? { status: "cancelled" }
         : {
@@ -386,10 +389,17 @@ export function createUploadOperation(
   async function resolveResult(signal: AbortSignal): Promise<FileDto | null> {
     unresolved.value = true;
     stage.value = "processing";
-    const result = await resolveUploadOperation(operationId, signal);
+    const result = stoppedMultipartUploadId
+      ? await resolveUploadOperation(
+          operationId,
+          signal,
+          stoppedMultipartUploadId,
+        )
+      : await resolveUploadOperation(operationId, signal);
     signal.throwIfAborted();
     if (result.status === "processing" || result.status === "pending")
       throw new Error("Не удалось выяснить результат");
+    stoppedMultipartUploadId = undefined;
     unresolved.value = false;
     if (result.status === "succeeded") return result.file;
     if (result.status === "failed" && result.reason === "size_mismatch")
@@ -433,6 +443,8 @@ export function createUploadOperation(
   }
 
   function acceptResult(result: UploadOperationResponse): void {
+    if (result.status !== "pending" && result.status !== "processing")
+      stoppedMultipartUploadId = undefined;
     if (
       result.status === "deleted" ||
       result.status === "cancelled" ||
@@ -509,6 +521,9 @@ export function createUploadOperation(
     checkResult,
     acceptResult,
     operationId,
+    get stoppedUploadId() {
+      return stoppedMultipartUploadId;
+    },
     unresolved: shallowReadonly(unresolved),
     retry,
     uploading: shallowReadonly(uploading),

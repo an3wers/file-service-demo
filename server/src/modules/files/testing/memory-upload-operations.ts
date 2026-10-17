@@ -69,6 +69,14 @@ export function createMemoryUploadOperations(
           },
           terminate: (reason, uploadId) => terminate(id, reason, uploadId),
           async checked() {},
+          async markMultipartStopped(uploadId) {
+            const record = records.get(id);
+            if (record)
+              records.set(id, {
+                ...record,
+                stoppedMultipartUploadId: uploadId,
+              });
+          },
           async read() {
             return records.get(id) ?? null;
           },

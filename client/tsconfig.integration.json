@@ -1,0 +1,8 @@
+{
+  "extends": "./tsconfig.app.json",
+  "compilerOptions": {
+    "erasableSyntaxOnly": false,
+    "tsBuildInfoFile": "./node_modules/.tmp/tsconfig.integration.tsbuildinfo"
+  },
+  "include": ["integration/**/*.test.ts"]
+}

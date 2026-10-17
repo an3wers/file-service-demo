@@ -19,6 +19,7 @@ import {
   partUrlsSchema,
   presignUploadSchema,
   uploadBodySchema,
+  resolveUploadSchema,
 } from "./schemas.js";
 import type {
   DirectoriesQuery,
@@ -96,9 +97,13 @@ export function createFilesRouter({
   filesRouter.post(
     "/upload-operations/:id/resolve",
     validateParams(idParamsSchema),
-    async (_req, res) => {
+    validateBody(resolveUploadSchema),
+    async (req, res) => {
       const { id } = validatedParams<IdParams>(res);
-      const result = await uploads.resolveUploadOperation(id);
+      const result = await uploads.resolveUploadOperation(
+        id,
+        req.body.stoppedUploadId,
+      );
       res.json(
         result.status === "succeeded"
           ? { ...result, file: toFileDto(result.file) }

@@ -10,6 +10,7 @@ import {
   partUrlsSchema,
   presignUploadSchema,
   uploadFormSchema,
+  resolveUploadSchema,
 } from "./schemas.js";
 import {
   uploadOperationResponseSchema,
@@ -34,6 +35,7 @@ export const filesPaths: ZodOpenApiPathsObject = {
       summary: "Сверить операцию загрузки с объектным хранилищем",
       operationId: "resolveUploadOperation",
       requestParams: { path: idParamsSchema },
+      requestBody: { required: false, content: json(resolveUploadSchema) },
       responses: {
         200: {
           description: "Результат сверки операции",

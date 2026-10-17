@@ -48,16 +48,32 @@ describe("повтор операции загрузки через сервер
     expect(await rowCount()).toBe(1);
   });
 
-  it("подтверждает неудачу и повторяет передачу в существующее резервирование", async () => {
-    const { files, objectStore, rowCount } = buildHarness();
+  it("оставляет отвергнутый PUT неизвестным и восстанавливает поздний объект без передачи", async () => {
+    const { files, objectStore, operations, rowCount } = buildHarness();
     const upload = input();
     objectStore.failNext("put", new Error("Нет соединения"));
     await expect(files.uploadThroughServer(upload)).rejects.toThrow(
       "Нет соединения",
     );
     expect(await files.getUploadOperation(upload.operationId)).toEqual({
-      status: "failed",
+      status: "pending",
     });
+    expect(await files.resolveUploadOperation(upload.operationId)).toEqual({
+      status: "pending",
+    });
+    await expect(files.uploadThroughServer(upload)).rejects.toMatchObject({
+      name: "UploadOperationProcessingError",
+    });
+    const { record } = await operations.read(upload.operationId);
+    objectStore.uploadObject(
+      record!.reservation.key,
+      upload.bytes,
+      "text/plain",
+    );
+    objectStore.failNext("put", new Error("Повторная передача запрещена"));
+    expect(
+      await files.resolveUploadOperation(upload.operationId),
+    ).toMatchObject({ status: "succeeded" });
     expect((await files.uploadThroughServer(upload)).kind).toBe("ready");
     expect(await rowCount()).toBe(1);
   });
@@ -365,4 +381,92 @@ it("ошибка отмены просроченных частей не мен�
     status: "pending",
   });
   expect(await h.rowOf(first.id)).toEqual(before);
+});
+
+it("устанавливает остановку только текущей составной передачи и сохраняет части и срок при повторе", async () => {
+  const h = buildHarness();
+  const upload = { ...input(), size: THREE_PART_SIZE };
+  const first = await h.files.createPresignedUpload(upload);
+  if (first.strategy !== "multipart")
+    throw new Error("Ожидалась составная загрузка");
+  h.objectStore.uploadPart(first.uploadId, 1, Buffer.alloc(first.partSize));
+  const before = await h.rowOf(first.id);
+  h.advance(2);
+  expect(await h.files.resolveUploadOperation(upload.operationId)).toEqual({
+    status: "pending",
+  });
+  expect(
+    await h.files.resolveUploadOperation(
+      upload.operationId,
+      "старый идентификатор",
+    ),
+  ).toEqual({ status: "pending" });
+  expect(
+    await h.files.resolveUploadOperation(upload.operationId, first.uploadId),
+  ).toEqual({ status: "failed" });
+  expect(await h.files.getUploadOperation(upload.operationId)).toEqual({
+    status: "failed",
+  });
+  expect(await h.files.resolveUploadOperation(upload.operationId)).toEqual({
+    status: "failed",
+  });
+  expect(await h.rowOf(first.id)).toEqual(before);
+  const repeated = await h.files.createPresignedUpload(upload);
+  expect(repeated).toMatchObject({
+    id: first.id,
+    uploadId: first.uploadId,
+    partSize: first.partSize,
+  });
+  expect(await h.files.getUploadOperation(upload.operationId)).toEqual({
+    status: "pending",
+  });
+  expect(await h.rowOf(first.id)).toEqual(before);
+  expect(await h.files.getMultipartStatus(first.id)).toMatchObject({
+    uploadedParts: [1],
+  });
+  for (const part of [2, 3])
+    h.objectStore.uploadPart(
+      first.uploadId,
+      part,
+      Buffer.alloc(
+        part === 2 ? first.partSize : THREE_PART_SIZE - 2 * first.partSize,
+      ),
+    );
+  expect(await h.files.resolveUploadOperation(upload.operationId)).toEqual({
+    status: "pending",
+  });
+  expect((await h.files.completeUpload(first.id)).kind).toBe("ready");
+});
+
+it("ошибка проверки остановленной передачи сохраняет ожидание, а отмена побеждает сообщение", async () => {
+  const h = buildHarness();
+  const upload = { ...input(), size: THREE_PART_SIZE };
+  const first = await h.files.createPresignedUpload(upload);
+  if (first.strategy !== "multipart")
+    throw new Error("Ожидалась составная загрузка");
+  const before = await h.rowOf(first.id);
+  for (const method of ["head", "listParts"] as const) {
+    h.objectStore.failNext(method, new Error("Нет хранилища"));
+    await expect(
+      h.files.resolveUploadOperation(upload.operationId, first.uploadId),
+    ).rejects.toThrow("Нет хранилища");
+    expect(await h.files.getUploadOperation(upload.operationId)).toEqual({
+      status: "pending",
+    });
+    expect(await h.rowOf(first.id)).toEqual(before);
+  }
+  const list = h.objectStore.listParts.bind(h.objectStore);
+  vi.spyOn(h.objectStore, "listParts").mockImplementationOnce(
+    async (...args) => {
+      await h.operations.terminate(upload.operationId, "cancelled");
+      return await list(...args);
+    },
+  );
+  expect(
+    await h.files.resolveUploadOperation(upload.operationId, first.uploadId),
+  ).toEqual({ status: "cancelled" });
+  expect(await h.files.getUploadOperation(upload.operationId)).toEqual({
+    status: "cancelled",
+  });
+  expect(h.objectStore.openUploads()).toEqual([]);
 });

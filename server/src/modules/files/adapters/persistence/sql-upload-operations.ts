@@ -33,6 +33,7 @@ export function createSqlUploadOperations(bucket: string): UploadOperations {
         extension: string;
         content_type: string;
         size_bytes: number | null;
+        stopped_multipart_upload_id: string | null;
         reason: UploadTerminationReason | null;
         upload_id: string | null;
       }>(
@@ -54,6 +55,7 @@ export function createSqlUploadOperations(bucket: string): UploadOperations {
                 contentType: row.content_type,
               },
               size: row.size_bytes,
+              stoppedMultipartUploadId: row.stopped_multipart_upload_id,
             }
           : null,
         termination: row?.reason
@@ -112,6 +114,12 @@ export function createSqlUploadOperations(bucket: string): UploadOperations {
           },
           terminate: (reason, uploadId) =>
             terminate(id, reason, uploadId, execute),
+          async markMultipartStopped(uploadId) {
+            await execute(
+              "update upload_operations set stopped_multipart_upload_id = $2 where id = $1",
+              [id, uploadId],
+            );
+          },
           async checked() {
             await execute(
               "update upload_terminations set checked_at = now() where operation_id = $1",
@@ -127,6 +135,7 @@ export function createSqlUploadOperations(bucket: string): UploadOperations {
               extension: string;
               content_type: string;
               size_bytes: number | null;
+              stopped_multipart_upload_id: string | null;
             }>("select * from upload_operations where id = $1", [id]);
             const row = rows[0];
             return row
@@ -140,6 +149,7 @@ export function createSqlUploadOperations(bucket: string): UploadOperations {
                     contentType: row.content_type,
                   },
                   size: row.size_bytes,
+                  stoppedMultipartUploadId: row.stopped_multipart_upload_id,
                 }
               : null;
           },

@@ -99,7 +99,10 @@ export interface UploadsModule {
   failUploadOperation(id: string): Promise<UploadOperationResult>;
   sweepTerminated(): Promise<void>;
   cancelUploadOperation(id: string): Promise<UploadOperationResult>;
-  resolveUploadOperation(id: string): Promise<UploadOperationResult>;
+  resolveUploadOperation(
+    id: string,
+    stoppedUploadId?: string,
+  ): Promise<UploadOperationResult>;
   getUploadOperation(id: string): Promise<UploadOperationResult>;
   uploadThroughServer(input: UploadThroughServerInput): Promise<StoredFile>;
   createPresignedUpload(
@@ -245,16 +248,27 @@ export function createUploadsModule({
             : "pending",
         };
       if (file.kind === "ready") return { status: "succeeded", file };
-      return { status: file.kind === "failed" ? "failed" : "pending" };
+      return {
+        status:
+          file.kind === "failed" ||
+          (file.kind === "multipart" &&
+            record.stoppedMultipartUploadId === file.uploadId)
+            ? "failed"
+            : "pending",
+      };
     },
-    async resolveUploadOperation(id) {
+    async resolveUploadOperation(id, stoppedUploadId) {
       return (
         (await operations.exclusive(id, async (session) => {
           const disposed = await confirmation.cleanup(session);
           if (disposed) return disposed;
           const record = await session.read();
           return record
-            ? await resolveOperation(record, session)
+            ? await confirmation.reconcile(
+                record.reservation.id,
+                session,
+                stoppedUploadId,
+              )
             : { status: "absent" as const };
         })) ?? { status: "processing" }
       );
@@ -307,21 +321,10 @@ export function createUploadsModule({
             await objectStore.abortMultipart(file.key, file.uploadId);
           await session.fileRows.reserveFile(pendingInput(record, "server"));
           const { key, contentType, id } = record.reservation;
-          try {
-            await objectStore.put(key, input.bytes, {
-              contentType,
-              contentLength: input.size,
-            });
-          } catch (error) {
-            const pending = await session.fileRows.findFileById(id);
-            if (
-              pending &&
-              pending.kind !== "ready" &&
-              pending.kind !== "failed"
-            )
-              await session.fileRows.failFileIfUnchanged(pending);
-            throw error;
-          }
+          await objectStore.put(key, input.bytes, {
+            contentType,
+            contentLength: input.size,
+          });
           await requireOpen(session);
           return await confirmation.confirm(id, session);
         },
@@ -351,7 +354,9 @@ export function createUploadsModule({
           );
           if (file?.kind === "multipart") {
             try {
-              return await multipart.resumeMultipartUpload(file);
+              const resumed = await multipart.resumeMultipartUpload(file);
+              await session.markMultipartStopped(null);
+              return resumed;
             } catch (error) {
               if (!(error instanceof MultipartNotFoundError)) throw error;
               await session.fileRows.reserveFile(
@@ -419,6 +424,8 @@ export function createUploadsModule({
           await requireOpen(session);
           const file = await session.fileRows.findFileById(id);
           if (!file) throw fileNotFound(id);
+          if (file.kind === "multipart")
+            await session.markMultipartStopped(null);
           const result = await confirmation.confirm(id, session);
           await requireOpen(session);
           return result;

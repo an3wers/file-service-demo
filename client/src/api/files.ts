@@ -58,12 +58,19 @@ export function getUploadOperation(
 export function resolveUploadOperation(
   id: string,
   signal?: AbortSignal,
+  stoppedUploadId?: string,
 ): Promise<UploadOperationResponse> {
   return apiRequest<UploadOperationResponse>(
     `/files/upload-operations/${id}/resolve`,
     {
       method: "POST",
       signal,
+      ...(stoppedUploadId
+        ? {
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ stoppedUploadId }),
+          }
+        : {}),
     },
   );
 }

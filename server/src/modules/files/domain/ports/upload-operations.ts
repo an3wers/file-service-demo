@@ -11,6 +11,7 @@ export interface UploadTermination {
 export interface UploadOperationRecord {
   reservation: Reservation;
   size: number | null;
+  stoppedMultipartUploadId?: string | null;
 }
 
 export type UploadOperationFileRows = Pick<
@@ -31,13 +32,12 @@ export interface UploadOperationSession {
   termination(): Promise<UploadTermination | null>;
   terminate(reason: UploadTerminationReason, uploadId?: string): Promise<void>;
   checked(): Promise<void>;
+  markMultipartStopped(uploadId: string | null): Promise<void>;
   save(record: UploadOperationRecord): Promise<void>;
 }
 
 export interface UploadOperations {
-  read(
-    id: string,
-  ): Promise<{
+  read(id: string): Promise<{
     record: UploadOperationRecord | null;
     termination: UploadTermination | null;
   }>;

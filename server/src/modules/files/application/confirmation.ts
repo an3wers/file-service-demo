@@ -16,7 +16,12 @@ import type { MultipartModule } from "./multipart.js";
 
 export type ConfirmationContext = Pick<
   UploadOperationSession,
-  "fileRows" | "read" | "termination" | "terminate" | "checked"
+  | "fileRows"
+  | "read"
+  | "termination"
+  | "terminate"
+  | "checked"
+  | "markMultipartStopped"
 >;
 export type ReconciliationResult =
   | { status: "succeeded"; file: StoredFile }
@@ -32,6 +37,7 @@ export interface ConfirmationModule {
   reconcile(
     id: string,
     context?: ConfirmationContext,
+    stoppedUploadId?: string,
   ): Promise<ReconciliationResult>;
 }
 
@@ -86,6 +92,7 @@ export function createConfirmationModule({
     id: string,
     context?: ConfirmationContext,
     complete = false,
+    stoppedUploadId?: string,
   ): Promise<ReconciliationResult> {
     const rows = context?.fileRows ?? fileRows;
     if (context) {
@@ -144,6 +151,17 @@ export function createConfirmationModule({
             ...(stored ? { reason: "size_mismatch" as const } : {}),
           };
       }
+      if (!stored && !expired && file.kind === "multipart" && context) {
+        if (stoppedUploadId === file.uploadId) {
+          await objectStore.listParts(file.key, file.uploadId);
+          const cleaned = await cleanup(context);
+          if (cleaned) return cleaned;
+          await context.markMultipartStopped(file.uploadId);
+        }
+        const current = await context.read();
+        if (current?.stoppedMultipartUploadId === file.uploadId)
+          return { status: "failed" };
+      }
       return stored
         ? { status: "failed", reason: "size_mismatch" }
         : { status: !expired && file.kind !== "failed" ? "pending" : "failed" };
@@ -161,7 +179,8 @@ export function createConfirmationModule({
   }
   return {
     cleanup,
-    reconcile: (id, context) => inspect(id, context),
+    reconcile: (id, context, stoppedUploadId) =>
+      inspect(id, context, false, stoppedUploadId),
     async confirm(id, context) {
       const result = await inspect(id, context, true);
       if (result.status !== "succeeded")

@@ -79,3 +79,9 @@ export const createDirectorySchema = z
     name: z.string().max(512),
   })
   .meta({ id: "CreateDirectoryBody" });
+
+export const resolveUploadSchema = z
+  .object({
+    stoppedUploadId: z.string().min(1).max(1024).optional(),
+  })
+  .prefault({});

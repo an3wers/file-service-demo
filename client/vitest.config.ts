@@ -16,7 +16,7 @@ export default defineConfig({
   },
   test: {
     environment: "happy-dom",
-    include: ["src/**/*.{test,spec}.ts"],
+    include: ["src/**/*.{test,spec}.ts", "integration/**/*.test.ts"],
     setupFiles: ["./src/test/setup.ts"],
     // Глобалы выключены: `import { describe, it, expect } from "vitest"`
     // типизируется под существующим tsconfig.app.json без правки `types`.

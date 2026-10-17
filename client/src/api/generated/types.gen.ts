@@ -331,7 +331,9 @@ export type LogoutResponses = {
 export type LogoutResponse = LogoutResponses[keyof LogoutResponses];
 
 export type ResolveUploadOperationData = {
-    body?: never;
+    body?: {
+        stoppedUploadId?: string;
+    };
     path: {
         id: string;
     };

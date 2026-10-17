@@ -184,23 +184,32 @@ describe("операции загрузки в PostgreSQL", () => {
     expect(objectStore.objectKeys()).toEqual([]);
   });
 
-  it("сохраняет неудачу и исходное резервирование при повторе в другом экземпляре", async () => {
+  it("сохраняет неизвестность PUT между экземплярами до позднего появления объекта", async () => {
     const { objectStore } = buildHarness();
     const upload = input();
     objectStore.failNext("put", new Error("Нет связи"));
     await expect(
       assemble(objectStore).uploadThroughServer(upload),
     ).rejects.toThrow("Нет связи");
-    const before = (
-      await pool.query("select file_id from upload_operations where id = $1", [
-        upload.operationId,
-      ])
-    ).rows[0];
+    const operations = createSqlUploadOperations("test");
+    const { record } = await operations.read(upload.operationId);
     expect(
       await assemble(objectStore).getUploadOperation(upload.operationId),
-    ).toEqual({ status: "failed" });
+    ).toEqual({ status: "pending" });
+    expect(
+      await assemble(objectStore).resolveUploadOperation(upload.operationId),
+    ).toEqual({ status: "pending" });
+    await expect(
+      assemble(objectStore).uploadThroughServer(upload),
+    ).rejects.toMatchObject({ name: "UploadOperationProcessingError" });
+    objectStore.uploadObject(
+      record!.reservation.key,
+      upload.bytes,
+      "text/plain",
+    );
+    objectStore.failNext("put", new Error("Повторная передача запрещена"));
     const file = await assemble(objectStore).uploadThroughServer(upload);
-    expect(file.id).toBe(before.file_id);
+    expect(file.id).toBe(record!.reservation.id);
     expect(objectStore.objectKeys()).toHaveLength(1);
   });
 });
@@ -560,4 +569,59 @@ it("миграция сохраняет историческую дату соз
     await client.query("rollback");
     client.release();
   }
+});
+
+it("сохраняет остановку составной передачи между экземплярами и очищает её без нового срока", async () => {
+  const { objectStore } = buildHarness();
+  const firstModule = assemble(objectStore);
+  const upload = { ...input(), size: THREE_PART_SIZE };
+  const first = await firstModule.createPresignedUpload(upload);
+  if (first.strategy !== "multipart")
+    throw new Error("Ожидалась составная загрузка");
+  objectStore.uploadPart(first.uploadId, 1, Buffer.alloc(first.partSize));
+  const rows = createSqlFileRows("test");
+  const before = await rows.findFileById(first.id);
+  const operations = createSqlUploadOperations("test");
+  await operations.exclusive(upload.operationId, async () => {
+    expect(
+      await assemble(objectStore).resolveUploadOperation(
+        upload.operationId,
+        first.uploadId,
+      ),
+    ).toEqual({ status: "processing" });
+    expect(
+      await assemble(objectStore).getUploadOperation(upload.operationId),
+    ).toEqual({ status: "pending" });
+  });
+  objectStore.failNext("listParts", new Error("Нет хранилища"));
+  await expect(
+    firstModule.resolveUploadOperation(upload.operationId, first.uploadId),
+  ).rejects.toThrow("Нет хранилища");
+  expect(
+    await assemble(objectStore).getUploadOperation(upload.operationId),
+  ).toEqual({ status: "pending" });
+  expect(
+    await firstModule.resolveUploadOperation(
+      upload.operationId,
+      first.uploadId,
+    ),
+  ).toEqual({ status: "failed" });
+  const restarted = assemble(objectStore);
+  expect(await restarted.getUploadOperation(upload.operationId)).toEqual({
+    status: "failed",
+  });
+  expect(await restarted.resolveUploadOperation(upload.operationId)).toEqual({
+    status: "failed",
+  });
+  expect(await restarted.createPresignedUpload(upload)).toMatchObject({
+    uploadId: first.uploadId,
+    id: first.id,
+  });
+  expect(await restarted.getUploadOperation(upload.operationId)).toEqual({
+    status: "pending",
+  });
+  expect(await rows.findFileById(first.id)).toEqual(before);
+  expect(await restarted.getMultipartStatus(first.id)).toMatchObject({
+    uploadedParts: [1],
+  });
 });
