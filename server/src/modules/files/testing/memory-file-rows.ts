@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { ERROR_CODES, conflict } from "../../../errors.js";
 import { createTestClock } from "../../../testing/clock.js";
 import type { TestClock } from "../../../testing/clock.js";
@@ -105,7 +106,8 @@ export function createMemoryFileRows(
   const live = (row: FileRow): boolean => row.deleted_at === null;
 
   const expired = (row: FileRow, ttlHours: number): boolean =>
-    row.created_at.getTime() < clock.now().getTime() - ttlHours * HOUR_MS;
+    row.attempt_started_at.getTime() <
+    clock.now().getTime() - ttlHours * HOUR_MS;
 
   const files: FileRowsForFiles & FileRowsForMultipart & FileRowsForCleanup = {
     async reserveFile(input) {
@@ -114,6 +116,8 @@ export function createMemoryFileRows(
       if (!row) return await files.insertFile(input);
       if (!live(row) || row.status === "ready")
         throw new Error("Файл уже завершён или удалён");
+      row.attempt_started_at = clock.now();
+      row.attempt_generation = randomUUID();
       row.status = input.status;
       row.upload_source = input.uploadSource;
       row.size_bytes = input.sizeBytes;
@@ -162,6 +166,8 @@ export function createMemoryFileRows(
         part_size: input.partSize ?? null,
         part_count: input.partCount ?? null,
         created_at: now,
+        attempt_started_at: now,
+        attempt_generation: randomUUID(),
         updated_at: now,
         deleted_at: null,
       };
@@ -220,6 +226,7 @@ export function createMemoryFileRows(
         !live(row) ||
         terminated(expected.id) ||
         row.status !== "pending" ||
+        row.attempt_generation !== expected.attemptGeneration ||
         row.updated_at.getTime() !== expected.updatedAt.getTime() ||
         row.upload_id !==
           (expected.kind === "multipart" ? expected.uploadId : null)
@@ -412,7 +419,10 @@ export function createMemoryFileRows(
           (row) =>
             row.status === "pending" && live(row) && expired(row, ttlHours),
         )
-        .sort((a, b) => a.created_at.getTime() - b.created_at.getTime())
+        .sort(
+          (a, b) =>
+            a.attempt_started_at.getTime() - b.attempt_started_at.getTime(),
+        )
         .map(copy)
         .map(toStoredFile);
     },

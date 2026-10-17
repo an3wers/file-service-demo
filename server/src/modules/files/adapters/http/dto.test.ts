@@ -11,6 +11,8 @@ const base = {
   extension: "pdf",
   contentType: "application/pdf",
   uploadSource: "presigned" as const,
+  attemptStartedAt: new Date("2026-08-27T12:45:43.437Z"),
+  attemptGeneration: "attempt-1",
   createdAt: new Date("2026-08-27T12:45:43.437Z"),
   updatedAt: new Date("2026-08-28T09:00:00.000Z"),
 };

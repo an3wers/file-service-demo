@@ -128,6 +128,8 @@ export function buildHarness(
     objectStore,
     fileRows,
     multipart,
+    clock,
+    policy,
   });
   const catalog = createCatalogModule({
     confirmation,

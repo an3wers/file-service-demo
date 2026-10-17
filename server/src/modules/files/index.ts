@@ -79,7 +79,12 @@ export function createFilesHttp(
     clock,
   });
   const catalog = createCatalogModule({
-    confirmation: createConfirmationModule({ ...deps, fileRows, multipart }),
+    confirmation: createConfirmationModule({
+      ...deps,
+      fileRows,
+      multipart,
+      clock,
+    }),
     operations,
     objectStore: deps.objectStore,
     fileRows,
@@ -115,7 +120,12 @@ export function createFilesCleanup(
     clock,
   });
   return createCleanupModule({
-    confirmation: createConfirmationModule({ ...deps, fileRows, multipart }),
+    confirmation: createConfirmationModule({
+      ...deps,
+      fileRows,
+      multipart,
+      clock,
+    }),
     operations: createSqlUploadOperations(deps.bucket),
     objectStore: deps.objectStore,
     fileRows,
@@ -150,7 +160,12 @@ export function createFilesMaintenance(
     fileRows,
     clock,
     operations,
-    confirmation: createConfirmationModule({ ...deps, fileRows, multipart }),
+    confirmation: createConfirmationModule({
+      ...deps,
+      fileRows,
+      multipart,
+      clock,
+    }),
   });
   return async () => {
     await uploads.sweepTerminated();

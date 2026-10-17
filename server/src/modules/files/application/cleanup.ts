@@ -99,13 +99,9 @@ export function createCleanupModule({
             ? await operations.exclusive(
                 operationId,
                 async (session) =>
-                  await confirmation.reconcile(file.id, session, {
-                    expired: true,
-                  }),
+                  await confirmation.reconcile(file.id, session),
               )
-            : await confirmation.reconcile(file.id, undefined, {
-                expired: true,
-              });
+            : await confirmation.reconcile(file.id);
           if (outcome?.status === "succeeded") counters.recovered += 1;
           else if (outcome?.status === "failed") {
             counters.failed += 1;

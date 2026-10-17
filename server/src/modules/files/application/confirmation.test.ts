@@ -51,9 +51,10 @@ it("просрочка не перезаписывает конкурентно�
     );
     await h.confirmation.confirm(reserved.id);
   });
-  expect(
-    await h.confirmation.reconcile(reserved.id, undefined, { expired: true }),
-  ).toMatchObject({ status: "succeeded", file: { kind: "ready" } });
+  expect(await h.confirmation.reconcile(reserved.id)).toMatchObject({
+    status: "succeeded",
+    file: { kind: "ready" },
+  });
   expect(await h.rowOf(reserved.id)).toMatchObject({ kind: "ready" });
 });
 
@@ -166,9 +167,9 @@ it("отказ проверки хранилища при просрочке с�
   });
   h.advance(25);
   h.objectStore.failNext("head", new Error("Нет связи"));
-  await expect(
-    h.confirmation.reconcile(started.id, undefined, { expired: true }),
-  ).rejects.toThrow("Нет связи");
+  await expect(h.confirmation.reconcile(started.id)).rejects.toThrow(
+    "Нет связи",
+  );
   expect(await h.rowOf(started.id)).toMatchObject({
     kind: "multipart",
     uploadId: started.uploadId,
@@ -248,4 +249,166 @@ it("подтверждение исполняет отмену, сохранён
   ).rejects.toMatchObject({ name: "FileNotFoundError" });
   expect(await h.rowOf(started.id)).toMatchObject({ kind: "failed" });
   expect(h.objectStore.objectKeys()).toEqual([]);
+});
+
+it("новая попытка получает полный срок, сохраняя дату создания файла", async () => {
+  const h = buildHarness();
+  const input = { operationId: "ttl-retry", filename: "a.txt", size: 5 };
+  const first = await h.files.createPresignedUpload(input);
+  const original = await h.rowOf(first.id);
+  h.advance(25);
+  await h.cleanup.settleExpiredRows();
+  expect(await h.rowOf(first.id)).toMatchObject({ kind: "failed" });
+  expect(await h.operations.listTerminated()).toEqual([]);
+  await h.files.createPresignedUpload(input);
+  const retried = await h.rowOf(first.id);
+  expect(retried.createdAt).toEqual(original.createdAt);
+  expect(
+    retried.attemptStartedAt.getTime() - original.attemptStartedAt.getTime(),
+  ).toBe(25 * 60 * 60 * 1000);
+  expect(retried.attemptGeneration).not.toBe(original.attemptGeneration);
+  h.advance(24);
+  expect((await h.cleanup.settleExpiredRows()).examined).toBe(0);
+  h.advance(1 / 3600000);
+  expect((await h.cleanup.settleExpiredRows()).failed).toBe(1);
+});
+
+it("сверка проверяет срок текущей попытки после повторного резервирования", async () => {
+  const h = buildHarness();
+  const input = { operationId: "stale-ttl", filename: "a.txt", size: 5 };
+  const first = await h.files.createPresignedUpload(input);
+  h.advance(25);
+  await h.cleanup.settleExpiredRows();
+  await h.files.createPresignedUpload(input);
+  await h.confirmation.reconcile(first.id);
+  expect(await h.rowOf(first.id)).toMatchObject({ kind: "reserved" });
+  h.advance(23);
+  const before = await h.rowOf(first.id);
+  await h.confirmation.reconcile(first.id);
+  expect((await h.rowOf(first.id)).attemptStartedAt).toEqual(
+    before.attemptStartedAt,
+  );
+  h.advance(2);
+  await h.confirmation.reconcile(first.id);
+  expect(await h.rowOf(first.id)).toMatchObject({ kind: "failed" });
+});
+
+it("решение старой попытки не закрывает мгновенный повтор с теми же данными и временем", async () => {
+  const h = buildHarness();
+  const input = { operationId: "same-clock-retry", filename: "a.txt", size: 5 };
+  const first = await h.files.createPresignedUpload(input);
+  const before = await h.rowOf(first.id);
+  h.objectStore.uploadObject(first.key, Buffer.from("bad"), "text/plain");
+  h.fileRows.beforeNextClaim(async () => {
+    await h.objectStore.remove(first.key);
+    await h.files.createPresignedUpload(input);
+  });
+  await h.confirmation.reconcile(first.id);
+  const after = await h.rowOf(first.id);
+  expect(after).toMatchObject({
+    kind: "reserved",
+    updatedAt: before.updatedAt,
+    attemptStartedAt: before.attemptStartedAt,
+  });
+  expect(after.attemptGeneration).not.toBe(before.attemptGeneration);
+});
+
+it("продолжение составной загрузки сохраняет срок, план и части, а просрочка отменяет без сборки", async () => {
+  const h = buildHarness();
+  const input = {
+    operationId: "multipart-ttl",
+    filename: "a.bin",
+    size: 12 * 1024 * 1024,
+  };
+  const first = await h.files.createPresignedUpload(input);
+  if (first.strategy !== "multipart")
+    throw new Error("Ожидалась составная загрузка");
+  const original = await h.rowOf(first.id);
+  for (const [index, size] of [5, 5, 2].entries())
+    h.objectStore.uploadPart(
+      first.uploadId,
+      index + 1,
+      Buffer.alloc(size * 1024 * 1024),
+    );
+  h.advance(23);
+  h.policy.planLimits.partSize = 6 * 1024 * 1024;
+  await h.files.getUploadOperation(input.operationId);
+  const resumed = await h.files.createPresignedUpload(input);
+  expect(resumed).toMatchObject({
+    uploadId: first.uploadId,
+    partSize: first.partSize,
+    partCount: first.partCount,
+  });
+  expect(await h.files.getMultipartStatus(first.id)).toMatchObject({
+    uploadedParts: [1, 2, 3],
+    uploadedBytes: input.size,
+  });
+  expect(await h.rowOf(first.id)).toEqual(original);
+  expect(h.objectStore.objectKeys()).toEqual([]);
+  h.advance(1);
+  expect((await h.cleanup.settleExpiredRows()).examined).toBe(0);
+  expect(h.objectStore.openUploads()).toHaveLength(1);
+  h.advance(1 / 3600000);
+  expect(await h.cleanup.settleExpiredRows()).toMatchObject({
+    failed: 1,
+    aborted: 1,
+  });
+  expect(h.objectStore.openUploads()).toEqual([]);
+  expect(h.objectStore.objectKeys()).toEqual([]);
+  expect(await h.operations.listTerminated()).toEqual([]);
+  h.objectStore.uploadObject(
+    first.key,
+    Buffer.alloc(input.size),
+    "application/custom",
+  );
+  expect(await h.files.getUploadOperation(input.operationId)).toMatchObject({
+    status: "succeeded",
+    file: { id: first.id, size: input.size, contentType: "application/custom" },
+  });
+});
+
+it("уборка пропускает занятую операцию без ожидания и завершает её после освобождения", async () => {
+  const h = buildHarness();
+  const input = { operationId: "locked-expiry", filename: "a.txt", size: 5 };
+  const first = await h.files.createPresignedUpload(input);
+  h.advance(25);
+  await h.operations.exclusive(input.operationId, async () => {
+    expect(await h.cleanup.settleExpiredRows()).toMatchObject({
+      examined: 1,
+      skipped: 1,
+      failed: 0,
+    });
+    expect(await h.rowOf(first.id)).toMatchObject({ kind: "reserved" });
+  });
+  expect((await h.cleanup.settleExpiredRows()).failed).toBe(1);
+});
+
+it("уборка перечитывает попытку, сменившуюся после выбора просроченных резервирований", async () => {
+  const h = buildHarness();
+  const input = { operationId: "selected-expiry", filename: "a.txt", size: 5 };
+  const first = await h.files.createPresignedUpload(input);
+  h.advance(25);
+  const list = h.fileRows.listExpiredPending.bind(h.fileRows);
+  let selected!: () => void;
+  let proceed!: () => void;
+  const selection = new Promise<void>((resolve) => {
+    selected = resolve;
+  });
+  const continuation = new Promise<void>((resolve) => {
+    proceed = resolve;
+  });
+  h.fileRows.listExpiredPending = async (ttl) => {
+    const files = await list(ttl);
+    selected();
+    await continuation;
+    return files;
+  };
+  const cleanup = h.cleanup.settleExpiredRows();
+  await selection;
+  await h.files.createPresignedUpload(input);
+  const retry = await h.rowOf(first.id);
+  proceed();
+  await cleanup;
+  expect(await h.rowOf(first.id)).toEqual(retry);
+  expect(retry.kind).toBe("reserved");
 });

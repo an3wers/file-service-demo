@@ -13,6 +13,8 @@ interface StoredFileBase {
   contentType: string;
   uploadSource: UploadSource;
   createdAt: Date;
+  attemptStartedAt: Date;
+  attemptGeneration: string;
   updatedAt: Date;
 }
 

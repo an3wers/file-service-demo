@@ -1,3 +1,5 @@
+import type { Clock } from "../domain/ports/clock.js";
+import type { UploadPolicy } from "../domain/upload-policy.js";
 import type { FileRowsForFiles } from "../domain/ports/file-rows.js";
 import type {
   ObjectStoreForFiles,
@@ -29,7 +31,6 @@ export interface ConfirmationModule {
   reconcile(
     id: string,
     context?: ConfirmationContext,
-    options?: { expired?: boolean },
   ): Promise<ReconciliationResult>;
 }
 
@@ -37,7 +38,11 @@ export function createConfirmationModule({
   objectStore,
   fileRows,
   multipart,
+  clock,
+  policy,
 }: {
+  clock: Clock;
+  policy: Pick<UploadPolicy, "pendingTtlHours">;
   objectStore: Pick<ObjectStoreForFiles, "head" | "abortMultipart" | "remove"> &
     Pick<ObjectStoreForMultipart, "listParts">;
   fileRows: Pick<
@@ -80,7 +85,6 @@ export function createConfirmationModule({
     id: string,
     context?: ConfirmationContext,
     complete = false,
-    expired = false,
   ): Promise<ReconciliationResult> {
     const rows = context?.fileRows ?? fileRows;
     if (context) {
@@ -95,6 +99,9 @@ export function createConfirmationModule({
     if (!file)
       return { status: (await rows.isFileDeleted(id)) ? "deleted" : "failed" };
     if (file.kind === "ready") return { status: "succeeded", file };
+    const expired =
+      file.attemptStartedAt.getTime() <
+      clock.now().getTime() - policy.pendingTtlHours * 60 * 60 * 1000;
     if (complete && file.kind === "multipart")
       await multipart.completeMultipartUpload(file);
     const stored = await objectStore.head(file.key);
@@ -147,8 +154,7 @@ export function createConfirmationModule({
   }
   return {
     cleanup,
-    reconcile: (id, context, options) =>
-      inspect(id, context, false, options?.expired),
+    reconcile: (id, context) => inspect(id, context),
     async confirm(id, context) {
       const result = await inspect(id, context, true);
       if (result.status !== "succeeded")

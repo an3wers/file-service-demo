@@ -22,6 +22,8 @@ export interface FileRow {
   part_size: number | null;
   part_count: number | null;
   created_at: Date;
+  attempt_started_at: Date;
+  attempt_generation: string;
   updated_at: Date;
   deleted_at: Date | null;
 }
@@ -58,6 +60,8 @@ function base(row: FileRow) {
     contentType: row.content_type,
     uploadSource: row.upload_source,
     createdAt: row.created_at,
+    attemptStartedAt: row.attempt_started_at,
+    attemptGeneration: row.attempt_generation,
     updatedAt: row.updated_at,
   };
 }

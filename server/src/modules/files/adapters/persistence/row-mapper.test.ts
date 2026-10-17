@@ -19,6 +19,8 @@ function row(overrides: Partial<FileRow> = {}): FileRow {
     upload_id: null,
     part_size: null,
     part_count: null,
+    attempt_started_at: new Date("2026-08-27T12:45:43.437Z"),
+    attempt_generation: "attempt-1",
     created_at: new Date("2026-08-27T12:45:43.437Z"),
     updated_at: new Date("2026-08-28T09:00:00.000Z"),
     deleted_at: null,

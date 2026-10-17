@@ -135,6 +135,8 @@ export function createUploadsModule({
     objectStore,
     fileRows,
     multipart,
+    clock,
+    policy,
   });
 
   async function resolveOperation(

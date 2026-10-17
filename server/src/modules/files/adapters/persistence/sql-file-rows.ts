@@ -93,8 +93,9 @@ export async function countActiveMultipart(execute = query): Promise<number> {
 export async function claimExpiredMultipart(
   id: string,
   ttlHours: number,
+  execute = query,
 ): Promise<string | null> {
-  const { rows } = await query<{ upload_id: string | null }>(
+  const { rows } = await execute<{ upload_id: string | null }>(
     `update files f
         set status = 'failed', upload_id = null, updated_at = now()
        from (select id, upload_id from files where id = $1 for update) old
@@ -102,7 +103,7 @@ export async function claimExpiredMultipart(
         and f.status = 'pending'
         and f.upload_id is not null
         and f.deleted_at is null
-        and f.created_at < now() - make_interval(hours => $2)
+        and f.attempt_started_at < now() - make_interval(hours => $2)
       returning old.upload_id`,
     [id, ttlHours],
   );
@@ -197,13 +198,14 @@ export async function findKnownUploadIds(ids: string[]): Promise<Set<string>> {
 
 export async function listExpiredPending(
   ttlHours: number,
+  execute = query,
 ): Promise<StoredFile[]> {
-  const { rows } = await query<FileRow>(
+  const { rows } = await execute<FileRow>(
     `select * from files
       where status = 'pending'
         and deleted_at is null
-        and created_at < now() - make_interval(hours => $1)
-      order by created_at asc`,
+        and attempt_started_at < now() - make_interval(hours => $1)
+      order by attempt_started_at asc`,
     [ttlHours],
   );
 
@@ -238,7 +240,8 @@ export function createSqlFileRows(bucket: string, execute = query): FileRows {
          status = excluded.status, upload_source = excluded.upload_source,
          size_bytes = excluded.size_bytes, etag = excluded.etag,
          upload_id = excluded.upload_id, part_size = excluded.part_size,
-         part_count = excluded.part_count, updated_at = now()
+         part_count = excluded.part_count, updated_at = now(),
+         attempt_started_at = now(), attempt_generation = gen_random_uuid()
          where files.deleted_at is null and files.status <> 'ready'`
            : ""
        }
@@ -286,6 +289,7 @@ export function createSqlFileRows(bucket: string, execute = query): FileRows {
           where id = $1 and status = 'pending' and deleted_at is null
             and date_trunc('milliseconds', updated_at) = $2
             and upload_id is not distinct from $3
+            and attempt_generation = $4
             and not exists (
               select 1 from upload_operations o join upload_terminations t on t.operation_id = o.id
               where o.file_id = files.id
@@ -294,15 +298,17 @@ export function createSqlFileRows(bucket: string, execute = query): FileRows {
           expected.id,
           expected.updatedAt,
           expected.kind === "multipart" ? expected.uploadId : null,
+          expected.attemptGeneration,
         ],
       );
       return rows.length > 0;
     },
     countActiveMultipart: () => countActiveMultipart(execute),
-    claimExpiredMultipart,
+    claimExpiredMultipart: (id, ttlHours) =>
+      claimExpiredMultipart(id, ttlHours, execute),
     softDeleteFile,
     listFiles,
     findKnownUploadIds,
-    listExpiredPending,
+    listExpiredPending: (ttlHours) => listExpiredPending(ttlHours, execute),
   };
 }

@@ -1,3 +1,5 @@
+import { readFile, readdir } from "node:fs/promises";
+import type { QueryResultRow } from "pg";
 import { createConfirmationModule } from "../../application/confirmation.js";
 import { randomUUID } from "node:crypto";
 import {
@@ -430,4 +432,124 @@ it("общая очистка PostgreSQL переживает частичный
       name: "FileNotFoundError",
     });
   });
+});
+
+it("PostgreSQL сохраняет дату создания и полный срок новой попытки при одинаковых часах", async () => {
+  const client = await pool.connect();
+  await client.query("begin");
+  const execute = async <T extends QueryResultRow>(
+    text: string,
+    values: unknown[] = [],
+  ) => await client.query<T>(text, values);
+  const rows = createSqlFileRows("test", execute);
+  const id = randomUUID();
+  const data = {
+    id,
+    objectKey: id,
+    directory: "",
+    originalName: "a.txt",
+    extension: "txt",
+    contentType: "text/plain",
+    sizeBytes: 5,
+    etag: null,
+    status: "pending" as const,
+    uploadSource: "presigned" as const,
+  };
+  try {
+    await rows.insertFile(data);
+    await client.query(
+      "update files set created_at = '2020-01-01Z', attempt_started_at = now() - interval '25 hours' where id = $1",
+      [id],
+    );
+    const expired = (await rows.findFileById(id))!;
+    expect(
+      (await rows.listExpiredPending(24)).map((file) => file.id),
+    ).toContain(id);
+    const retry = await rows.reserveFile(data);
+    expect(retry.createdAt).toEqual(new Date("2020-01-01Z"));
+    expect(retry.attemptStartedAt.getTime()).toBeGreaterThan(
+      expired.attemptStartedAt.getTime(),
+    );
+    expect(
+      (await rows.listExpiredPending(24)).map((file) => file.id),
+    ).not.toContain(id);
+    const immediate = await rows.reserveFile(data);
+    expect(immediate.updatedAt).toEqual(retry.updatedAt);
+    expect(immediate.attemptStartedAt).toEqual(retry.attemptStartedAt);
+    expect(immediate.attemptGeneration).not.toBe(retry.attemptGeneration);
+    expect(await rows.failFileIfUnchanged(retry)).toBe(false);
+    expect(await rows.findFileById(id)).toMatchObject({ kind: "reserved" });
+    await client.query(
+      "update files set attempt_started_at = now() - interval '24 hours' where id = $1",
+      [id],
+    );
+    expect(
+      (await rows.listExpiredPending(24)).map((file) => file.id),
+    ).not.toContain(id);
+    await client.query(
+      "update files set attempt_started_at = attempt_started_at - interval '1 millisecond' where id = $1",
+      [id],
+    );
+    expect(
+      (await rows.listExpiredPending(24)).map((file) => file.id),
+    ).toContain(id);
+  } finally {
+    await client.query("rollback");
+    client.release();
+  }
+});
+
+it("миграция сохраняет историческую дату создания и делает старое резервирование доступным уборке", async () => {
+  const client = await pool.connect();
+  const historicalSchema = `historical_${randomUUID().replaceAll("-", "")}`;
+  await client.query("begin");
+  try {
+    await client.query(`create schema ${historicalSchema}`);
+    await client.query(`set local search_path to ${historicalSchema}`);
+    const directory = new URL("../../../../db/migrations/", import.meta.url);
+    for (const name of (await readdir(directory))
+      .filter((name) => name < "010")
+      .sort())
+      await client.query(await readFile(new URL(name, directory), "utf8"));
+    const id = randomUUID();
+    await client.query(
+      `insert into files (id, bucket, object_key, original_name, content_type, size_bytes, status, upload_source, created_at, updated_at)
+      values ($1, 'test', $2, 'a.txt', 'text/plain', 5, 'pending', 'presigned', '2020-01-01Z', '2020-02-01Z')`,
+      [id, id],
+    );
+    await client.query(
+      await readFile(new URL("010_upload_attempt.sql", directory), "utf8"),
+    );
+    const execute = async <T extends QueryResultRow>(
+      text: string,
+      values: unknown[] = [],
+    ) => await client.query<T>(text, values);
+    const rows = createSqlFileRows("test", execute);
+    expect(await rows.findFileById(id)).toMatchObject({
+      kind: "reserved",
+      createdAt: new Date("2020-01-01Z"),
+      updatedAt: new Date("2020-02-01Z"),
+      attemptStartedAt: new Date("2020-01-01Z"),
+      attemptGeneration: expect.any(String),
+    });
+    expect((await rows.listExpiredPending(24)).map((file) => file.id)).toEqual([
+      id,
+    ]);
+    const h = buildHarness();
+    const confirmation = createConfirmationModule({
+      fileRows: rows,
+      objectStore: h.objectStore,
+      multipart: h.multipart,
+      policy: h.policy,
+      clock: systemClock,
+    });
+    expect(await confirmation.reconcile(id)).toEqual({ status: "failed" });
+    expect(await rows.findFileById(id)).toMatchObject({
+      kind: "failed",
+      createdAt: new Date("2020-01-01Z"),
+    });
+  } finally {
+    await client.query("rollback");
+    client.release();
+  }
 });
