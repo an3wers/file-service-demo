@@ -32,6 +32,12 @@ export function createMemoryUploadOperations(
     });
   }
   return {
+    async read(id) {
+      return {
+        record: records.get(id) ?? null,
+        termination: terminations.get(id) ?? null,
+      };
+    },
     terminate,
     async listTerminated() {
       return [...terminations.keys()];

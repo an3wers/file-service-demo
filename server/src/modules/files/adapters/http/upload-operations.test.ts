@@ -1,8 +1,9 @@
 import { randomUUID } from "node:crypto";
 import type { Server } from "node:http";
 import type { AddressInfo } from "node:net";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { Router } from "express";
+import { ERROR_CODES, serviceUnavailable } from "../../../../errors.js";
 import { createApp } from "../../../../app.js";
 import { createUploadMiddleware } from "../../../../middleware/upload.js";
 import {
@@ -156,7 +157,8 @@ describe.each([5, THREE_PART_SIZE])(
           .status,
       ).toBe(500);
       const statusResponse = await fetch(
-        `${base}/upload-operations/${operationId}`,
+        `${base}/upload-operations/${operationId}/resolve`,
+        { method: "POST" },
       );
       const status = uploadOperationResponseSchema.parse(
         await statusResponse.json(),
@@ -188,3 +190,76 @@ describe.each([5, THREE_PART_SIZE])(
     });
   },
 );
+
+it("HTTP чтение не блокирует и не сверяет, а команда различает ожидание, занятость, размер и недоступность", async () => {
+  const h = buildHarness();
+  const app = createApp({
+    healthRouter: Router(),
+    authRouter: Router(),
+    requireAuth: (_req, _res, next) => next(),
+    filesRouter: createFilesRouter({
+      uploads: h.files,
+      catalog: h.files,
+      uploadSingleFile: createUploadMiddleware(1024),
+    }),
+    directoriesRouter: Router(),
+    corsOrigin: [],
+  });
+  await new Promise<void>((resolve, reject) => {
+    server = app.listen(0, "127.0.0.1", (error) =>
+      error ? reject(error) : resolve(),
+    );
+    server.once("error", reject);
+  });
+  const base = `http://127.0.0.1:${(server!.address() as AddressInfo).port}/api/files/upload-operations`;
+  const operationId = randomUUID();
+  const reserved = await h.files.createPresignedUpload({
+    operationId,
+    filename: "a.txt",
+    size: 5,
+  });
+  const path = `${base}/${operationId}`;
+  const resolve = () => fetch(`${path}/resolve`, { method: "POST" });
+  const head = vi.spyOn(h.objectStore, "head");
+  const lock = vi.spyOn(h.operations, "exclusive");
+  expect(await (await fetch(path)).json()).toEqual({ status: "pending" });
+  expect(head).not.toHaveBeenCalled();
+  expect(lock).not.toHaveBeenCalled();
+  await h.operations.exclusive(operationId, async () => {
+    expect(await (await fetch(path)).json()).toEqual({ status: "pending" });
+    expect(await (await resolve()).json()).toEqual({ status: "processing" });
+  });
+  expect(await (await resolve()).json()).toEqual({ status: "pending" });
+  h.objectStore.failNext(
+    "head",
+    serviceUnavailable(ERROR_CODES.STORAGE_UNAVAILABLE, "Нет хранилища"),
+  );
+  expect((await resolve()).status).toBe(503);
+  expect(await (await fetch(path)).json()).toEqual({ status: "pending" });
+  h.objectStore.uploadObject(reserved.key, Buffer.from("bad"), "text/plain");
+  expect(await (await resolve()).json()).toEqual({
+    status: "failed",
+    reason: "size_mismatch",
+  });
+  h.objectStore.failNext(
+    "head",
+    serviceUnavailable(ERROR_CODES.STORAGE_UNAVAILABLE, "Нет хранилища"),
+  );
+  expect((await resolve()).status).toBe(503);
+  expect(await (await fetch(path)).json()).toEqual({ status: "failed" });
+  h.objectStore.uploadObject(reserved.key, Buffer.from("hello"), "text/plain");
+  expect(await (await resolve()).json()).toMatchObject({
+    status: "succeeded",
+    file: { id: reserved.id },
+  });
+  h.objectStore.failNext(
+    "remove",
+    serviceUnavailable(ERROR_CODES.STORAGE_UNAVAILABLE, "Нет хранилища"),
+  );
+  expect((await fetch(`${path}/cancel`, { method: "POST" })).status).toBe(503);
+  const remove = vi.spyOn(h.objectStore, "remove");
+  expect(await (await fetch(path)).json()).toEqual({ status: "cancelled" });
+  expect(remove).not.toHaveBeenCalled();
+  expect(await (await resolve()).json()).toEqual({ status: "cancelled" });
+  expect(await h.objectStore.head(reserved.key)).toBeNull();
+});

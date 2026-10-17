@@ -67,7 +67,7 @@ describe("повтор операции загрузки через сервер
     const upload = input();
     fileRows.failNext("insertFile", new Error("Нет базы"));
     await expect(files.uploadThroughServer(upload)).rejects.toThrow();
-    expect(await files.getUploadOperation(upload.operationId)).toEqual({
+    expect(await files.resolveUploadOperation(upload.operationId)).toEqual({
       status: "failed",
     });
     const file = await files.uploadThroughServer(upload);
@@ -110,7 +110,7 @@ describe.each([5, THREE_PART_SIZE])(
         contentType: "text/plain",
         contentLength: size,
       });
-      const outcome = await files.getUploadOperation(upload.operationId);
+      const outcome = await files.resolveUploadOperation(upload.operationId);
       expect(outcome).toMatchObject({
         status: "succeeded",
         file: { id: first.id },
@@ -208,8 +208,9 @@ describe("окончательная отмена и очистка", () => {
       contentLength: 3,
       contentType: "text/plain",
     });
-    expect(await files.getUploadOperation(upload.operationId)).toEqual({
+    expect(await files.resolveUploadOperation(upload.operationId)).toEqual({
       status: "failed",
+      reason: "size_mismatch",
     });
     await expect(files.completeUpload(reserved.id)).rejects.toMatchObject({
       name: "UploadNotCompletedError",
@@ -237,7 +238,7 @@ describe("окончательная отмена и очистка", () => {
   });
 
   it("после исчерпания попыток удаляет части и закрывает старую операцию", async () => {
-    const { files, objectStore, rowOf } = buildHarness();
+    const { files, objectStore, rowOf, advance } = buildHarness();
     const upload = { ...input(), size: THREE_PART_SIZE };
     const reserved = await files.createPresignedUpload(upload);
     if (reserved.strategy !== "multipart")
@@ -247,6 +248,7 @@ describe("окончательная отмена и очистка", () => {
       1,
       Buffer.alloc(reserved.partSize),
     );
+    advance(25);
     expect(await files.failUploadOperation(upload.operationId)).toEqual({
       status: "discarded",
     });
@@ -298,4 +300,69 @@ it("сохраняет отмену во время серверной пере�
   expect(await files.getUploadOperation(upload.operationId)).toEqual({
     status: "cancelled",
   });
+});
+
+it("читает сохранённое ожидание без хранилища и блокировки и явно выясняет исход", async () => {
+  const { files, operations, objectStore } = buildHarness();
+  const upload = input();
+  const reserved = await files.createPresignedUpload(upload);
+  const head = vi.spyOn(objectStore, "head");
+  await operations.exclusive(upload.operationId, async () => {
+    expect(await files.getUploadOperation(upload.operationId)).toEqual({
+      status: "pending",
+    });
+    expect(await files.resolveUploadOperation(upload.operationId)).toEqual({
+      status: "processing",
+    });
+  });
+  expect(head).not.toHaveBeenCalled();
+  expect(await files.resolveUploadOperation(upload.operationId)).toEqual({
+    status: "pending",
+  });
+  await objectStore.put(reserved.key, upload.bytes, {
+    contentLength: 5,
+    contentType: "text/plain",
+  });
+  expect(await files.getUploadOperation(upload.operationId)).toEqual({
+    status: "pending",
+  });
+  expect(await files.resolveUploadOperation(upload.operationId)).toMatchObject({
+    status: "succeeded",
+    file: { id: reserved.id },
+  });
+});
+
+it("повтор подписанной ссылки не продлевает попытку и ожидание запрещает серверную передачу", async () => {
+  const h = buildHarness();
+  const upload = input();
+  const first = await h.files.createPresignedUpload(upload);
+  const before = await h.rowOf(first.id);
+  h.advance(23);
+  await h.files.createPresignedUpload(upload);
+  expect(await h.rowOf(first.id)).toEqual(before);
+  await expect(h.files.uploadThroughServer(upload)).rejects.toMatchObject({
+    name: "UploadOperationProcessingError",
+  });
+  expect(h.objectStore.objectKeys()).toEqual([]);
+  h.advance(2);
+  expect(await h.files.resolveUploadOperation(upload.operationId)).toEqual({
+    status: "failed",
+  });
+  expect((await h.files.uploadThroughServer(upload)).kind).toBe("ready");
+});
+
+it("ошибка отмены просроченных частей не меняет сохранённое ожидание", async () => {
+  const h = buildHarness();
+  const upload = { ...input(), size: THREE_PART_SIZE };
+  const first = await h.files.createPresignedUpload(upload);
+  const before = await h.rowOf(first.id);
+  h.advance(25);
+  h.objectStore.failNext("abortMultipart", new Error("Нет хранилища"));
+  await expect(
+    h.files.resolveUploadOperation(upload.operationId),
+  ).rejects.toThrow("Нет хранилища");
+  expect(await h.files.getUploadOperation(upload.operationId)).toEqual({
+    status: "pending",
+  });
+  expect(await h.rowOf(first.id)).toEqual(before);
 });

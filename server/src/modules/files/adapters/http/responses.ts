@@ -161,9 +161,13 @@ export const uploadOperationResponseSchema = z
   .union([
     z.object({ status: z.literal("succeeded"), file: fileDtoSchema }),
     z.object({
+      status: z.literal("failed"),
+      reason: z.literal("size_mismatch").optional(),
+    }),
+    z.object({
       status: z.enum([
+        "pending",
         "absent",
-        "failed",
         "processing",
         "deleted",
         "cancelled",

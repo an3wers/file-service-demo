@@ -16,7 +16,7 @@ import { getSessionUser, onSessionChange } from "@/api/session";
 import {
   cancelUploadOperation,
   failUploadOperation,
-  getUploadOperation,
+  resolveUploadOperation,
 } from "@/api/files";
 import { errorMessage, isRetryable } from "@/lib/errors";
 import type { FileDto, UploadOperationResponse } from "@/types/api";
@@ -327,7 +327,7 @@ async function applyResult(
     succeed(row, result.file);
     return;
   }
-  if (result.status === "processing") return;
+  if (result.status === "processing" || result.status === "pending") return;
   if (
     result.status === "deleted" ||
     result.status === "cancelled" ||
@@ -385,7 +385,7 @@ async function recover(row: UploadRow): Promise<void> {
         ? await cancelUploadOperation(row.operationId, controller.signal)
         : row.intent.value === "fail"
           ? await failUploadOperation(row.operationId, controller.signal)
-          : await getUploadOperation(row.operationId, controller.signal);
+          : await resolveUploadOperation(row.operationId, controller.signal);
     if (
       started !== generation ||
       controller.signal.aborted ||

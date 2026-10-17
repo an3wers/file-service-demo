@@ -9,7 +9,7 @@ import type {
   PresignUploadResponse,
 } from "@/types/api";
 import {
-  getUploadOperation,
+  resolveUploadOperation,
   completeUpload,
   fetchPartUrls,
   getMultipartStatus,
@@ -386,13 +386,19 @@ export function createUploadOperation(
   async function resolveResult(signal: AbortSignal): Promise<FileDto | null> {
     unresolved.value = true;
     stage.value = "processing";
-    const result = await getUploadOperation(operationId, signal);
+    const result = await resolveUploadOperation(operationId, signal);
     signal.throwIfAborted();
-    if (result.status === "processing")
+    if (result.status === "processing" || result.status === "pending")
       throw new Error("Не удалось выяснить результат");
     unresolved.value = false;
     if (result.status === "succeeded") return result.file;
-    if (result.status === "deleted") {
+    if (result.status === "failed" && result.reason === "size_mismatch")
+      confirmationPending = false;
+    if (
+      result.status === "deleted" ||
+      result.status === "cancelled" ||
+      result.status === "discarded"
+    ) {
       deleted = true;
       throw new Error("Результат операции удалён");
     }
@@ -427,7 +433,16 @@ export function createUploadOperation(
   }
 
   function acceptResult(result: UploadOperationResponse): void {
-    unresolved.value = result.status === "processing";
+    if (
+      result.status === "deleted" ||
+      result.status === "cancelled" ||
+      result.status === "discarded"
+    )
+      deleted = true;
+    if (result.status === "failed" && result.reason === "size_mismatch")
+      confirmationPending = false;
+    unresolved.value =
+      result.status === "processing" || result.status === "pending";
     if (result.status === "succeeded")
       outcome.value = { status: "succeeded", file: result.file };
   }

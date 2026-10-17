@@ -84,10 +84,11 @@ export type PresignUploadResult =
 
 export type UploadOperationResult =
   | { status: "succeeded"; file: StoredFile }
+  | { status: "failed"; reason?: "size_mismatch" }
   | {
       status:
+        | "pending"
         | "absent"
-        | "failed"
         | "processing"
         | "deleted"
         | "cancelled"
@@ -98,6 +99,7 @@ export interface UploadsModule {
   failUploadOperation(id: string): Promise<UploadOperationResult>;
   sweepTerminated(): Promise<void>;
   cancelUploadOperation(id: string): Promise<UploadOperationResult>;
+  resolveUploadOperation(id: string): Promise<UploadOperationResult>;
   getUploadOperation(id: string): Promise<UploadOperationResult>;
   uploadThroughServer(input: UploadThroughServerInput): Promise<StoredFile>;
   createPresignedUpload(
@@ -228,6 +230,24 @@ export function createUploadsModule({
       }
     },
     async getUploadOperation(id) {
+      const { record, termination } = await operations.read(id);
+      if (termination)
+        return {
+          status:
+            termination.reason === "failed" ? "discarded" : termination.reason,
+        };
+      if (!record) return { status: "absent" };
+      const file = await fileRows.findFileById(record.reservation.id);
+      if (!file)
+        return {
+          status: (await fileRows.isFileDeleted(record.reservation.id))
+            ? "deleted"
+            : "pending",
+        };
+      if (file.kind === "ready") return { status: "succeeded", file };
+      return { status: file.kind === "failed" ? "failed" : "pending" };
+    },
+    async resolveUploadOperation(id) {
       return (
         (await operations.exclusive(id, async (session) => {
           const disposed = await confirmation.cleanup(session);
@@ -274,6 +294,10 @@ export function createUploadsModule({
           const record = await requireOperation(session, input);
           const outcome = await resolveOperation(record, session);
           if (outcome.status === "succeeded") return outcome.file;
+          if (outcome.status === "pending")
+            throw new UploadOperationProcessingError(
+              "Результат загрузки ещё не установлен",
+            );
           if (outcome.status !== "failed")
             throw fileNotFound(record.reservation.id);
           const file = await session.fileRows.findFileById(
@@ -283,10 +307,21 @@ export function createUploadsModule({
             await objectStore.abortMultipart(file.key, file.uploadId);
           await session.fileRows.reserveFile(pendingInput(record, "server"));
           const { key, contentType, id } = record.reservation;
-          await objectStore.put(key, input.bytes, {
-            contentType,
-            contentLength: input.size,
-          });
+          try {
+            await objectStore.put(key, input.bytes, {
+              contentType,
+              contentLength: input.size,
+            });
+          } catch (error) {
+            const pending = await session.fileRows.findFileById(id);
+            if (
+              pending &&
+              pending.kind !== "ready" &&
+              pending.kind !== "failed"
+            )
+              await session.fileRows.failFileIfUnchanged(pending);
+            throw error;
+          }
           await requireOpen(session);
           return await confirmation.confirm(id, session);
         },
@@ -309,7 +344,7 @@ export function createUploadsModule({
               key: outcome.file.key,
               file: outcome.file,
             };
-          if (outcome.status !== "failed")
+          if (outcome.status !== "failed" && outcome.status !== "pending")
             throw fileNotFound(record.reservation.id);
           const file = await session.fileRows.findFileById(
             record.reservation.id,
@@ -339,7 +374,10 @@ export function createUploadsModule({
             contentType,
             expiresIn: ttl,
           });
-          await session.fileRows.reserveFile(pendingInput(record, "presigned"));
+          if (outcome.status !== "pending")
+            await session.fileRows.reserveFile(
+              pendingInput(record, "presigned"),
+            );
           await requireOpen(session);
           return {
             strategy: "single",

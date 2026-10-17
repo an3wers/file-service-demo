@@ -35,6 +35,12 @@ export interface UploadOperationSession {
 }
 
 export interface UploadOperations {
+  read(
+    id: string,
+  ): Promise<{
+    record: UploadOperationRecord | null;
+    termination: UploadTermination | null;
+  }>;
   terminate(
     id: string,
     reason: UploadTerminationReason,

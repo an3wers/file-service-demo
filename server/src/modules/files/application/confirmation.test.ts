@@ -90,7 +90,7 @@ it("сверяет готовые части без сборки и подтве
       Buffer.alloc(size * 1024 * 1024),
     );
   expect(await h.confirmation.reconcile(started.id)).toEqual({
-    status: "failed",
+    status: "pending",
   });
   expect(await h.rowOf(started.id)).toMatchObject({
     kind: "multipart",
@@ -130,7 +130,7 @@ it("при восстановлении неудачи использует ож
     "size-operation",
     async (session) => await h.confirmation.reconcile(reserved.id, session),
   );
-  expect(mismatch).toEqual({ status: "failed" });
+  expect(mismatch).toEqual({ status: "failed", reason: "size_mismatch" });
   expect(await h.rowOf(reserved.id)).toMatchObject({ kind: "failed" });
   h.objectStore.uploadObject(reserved.key, Buffer.from("hello"), "text/plain");
   expect(
@@ -301,6 +301,7 @@ it("решение старой попытки не закрывает мгно�
   h.objectStore.uploadObject(first.key, Buffer.from("bad"), "text/plain");
   h.fileRows.beforeNextClaim(async () => {
     await h.objectStore.remove(first.key);
+    await h.fileRows.markFileFailed(first.id);
     await h.files.createPresignedUpload(input);
   });
   await h.confirmation.reconcile(first.id);
@@ -361,10 +362,16 @@ it("продолжение составной загрузки сохраняе�
     Buffer.alloc(input.size),
     "application/custom",
   );
-  expect(await h.files.getUploadOperation(input.operationId)).toMatchObject({
-    status: "succeeded",
-    file: { id: first.id, size: input.size, contentType: "application/custom" },
-  });
+  expect(await h.files.resolveUploadOperation(input.operationId)).toMatchObject(
+    {
+      status: "succeeded",
+      file: {
+        id: first.id,
+        size: input.size,
+        contentType: "application/custom",
+      },
+    },
+  );
 });
 
 it("уборка пропускает занятую операцию без ожидания и завершает её после освобождения", async () => {

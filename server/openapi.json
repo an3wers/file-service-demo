@@ -286,6 +286,79 @@
         }
       }
     },
+    "/api/files/upload-operations/{id}/resolve": {
+      "post": {
+        "tags": [
+          "uploads"
+        ],
+        "summary": "Сверить операцию загрузки с объектным хранилищем",
+        "operationId": "resolveUploadOperation",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+            },
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Результат сверки операции",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UploadOperationResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Нет токена доступа или он недействителен",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Запрос не прошёл валидацию; details — результат z.flattenError()",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Непредвиденная ошибка сервера",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Хранилище или база данных недоступны",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/files/upload-operations/{id}/fail": {
       "post": {
         "tags": [
@@ -457,7 +530,7 @@
         "tags": [
           "uploads"
         ],
-        "summary": "Выяснить результат операции загрузки",
+        "summary": "Прочитать сохранённый результат операции загрузки",
         "operationId": "getUploadOperation",
         "parameters": [
           {
@@ -541,7 +614,7 @@
           "files"
         ],
         "summary": "Загрузить файл через сервер",
-        "description": "Файл целиком буферизуется в памяти сервера и ограничен MAX_UPLOAD_SIZE_MB. Файлы крупнее грузятся через /presign-upload. operationId задаёт устойчивую идентичность: повтор с тем же UUID возвращает прежний файл, а после удаления — 404. Без operationId каждый запрос создаёт новую операцию. Перед повторной передачей выясните состояние через /upload-operations/{id}.",
+        "description": "Файл целиком буферизуется в памяти сервера и ограничен MAX_UPLOAD_SIZE_MB. Файлы крупнее грузятся через /presign-upload. operationId задаёт устойчивую идентичность: повтор с тем же UUID возвращает прежний файл, а после удаления — 404. Без operationId каждый запрос создаёт новую операцию. Перед повторной передачей выясните состояние через POST /upload-operations/{id}/resolve.",
         "operationId": "uploadFile",
         "requestBody": {
           "required": true,
@@ -1971,9 +2044,26 @@
             "properties": {
               "status": {
                 "type": "string",
+                "const": "failed"
+              },
+              "reason": {
+                "type": "string",
+                "const": "size_mismatch"
+              }
+            },
+            "required": [
+              "status"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "status": {
+                "type": "string",
                 "enum": [
+                  "pending",
                   "absent",
-                  "failed",
                   "processing",
                   "deleted",
                   "cancelled",

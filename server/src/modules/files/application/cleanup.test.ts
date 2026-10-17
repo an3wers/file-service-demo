@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { MemoryObjectStore } from "../../../storage/memory-object-store.js";
 import type { UploadedPart } from "../../../storage/object-store.js";
 import {
@@ -140,23 +140,17 @@ describe("cleanup", () => {
     });
 
     it("leaves the upload alone when the claim is lost to whoever settled the row", async () => {
-      const {
-        files,
-        multipart,
-        cleanup,
-        objectStore,
-        fileRows,
-        rowOf,
-        advance,
-      } = await buildHarnessWithDirectories();
+      const { files, multipart, cleanup, objectStore, rowOf, advance } =
+        await buildHarnessWithDirectories();
 
       const started = await multipart.createMultipartUpload(multipartUpload());
 
       uploadEveryPart(objectStore, started.uploadId);
       advance(PAST_TTL);
-      // Клиент дошёл до подтверждения ровно между выборкой и захватом строки.
-      fileRows.beforeNextClaim(async () => {
+      const head = objectStore.head.bind(objectStore);
+      vi.spyOn(objectStore, "head").mockImplementationOnce(async (key) => {
         await files.completeUpload(started.id);
+        return await head(key);
       });
 
       const counters = await cleanup.settleExpiredRows();

@@ -20,7 +20,8 @@ export type ConfirmationContext = Pick<
 >;
 export type ReconciliationResult =
   | { status: "succeeded"; file: StoredFile }
-  | { status: "failed"; aborted?: boolean }
+  | { status: "pending" }
+  | { status: "failed"; reason?: "size_mismatch"; aborted?: boolean }
   | CleanupResult;
 
 export type CleanupResult = { status: "cancelled" | "discarded" | "deleted" };
@@ -132,14 +133,20 @@ export function createConfirmationModule({
               { key: file.key },
             );
       if (file.kind !== "failed" && (expired || stored)) {
+        if (file.kind === "multipart" && liveParts)
+          await objectStore.abortMultipart(file.key, file.uploadId);
         if (!(await rows.failFileIfUnchanged(file)))
           return await inspect(id, context);
-        if (file.kind === "multipart" && liveParts) {
-          await objectStore.abortMultipart(file.key, file.uploadId);
-          return { status: "failed", aborted: true };
-        }
+        if (file.kind === "multipart" && liveParts)
+          return {
+            status: "failed",
+            aborted: true,
+            ...(stored ? { reason: "size_mismatch" as const } : {}),
+          };
       }
-      return { status: "failed" };
+      return stored
+        ? { status: "failed", reason: "size_mismatch" }
+        : { status: !expired && file.kind !== "failed" ? "pending" : "failed" };
     }
     const ready = await rows.markFileReady(id, {
       sizeBytes: stored.size,

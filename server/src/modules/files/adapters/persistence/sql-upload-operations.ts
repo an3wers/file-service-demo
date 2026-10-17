@@ -24,6 +24,43 @@ async function terminate(
 
 export function createSqlUploadOperations(bucket: string): UploadOperations {
   return {
+    async read(id) {
+      const { rows } = await query<{
+        file_id: string | null;
+        object_key: string;
+        directory: string;
+        original_name: string;
+        extension: string;
+        content_type: string;
+        size_bytes: number | null;
+        reason: UploadTerminationReason | null;
+        upload_id: string | null;
+      }>(
+        `select o.*, t.reason, t.upload_id from upload_operations o
+          full join upload_terminations t on t.operation_id = o.id
+          where coalesce(o.id, t.operation_id) = $1`,
+        [id],
+      );
+      const row = rows[0];
+      return {
+        record: row?.file_id
+          ? {
+              reservation: {
+                id: row.file_id,
+                key: row.object_key,
+                directory: row.directory,
+                originalName: row.original_name,
+                extension: row.extension,
+                contentType: row.content_type,
+              },
+              size: row.size_bytes,
+            }
+          : null,
+        termination: row?.reason
+          ? { reason: row.reason, uploadId: row.upload_id }
+          : null,
+      };
+    },
     terminate,
     async listTerminated() {
       const { rows } = await query<{ operation_id: string }>(

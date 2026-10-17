@@ -128,8 +128,11 @@ describe("операции загрузки в PostgreSQL", () => {
     try {
       await started;
       expect(await secondModule.getUploadOperation(upload.operationId)).toEqual(
-        { status: "processing" },
+        { status: "pending" },
       );
+      expect(
+        await secondModule.resolveUploadOperation(upload.operationId),
+      ).toEqual({ status: "processing" });
       await expect(
         secondModule.uploadThroughServer(upload),
       ).rejects.toMatchObject({ name: "UploadOperationProcessingError" });
@@ -164,7 +167,7 @@ describe("операции загрузки в PostgreSQL", () => {
       "update files set status = 'pending', etag = null where id = $1",
       [file.id],
     );
-    const recovered = await assemble(objectStore).getUploadOperation(
+    const recovered = await assemble(objectStore).resolveUploadOperation(
       upload.operationId,
     );
     expect(recovered).toMatchObject({
@@ -301,6 +304,11 @@ describe.each([5, THREE_PART_SIZE])(
         await started;
         expect(
           await assemble(objectStore).getUploadOperation(upload.operationId),
+        ).toEqual({ status: "pending" });
+        expect(
+          await assemble(objectStore).resolveUploadOperation(
+            upload.operationId,
+          ),
         ).toEqual({ status: "processing" });
         await expect(
           assemble(objectStore).createPresignedUpload(upload),

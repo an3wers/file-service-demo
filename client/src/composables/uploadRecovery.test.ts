@@ -5,7 +5,7 @@ import { clearSession, startSession } from "@/api/session";
 import {
   cancelUploadOperation,
   failUploadOperation,
-  getUploadOperation,
+  resolveUploadOperation,
   uploadViaServer,
 } from "@/api/files";
 import type { FileDto } from "@/types/api";
@@ -14,7 +14,7 @@ import { useUpload } from "./useUpload";
 vi.mock("@/api/files", () => ({
   cancelUploadOperation: vi.fn(),
   failUploadOperation: vi.fn(),
-  getUploadOperation: vi.fn(),
+  resolveUploadOperation: vi.fn(),
   uploadViaServer: vi.fn(),
   presignUpload: vi.fn(),
   putToPresignedUrl: vi.fn(),
@@ -56,7 +56,7 @@ beforeEach(() => {
   localStorage.clear();
   vi.resetAllMocks();
   vi.useFakeTimers();
-  vi.mocked(getUploadOperation).mockResolvedValue({ status: "processing" });
+  vi.mocked(resolveUploadOperation).mockResolvedValue({ status: "processing" });
   vi.mocked(cancelUploadOperation).mockResolvedValue({ status: "cancelled" });
   vi.mocked(failUploadOperation).mockResolvedValue({ status: "discarded" });
   login();
@@ -70,7 +70,7 @@ afterEach(() => {
 describe("автоматическое восстановление загрузки", () => {
   it("восстанавливает успех после потери ответа без новой передачи", async () => {
     vi.mocked(uploadViaServer).mockRejectedValue(networkError());
-    vi.mocked(getUploadOperation).mockResolvedValue({
+    vi.mocked(resolveUploadOperation).mockResolvedValue({
       status: "succeeded",
       file: ready,
     });
@@ -91,7 +91,7 @@ describe("автоматическое восстановление загруз
     expect(row.status.value).toBe("failed");
     expect(row.message.value).toContain("Проверим загрузку автоматически");
     expect(row.pending.value).toBe(true);
-    vi.mocked(getUploadOperation).mockResolvedValue({
+    vi.mocked(resolveUploadOperation).mockResolvedValue({
       status: "succeeded",
       file: ready,
     });
@@ -102,7 +102,7 @@ describe("автоматическое восстановление загруз
 
   it("ограничивает зависший запрос проверки и сохраняет фоновое восстановление", async () => {
     vi.mocked(uploadViaServer).mockRejectedValue(networkError());
-    vi.mocked(getUploadOperation).mockImplementation(
+    vi.mocked(resolveUploadOperation).mockImplementation(
       (_id, signal) =>
         new Promise((_resolve, reject) => {
           signal?.addEventListener("abort", () =>
@@ -114,13 +114,15 @@ describe("автоматическое восстановление загруз
     await flushPromises();
     await vi.advanceTimersByTimeAsync(60_000);
     expect(upload.rows.value[0]!.status.value).toBe("failed");
-    expect(vi.mocked(getUploadOperation).mock.calls.length).toBeGreaterThan(1);
+    expect(vi.mocked(resolveUploadOperation).mock.calls.length).toBeGreaterThan(
+      1,
+    );
     expect(uploadViaServer).toHaveBeenCalledOnce();
   });
 
   it("делает только два автоматических повтора и очищает подтверждённую неудачу", async () => {
     vi.mocked(uploadViaServer).mockRejectedValue(networkError());
-    vi.mocked(getUploadOperation).mockResolvedValue({ status: "failed" });
+    vi.mocked(resolveUploadOperation).mockResolvedValue({ status: "failed" });
     launch();
     await flushPromises();
     await vi.advanceTimersByTimeAsync(4_000);
@@ -157,7 +159,7 @@ describe("автоматическое восстановление загруз
 
   it("после окончательной очистки ручной повтор создаёт новую операцию", async () => {
     vi.mocked(uploadViaServer).mockRejectedValue(networkError());
-    vi.mocked(getUploadOperation).mockResolvedValue({ status: "failed" });
+    vi.mocked(resolveUploadOperation).mockResolvedValue({ status: "failed" });
     launch();
     await flushPromises();
     await vi.advanceTimersByTimeAsync(4_000);
@@ -174,7 +176,7 @@ describe("автоматическое восстановление загруз
     vi.mocked(uploadViaServer).mockRejectedValue(
       new ApiError(502, "STORAGE_ERROR", "Ошибка"),
     );
-    vi.mocked(getUploadOperation).mockResolvedValue({ status: "failed" });
+    vi.mocked(resolveUploadOperation).mockResolvedValue({ status: "failed" });
     vi.mocked(failUploadOperation).mockResolvedValue({
       status: "succeeded",
       file: ready,
@@ -272,7 +274,7 @@ describe("восстановление после перезагрузки", () 
     const session = await import("@/api/session");
     reloaded.restore();
     expect(reloaded.rows.value[0]!.source).toBeNull();
-    vi.mocked(getUploadOperation).mockResolvedValue({
+    vi.mocked(resolveUploadOperation).mockResolvedValue({
       status: "succeeded",
       file: ready,
     });
@@ -366,7 +368,7 @@ it("сохраняет итерацию выбора открытой при н�
 
 it("после исчерпания попыток показывает ошибку, пока сервер повторяет очистку", async () => {
   vi.mocked(uploadViaServer).mockRejectedValue(networkError());
-  vi.mocked(getUploadOperation).mockResolvedValue({ status: "failed" });
+  vi.mocked(resolveUploadOperation).mockResolvedValue({ status: "failed" });
   vi.mocked(failUploadOperation).mockRejectedValue(networkError());
   launch();
   await flushPromises();
@@ -379,4 +381,31 @@ it("после исчерпания попыток показывает ошиб
   await vi.advanceTimersByTimeAsync(5_000);
   expect(row.pending.value).toBe(false);
   expect(row.status.value).toBe("failed");
+});
+
+it("ожидает pending и 503 дольше минуты без передачи и сохраняет два повтора для установленной неудачи", async () => {
+  vi.mocked(uploadViaServer).mockRejectedValue(networkError());
+  vi.mocked(resolveUploadOperation).mockResolvedValue({ status: "pending" });
+  launch();
+  await flushPromises();
+  await vi.advanceTimersByTimeAsync(65_000);
+  const row = upload.rows.value[0]!;
+  expect(row.status.value).toBe("failed");
+  expect(row.pending.value).toBe(true);
+  expect(uploadViaServer).toHaveBeenCalledOnce();
+  vi.mocked(resolveUploadOperation).mockRejectedValue(
+    new ApiError(503, "STORAGE_UNAVAILABLE", "Нет хранилища"),
+  );
+  await vi.advanceTimersByTimeAsync(15_000);
+  expect(uploadViaServer).toHaveBeenCalledOnce();
+  expect(failUploadOperation).not.toHaveBeenCalled();
+  vi.mocked(resolveUploadOperation).mockResolvedValue({
+    status: "failed",
+    reason: "size_mismatch",
+  });
+  await vi.advanceTimersByTimeAsync(10_000);
+  expect(uploadViaServer).toHaveBeenCalledTimes(3);
+  expect(
+    new Set(vi.mocked(uploadViaServer).mock.calls.map((args) => args[3])).size,
+  ).toBe(1);
 });

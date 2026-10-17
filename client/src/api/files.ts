@@ -55,6 +55,19 @@ export function getUploadOperation(
   });
 }
 
+export function resolveUploadOperation(
+  id: string,
+  signal?: AbortSignal,
+): Promise<UploadOperationResponse> {
+  return apiRequest<UploadOperationResponse>(
+    `/files/upload-operations/${id}/resolve`,
+    {
+      method: "POST",
+      signal,
+    },
+  );
+}
+
 export function uploadViaServer(
   file: File,
   directory: string,

@@ -58,7 +58,10 @@ export type UploadOperationResponse = {
     status: 'succeeded';
     file: FileDto;
 } | {
-    status: 'absent' | 'failed' | 'processing' | 'deleted' | 'cancelled' | 'discarded';
+    status: 'failed';
+    reason?: 'size_mismatch';
+} | {
+    status: 'pending' | 'absent' | 'processing' | 'deleted' | 'cancelled' | 'discarded';
 };
 
 export type FileDto = {
@@ -326,6 +329,45 @@ export type LogoutResponses = {
 };
 
 export type LogoutResponse = LogoutResponses[keyof LogoutResponses];
+
+export type ResolveUploadOperationData = {
+    body?: never;
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/files/upload-operations/{id}/resolve';
+};
+
+export type ResolveUploadOperationErrors = {
+    /**
+     * Нет токена доступа или он недействителен
+     */
+    401: ErrorResponse;
+    /**
+     * Запрос не прошёл валидацию; details — результат z.flattenError()
+     */
+    422: ErrorResponse;
+    /**
+     * Непредвиденная ошибка сервера
+     */
+    500: ErrorResponse;
+    /**
+     * Хранилище или база данных недоступны
+     */
+    503: ErrorResponse;
+};
+
+export type ResolveUploadOperationError = ResolveUploadOperationErrors[keyof ResolveUploadOperationErrors];
+
+export type ResolveUploadOperationResponses = {
+    /**
+     * Результат сверки операции
+     */
+    200: UploadOperationResponse;
+};
+
+export type ResolveUploadOperationResponse = ResolveUploadOperationResponses[keyof ResolveUploadOperationResponses];
 
 export type FailUploadOperationData = {
     body?: never;

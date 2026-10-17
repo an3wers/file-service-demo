@@ -28,6 +28,21 @@ const json = <T>(schema: T) => ({ "application/json": { schema } });
 const FILE_NOT_FOUND = "Файла нет или он удалён";
 
 export const filesPaths: ZodOpenApiPathsObject = {
+  "/upload-operations/{id}/resolve": {
+    post: {
+      tags: ["uploads"],
+      summary: "Сверить операцию загрузки с объектным хранилищем",
+      operationId: "resolveUploadOperation",
+      requestParams: { path: idParamsSchema },
+      responses: {
+        200: {
+          description: "Результат сверки операции",
+          content: json(uploadOperationResponseSchema),
+        },
+        ...apiErrors({ 503: "Объектное хранилище временно недоступно" }),
+      },
+    },
+  },
   "/upload-operations/{id}/fail": {
     post: {
       tags: ["uploads"],
@@ -61,7 +76,7 @@ export const filesPaths: ZodOpenApiPathsObject = {
   "/upload-operations/{id}": {
     get: {
       tags: ["uploads"],
-      summary: "Выяснить результат операции загрузки",
+      summary: "Прочитать сохранённый результат операции загрузки",
       operationId: "getUploadOperation",
       requestParams: { path: idParamsSchema },
       responses: {
@@ -82,7 +97,7 @@ export const filesPaths: ZodOpenApiPathsObject = {
         "Файлы крупнее грузятся через /presign-upload. " +
         "operationId задаёт устойчивую идентичность: повтор с тем же UUID возвращает прежний файл, " +
         "а после удаления — 404. Без operationId каждый запрос создаёт новую операцию. " +
-        "Перед повторной передачей выясните состояние через /upload-operations/{id}.",
+        "Перед повторной передачей выясните состояние через POST /upload-operations/{id}/resolve.",
       operationId: "uploadFile",
       requestBody: {
         required: true,
