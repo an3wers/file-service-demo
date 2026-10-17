@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { ERROR_CODES } from "../../../errors.js";
 import {
+  InvalidPartNumberError,
+  MultipartIncompleteError,
   MultipartNotFoundError,
   TooManyActiveUploadsError,
 } from "../domain/errors.js";
@@ -82,11 +83,8 @@ describe("multipart uploads", () => {
         multipart.createPartUrls(await rowOf(started.id), { partNumbers: [4] }),
       );
 
-      expect(error).toMatchObject({
-        statusCode: 400,
-        code: ERROR_CODES.INVALID_PART_NUMBER,
-        details: { partCount: 3 },
-      });
+      expect(error).toBeInstanceOf(InvalidPartNumberError);
+      expect(error).toMatchObject({ details: { partCount: 3 } });
     });
 
     it("refuses a batch longer than the policy allows, naming the limit", async () => {
@@ -99,9 +97,8 @@ describe("multipart uploads", () => {
         }),
       );
 
+      expect(error).toBeInstanceOf(InvalidPartNumberError);
       expect(error).toMatchObject({
-        statusCode: 400,
-        code: ERROR_CODES.INVALID_PART_NUMBER,
         details: { maxBatch: policy.partUrlBatch },
       });
     });
@@ -200,6 +197,23 @@ describe("multipart uploads", () => {
       );
 
       expect(error).toBeInstanceOf(MultipartNotFoundError);
+    });
+  });
+
+  describe("завершение составной загрузки", () => {
+    it("отказывает в завершении, пока в хранилище долетели не все части", async () => {
+      const { multipart, objectStore, rowOf } =
+        await buildHarnessWithDirectories();
+
+      const started = await multipart.createMultipartUpload(uploadRequest());
+      objectStore.uploadPart(started.uploadId, 1, Buffer.alloc(5 * MIB, 1));
+
+      const error = await thrownBy(async () =>
+        multipart.completeMultipartUpload(await rowOf(started.id)),
+      );
+
+      expect(error).toBeInstanceOf(MultipartIncompleteError);
+      expect(error).toMatchObject({ details: { uploaded: 1, expected: 3 } });
     });
   });
 

@@ -70,6 +70,8 @@ export class AppError extends Error {
   }
 }
 
+export type ErrorMapper = (error: unknown) => AppError | undefined;
+
 export const badRequest = (
   code: ErrorCode,
   message: string,

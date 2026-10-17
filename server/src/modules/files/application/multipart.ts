@@ -1,7 +1,6 @@
 import { normalizeDirectory } from "../domain/keys.js";
 import { requireDirectory } from "../domain/directories.js";
 import type { DirectoriesForUpload } from "../domain/ports/directories.js";
-import { ERROR_CODES, badRequest, conflict } from "../../../errors.js";
 import { logger } from "../../../logger.js";
 import type { CompleteOutcome } from "../../../storage/object-store.js";
 import type { Clock } from "../domain/ports/clock.js";
@@ -13,6 +12,8 @@ import { partRange, planMultipart } from "../domain/upload-plan.js";
 import type { UploadPlan } from "../domain/upload-plan.js";
 import type { UploadPolicy } from "../domain/upload-policy.js";
 import {
+  InvalidPartNumberError,
+  MultipartIncompleteError,
   MultipartNotFoundError,
   TooManyActiveUploadsError,
 } from "../domain/errors.js";
@@ -259,8 +260,7 @@ export function createMultipartModule({
       // the request as sent, before duplicates are dropped — it is what bounds
       // the work of reading the request, not just the signing that follows.
       if (body.partNumbers.length > policy.partUrlBatch) {
-        throw badRequest(
-          ERROR_CODES.INVALID_PART_NUMBER,
+        throw new InvalidPartNumberError(
           `At most ${policy.partUrlBatch} part URLs can be signed in one request`,
           { maxBatch: policy.partUrlBatch },
         );
@@ -270,8 +270,7 @@ export function createMultipartModule({
 
       for (const partNumber of partNumbers) {
         if (partNumber > plan.partCount) {
-          throw badRequest(
-            ERROR_CODES.INVALID_PART_NUMBER,
+          throw new InvalidPartNumberError(
             `Part ${partNumber} is outside the 1..${plan.partCount} range of this upload`,
             { partCount: plan.partCount },
           );
@@ -316,8 +315,7 @@ export function createMultipartModule({
       }
 
       if (parts.length !== plan.partCount) {
-        throw conflict(
-          ERROR_CODES.MULTIPART_INCOMPLETE,
+        throw new MultipartIncompleteError(
           "Not every part has been uploaded yet; upload the missing parts before completing",
           { uploaded: parts.length, expected: plan.partCount },
         );

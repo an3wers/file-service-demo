@@ -12,6 +12,7 @@ import {
   createAuthHarness,
 } from "../../testing/auth.harness.js";
 import { createAuthRouter, createRequireAuth } from "./routes.js";
+import { mapAuthError } from "./error-map.js";
 
 let server: Server | undefined;
 
@@ -32,6 +33,7 @@ async function start(options: { cookieSecure?: boolean } = {}) {
     filesRouter,
     directoriesRouter: Router(),
     corsOrigin: [],
+    errorMappers: [mapAuthError],
   });
 
   server = await new Promise<Server>((resolve) => {

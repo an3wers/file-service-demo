@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { AppError } from "../../../errors.js";
 import { createMemoryFileRows } from "./memory-file-rows.js";
 import type { MemoryFileRows } from "./memory-file-rows.js";
+import { describeFileRowsErrors } from "./file-rows.contract.js";
 import type {
   InsertFileInput,
   ListFilesParams,
@@ -336,3 +337,5 @@ describe("memory file rows", () => {
     });
   });
 });
+
+describeFileRowsErrors("memory", () => createMemoryFileRows());

@@ -20,6 +20,7 @@ async function start(apiDocs?: object): Promise<string> {
     filesRouter: Router(),
     directoriesRouter: Router(),
     corsOrigin: [],
+    errorMappers: [],
     apiDocs,
   });
 

@@ -15,6 +15,7 @@ import type {
 import { toStoredFile } from "../adapters/persistence/row-mapper.js";
 import type { FileRow } from "../adapters/persistence/row-mapper.js";
 import type { StoredFile } from "../domain/stored-file.js";
+import { FileNotFoundError } from "../domain/errors.js";
 
 /**
  * The second implementation of the row interfaces: the metadata table as a Map.
@@ -115,7 +116,9 @@ export function createMemoryFileRows(
       const row = rows.get(input.id);
       if (!row) return await files.insertFile(input);
       if (!live(row) || row.status === "ready")
-        throw new Error("Файл уже завершён или удалён");
+        throw new FileNotFoundError(
+          `File ${input.id} was deleted or completed`,
+        );
       row.attempt_started_at = clock.now();
       row.attempt_generation = randomUUID();
       row.status = input.status;

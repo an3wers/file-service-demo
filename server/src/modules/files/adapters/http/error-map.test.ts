@@ -5,11 +5,17 @@ import {
   FileNotFoundError,
   FileNotReadyError,
   FileTooLargeError,
+  ImpossibleFileRowError,
   InvalidDirectoryError,
+  InvalidPartNumberError,
+  InvalidUploadSizeError,
+  MultipartIncompleteError,
   InvalidFileNameError,
   MultipartNotFoundError,
   TooManyActiveUploadsError,
   UploadNotCompletedError,
+  UploadOperationConflictError,
+  UploadOperationProcessingError,
 } from "../../domain/errors.js";
 
 describe("mapFilesError", () => {
@@ -109,6 +115,92 @@ describe("mapFilesError", () => {
       code: ERROR_CODES.PAYLOAD_TOO_LARGE,
       details: { maxObjectSize: 1 },
     });
+  });
+
+  it.each([
+    [
+      "конфликт операции загрузки",
+      UploadOperationConflictError,
+      ERROR_CODES.UPLOAD_OPERATION_CONFLICT,
+    ],
+    [
+      "операция загрузки ещё выполняется",
+      UploadOperationProcessingError,
+      ERROR_CODES.UPLOAD_OPERATION_PROCESSING,
+    ],
+  ])("переводит «%s» в 409 и сохраняет details и причину", (_, Kind, code) => {
+    const domainError = new Kind("Operation op-1 is busy", {
+      operationId: "op-1",
+    });
+    const appError = mapFilesError(domainError);
+
+    expect(appError).toMatchObject({
+      statusCode: 409,
+      code,
+      message: "Operation op-1 is busy",
+      details: { operationId: "op-1" },
+    });
+    expect(appError?.cause).toBe(domainError);
+  });
+
+  it("переводит «недопустимый размер загрузки» в 400", () => {
+    const appError = mapFilesError(
+      new InvalidUploadSizeError("File size must be a positive number"),
+    );
+
+    expect(appError).toMatchObject({
+      statusCode: 400,
+      code: ERROR_CODES.INVALID_UPLOAD_SIZE,
+    });
+  });
+
+  it("переводит «недопустимый номер части» в 400 и сохраняет details", () => {
+    const appError = mapFilesError(
+      new InvalidPartNumberError("Part 4 is outside the plan", {
+        partCount: 3,
+      }),
+    );
+
+    expect(appError).toMatchObject({
+      statusCode: 400,
+      code: ERROR_CODES.INVALID_PART_NUMBER,
+      details: { partCount: 3 },
+    });
+  });
+
+  it("переводит «составная загрузка неполна» в 409 и сохраняет details", () => {
+    const appError = mapFilesError(
+      new MultipartIncompleteError("Not every part has been uploaded", {
+        uploaded: 1,
+        expected: 3,
+      }),
+    );
+
+    expect(appError).toMatchObject({
+      statusCode: 409,
+      code: ERROR_CODES.MULTIPART_INCOMPLETE,
+      details: { uploaded: 1, expected: 3 },
+    });
+  });
+
+  it("переводит невозможную строку метаданных во внутреннюю ошибку, не показывая подробности клиенту", () => {
+    const domainError = new ImpossibleFileRowError(
+      "Metadata row is in an impossible state",
+      { reason: "A ready file still carries a multipart upload", id: "abc" },
+    );
+    const appError = mapFilesError(domainError);
+
+    expect(appError).toMatchObject({
+      statusCode: 500,
+      code: ERROR_CODES.INTERNAL_SERVER_ERROR,
+      message: "An unexpected error occurred",
+      details: undefined,
+      logContext: {
+        reason: "A ready file still carries a multipart upload",
+        id: "abc",
+      },
+    });
+    expect(appError?.cause).toBe(domainError);
   });
 
   it("оставляет причину как исходную доменную ошибку", () => {

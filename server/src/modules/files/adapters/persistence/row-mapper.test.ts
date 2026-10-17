@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { AppError } from "../../../../errors.js";
+import { ImpossibleFileRowError } from "../../domain/errors.js";
 import type { FileRow } from "./row-mapper.js";
 import { toStoredFile } from "./row-mapper.js";
 
@@ -111,14 +111,20 @@ describe("toStoredFile", () => {
   describe("незаконные сочетания", () => {
     it("резервирование с планом без upload_id — внутренняя ошибка", () => {
       expect(() => toStoredFile(row({ part_size: 5, part_count: 3 }))).toThrow(
-        AppError,
+        ImpossibleFileRowError,
       );
-      expect(() => toStoredFile(row({ part_size: 5 }))).toThrow(AppError);
-      expect(() => toStoredFile(row({ part_count: 3 }))).toThrow(AppError);
+      expect(() => toStoredFile(row({ part_size: 5 }))).toThrow(
+        ImpossibleFileRowError,
+      );
+      expect(() => toStoredFile(row({ part_count: 3 }))).toThrow(
+        ImpossibleFileRowError,
+      );
     });
 
     it("резервирование с etag до завершения загрузки — внутренняя ошибка", () => {
-      expect(() => toStoredFile(row({ etag: '"abc"' }))).toThrow(AppError);
+      expect(() => toStoredFile(row({ etag: '"abc"' }))).toThrow(
+        ImpossibleFileRowError,
+      );
     });
 
     it("живая составная загрузка без размера — внутренняя ошибка", () => {
@@ -131,7 +137,7 @@ describe("toStoredFile", () => {
             part_count: 3,
           }),
         ),
-      ).toThrow(AppError);
+      ).toThrow(ImpossibleFileRowError);
     });
 
     it("живая составная загрузка без плана частей — внутренняя ошибка", () => {
@@ -144,7 +150,7 @@ describe("toStoredFile", () => {
             part_count: null,
           }),
         ),
-      ).toThrow(AppError);
+      ).toThrow(ImpossibleFileRowError);
     });
 
     it("живая составная загрузка без размера части — внутренняя ошибка", () => {
@@ -157,7 +163,7 @@ describe("toStoredFile", () => {
             part_count: 3,
           }),
         ),
-      ).toThrow(AppError);
+      ).toThrow(ImpossibleFileRowError);
     });
 
     it("живая составная загрузка без числа частей — внутренняя ошибка", () => {
@@ -170,7 +176,7 @@ describe("toStoredFile", () => {
             part_count: null,
           }),
         ),
-      ).toThrow(AppError);
+      ).toThrow(ImpossibleFileRowError);
     });
 
     it("живая составная загрузка с etag — внутренняя ошибка", () => {
@@ -184,31 +190,45 @@ describe("toStoredFile", () => {
             etag: '"abc"',
           }),
         ),
-      ).toThrow(AppError);
+      ).toThrow(ImpossibleFileRowError);
     });
 
     it("готовый файл с upload_id — внутренняя ошибка", () => {
       expect(() =>
         toStoredFile(row({ status: "ready", upload_id: "upload-1" })),
-      ).toThrow(AppError);
+      ).toThrow(ImpossibleFileRowError);
     });
 
     it("готовый файл с остатком плана частей — внутренняя ошибка", () => {
       expect(() =>
         toStoredFile(row({ status: "ready", part_size: 5, part_count: 3 })),
-      ).toThrow(AppError);
+      ).toThrow(ImpossibleFileRowError);
       expect(() =>
         toStoredFile(row({ status: "ready", part_size: 5 })),
-      ).toThrow(AppError);
+      ).toThrow(ImpossibleFileRowError);
       expect(() =>
         toStoredFile(row({ status: "ready", part_count: 3 })),
-      ).toThrow(AppError);
+      ).toThrow(ImpossibleFileRowError);
+    });
+
+    it("называет причину и строку в подробностях ошибки", () => {
+      expect(() =>
+        toStoredFile(row({ status: "failed", upload_id: "upload-1" })),
+      ).toThrow(
+        expect.objectContaining({
+          details: expect.objectContaining({
+            reason: "A failed file still carries a live multipart upload",
+            id: row().id,
+            uploadId: "upload-1",
+          }),
+        }),
+      );
     });
 
     it("неудавшийся файл с живым upload_id — внутренняя ошибка", () => {
       expect(() =>
         toStoredFile(row({ status: "failed", upload_id: "upload-1" })),
-      ).toThrow(AppError);
+      ).toThrow(ImpossibleFileRowError);
     });
   });
 });

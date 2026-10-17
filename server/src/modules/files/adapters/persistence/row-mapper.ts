@@ -1,4 +1,4 @@
-import { AppError, ERROR_CODES } from "../../../../errors.js";
+import { ImpossibleFileRowError } from "../../domain/errors.js";
 import type {
   StoredFile,
   FileStatus,
@@ -28,25 +28,17 @@ export interface FileRow {
   deleted_at: Date | null;
 }
 
-function impossibleRow(row: FileRow, reason: string): AppError {
-  return new AppError(
-    500,
-    ERROR_CODES.INTERNAL_SERVER_ERROR,
-    "An unexpected error occurred",
-    undefined,
-    {
-      logContext: {
-        reason,
-        id: row.id,
-        status: row.status,
-        uploadId: row.upload_id,
-        sizeBytes: row.size_bytes,
-        partSize: row.part_size,
-        partCount: row.part_count,
-        etag: row.etag,
-      },
-    },
-  );
+function impossibleRow(row: FileRow, reason: string): ImpossibleFileRowError {
+  return new ImpossibleFileRowError("Metadata row is in an impossible state", {
+    reason,
+    id: row.id,
+    status: row.status,
+    uploadId: row.upload_id,
+    sizeBytes: row.size_bytes,
+    partSize: row.part_size,
+    partCount: row.part_count,
+    etag: row.etag,
+  });
 }
 
 function base(row: FileRow) {

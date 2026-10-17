@@ -4,7 +4,11 @@ import type { Express, RequestHandler, Router } from "express";
 import { pinoHttp } from "pino-http";
 import swaggerUi from "swagger-ui-express";
 import { logger } from "./logger.js";
-import { errorHandler, notFoundHandler } from "./middleware/error-handler.js";
+import type { ErrorMapper } from "./errors.js";
+import {
+  createErrorHandler,
+  notFoundHandler,
+} from "./middleware/error-handler.js";
 
 export const MOUNTS = {
   health: "/health",
@@ -23,6 +27,7 @@ export interface AppDeps {
   filesRouter: Router;
   directoriesRouter: Router;
   corsOrigin: string[];
+  errorMappers: readonly ErrorMapper[];
   apiDocs?: object | undefined;
 }
 
@@ -38,6 +43,7 @@ export function createApp({
   filesRouter,
   directoriesRouter,
   corsOrigin,
+  errorMappers,
   apiDocs,
 }: AppDeps): Express {
   const app = express();
@@ -85,7 +91,7 @@ export function createApp({
   app.all("/{*path}", notFoundHandler);
 
   // Error middleware must be registered last.
-  app.use(errorHandler);
+  app.use(createErrorHandler(errorMappers));
 
   return app;
 }

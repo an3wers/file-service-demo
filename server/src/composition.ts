@@ -19,8 +19,9 @@ import type { ObjectStore } from "./storage/object-store.js";
 import {
   createFilesMaintenance,
   createFilesHttp,
+  mapFilesError,
 } from "./modules/files/index.js";
-import { createAuthHttp } from "./modules/auth/index.js";
+import { createAuthHttp, mapAuthError } from "./modules/auth/index.js";
 import type { UploadPolicy } from "./modules/files/index.js";
 
 export function createObjectStore(): ObjectStore {
@@ -106,6 +107,7 @@ export function buildApp(
     ...routers,
     ...deps.auth,
     corsOrigin: deps.corsOrigin,
+    errorMappers: [mapFilesError, mapAuthError],
     apiDocs: deps.apiDocs,
     healthRouter: deps.healthRouter,
   });

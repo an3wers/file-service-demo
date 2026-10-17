@@ -7,10 +7,9 @@ import {
   badRequest,
   payloadTooLarge,
 } from "../errors.js";
+import type { ErrorMapper } from "../errors.js";
 import { config } from "../config.js";
 import { logger } from "../logger.js";
-import { mapFilesError } from "../modules/files/index.js";
-import { mapAuthError } from "../modules/auth/index.js";
 
 export const notFoundHandler: RequestHandler = (req, _res, next) => {
   next(
@@ -27,15 +26,17 @@ export const notFoundHandler: RequestHandler = (req, _res, next) => {
  * code and logging are decided once rather than per branch. Client-facing codes
  * therefore all come from `errors.ts`, including the ones Multer raises.
  */
-function toAppError(error: unknown): AppError {
+function toAppError(error: unknown, mappers: readonly ErrorMapper[]): AppError {
   if (error instanceof AppError) {
     return error;
   }
 
-  const moduleError = mapFilesError(error) ?? mapAuthError(error);
+  for (const map of mappers) {
+    const moduleError = map(error);
 
-  if (moduleError) {
-    return moduleError;
+    if (moduleError) {
+      return moduleError;
+    }
   }
 
   if (error instanceof ZodError) {
@@ -73,23 +74,25 @@ function toAppError(error: unknown): AppError {
   );
 }
 
-export const errorHandler: ErrorRequestHandler = (error, req, res, _next) => {
-  const appError = toAppError(error);
-  // `req.log` is the pino-http child carrying `req.id`, so the error line can be
-  // matched against the access line for the same request.
-  const log = req.log ?? logger;
+export const createErrorHandler =
+  (mappers: readonly ErrorMapper[]): ErrorRequestHandler =>
+  (error, req, res, _next) => {
+    const appError = toAppError(error, mappers);
+    // `req.log` is the pino-http child carrying `req.id`, so the error line can be
+    // matched against the access line for the same request.
+    const log = req.log ?? logger;
 
-  log[appError.statusCode >= 500 ? "error" : "warn"](
-    { err: appError, ...appError.logContext },
-    appError.message,
-  );
+    log[appError.statusCode >= 500 ? "error" : "warn"](
+      { err: appError, ...appError.logContext },
+      appError.message,
+    );
 
-  res.status(appError.statusCode).json({
-    error: {
-      code: appError.code,
-      message: appError.message,
-      details: appError.details,
-      requestId: req.id,
-    },
-  });
-};
+    res.status(appError.statusCode).json({
+      error: {
+        code: appError.code,
+        message: appError.message,
+        details: appError.details,
+        requestId: req.id,
+      },
+    });
+  };

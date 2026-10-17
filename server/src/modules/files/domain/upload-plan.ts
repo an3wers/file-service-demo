@@ -1,5 +1,8 @@
-import { ERROR_CODES, badRequest } from "../../../errors.js";
-import { FileTooLargeError, InvalidPlanLimitsError } from "./errors.js";
+import {
+  FileTooLargeError,
+  InvalidPlanLimitsError,
+  InvalidUploadSizeError,
+} from "./errors.js";
 
 const MIB = 1024 * 1024;
 
@@ -84,8 +87,7 @@ export function planMultipart(size: number, limits: PlanLimits): UploadPlan {
   assertValidPlanLimits(limits);
 
   if (!Number.isFinite(size) || size <= 0) {
-    throw badRequest(
-      ERROR_CODES.INVALID_UPLOAD_SIZE,
+    throw new InvalidUploadSizeError(
       "File size must be a positive number of bytes",
     );
   }

@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { ERROR_CODES } from "../../../errors.js";
-import { FileTooLargeError, InvalidPlanLimitsError } from "./errors.js";
+import {
+  FileTooLargeError,
+  InvalidPlanLimitsError,
+  InvalidUploadSizeError,
+} from "./errors.js";
 import { needsMultipart, partRange, planMultipart } from "./upload-plan.js";
 import type { PlanLimits } from "./upload-plan.js";
 
@@ -106,10 +109,9 @@ describe("planMultipart", () => {
 
   it("rejects a size that is not a positive number", () => {
     for (const size of [0, -1, Number.NaN]) {
-      expect(thrownBy(() => planMultipart(size, limits))).toMatchObject({
-        statusCode: 400,
-        code: ERROR_CODES.INVALID_UPLOAD_SIZE,
-      });
+      expect(thrownBy(() => planMultipart(size, limits))).toBeInstanceOf(
+        InvalidUploadSizeError,
+      );
     }
   });
 
