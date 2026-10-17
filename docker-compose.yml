@@ -1,10 +1,33 @@
 # Минимальный MVP-деплой: наружу торчит только клиент на :5173.
-# Клиент ходит в API по внутренней сети app_network, API — в Postgres по
-# внешней shared-сети postgres_docker_db_networ, поднятой compose-файлом БД
+# Клиент, API и собственный Postgres общаются по внутренней сети app_network;
+# БД дополнительно открыта только на 127.0.0.1 хоста. Настройки БД берутся
+# из корневого .env.
 
 name: file-storage-demo
 
 services:
+  postgres:
+    image: postgres:18-alpine
+    container_name: file-storage-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:?задайте POSTGRES_DB в .env}
+      POSTGRES_USER: ${POSTGRES_USER:?задайте POSTGRES_USER в .env}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?задайте POSTGRES_PASSWORD в .env}
+    # Порт открыт только на loopback хоста: миграции и `npm run dev` ходят в БД
+    # с машины разработчика, а из внешней сети она недоступна.
+    ports:
+      - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      - app_network
+
   server:
     build:
       context: .
@@ -17,11 +40,20 @@ services:
     # пересборка образа не нужна.
     env_file:
       - ./server/.env
+    # Подключение к БД перекрывает server/.env: там для локального запуска
+    # указан localhost, а в контейнере БД доступна по имени сервиса.
     environment:
       NODE_ENV: production
+      DATABASE_HOST: postgres
+      DATABASE_PORT: "5432"
+      DATABASE_NAME: ${POSTGRES_DB}
+      DATABASE_USER: ${POSTGRES_USER}
+      DATABASE_PASSWORD: ${POSTGRES_PASSWORD}
+    depends_on:
+      postgres:
+        condition: service_healthy
     networks:
-      - app_network # сюда ходит клиент
-      - db_network  # shared
+      - app_network
 
   client:
     build:
@@ -42,10 +74,9 @@ services:
       - app_network
 
 networks:
-  # Приватная сеть пары клиент↔сервер.
+  # Приватная сеть всех сервисов: клиент↔сервер↔БД.
   app_network:
     driver: bridge
 
-  db_network:
-    external: true
-    name: postgres_docker_db_network
+volumes:
+  postgres_data:

@@ -55,14 +55,19 @@ requestId } }`; клиент переводит `code` в текст и пока
 
 ## Быстрый старт
 
-Нужны PostgreSQL, бакет в Cloud.ru Object Storage и Node 20.19+ / 22.12+ (в репозитории — 24).
+Нужны Docker (для PostgreSQL), бакет в Cloud.ru Object Storage и Node 20.19+ / 22.12+
+(в репозитории — 24).
 
 Все команды ниже выполняются из корня репозитория.
 
 ```bash
 npm ci
 cp client/.env.example client/.env
+cp .env.example .env
+docker compose up -d postgres
 ```
+
+В корневом `.env` задайте пароль PostgreSQL; БД слушает только `127.0.0.1`.
 
 Создайте `server/.env` по [server/README.md](server/README.md), затем подготовьте окружение:
 
@@ -146,8 +151,47 @@ docker build -f server/Dockerfile -t file-storage-server .
 docker build -f client/Dockerfile -t file-storage-client .
 ```
 
-Для запуска Compose нужна внешняя сеть `postgres_docker_db_network` с PostgreSQL.
+PostgreSQL поднимается в том же Compose с настройками из корневого `.env`; данные хранятся
+в томе `postgres_data`. Подключение сервера к БД Compose задаёт сам, перекрывая `DATABASE_*`
+из `server/.env`. Миграции перед первым запуском: `npm run db:migrate` с хоста.
 Клиент доступен на порту `5173` и проксирует API на сервер во внутренней сети Compose.
+
+### Полезные команды
+
+Все команды выполняются из корня репозитория.
+
+```bash
+# Только PostgreSQL — для локальной разработки через npm run dev.
+# --wait возвращает управление, когда healthcheck БД пройден.
+docker compose up -d --wait postgres
+npm run db:migrate
+
+# Весь стек; --build пересобирает образы после изменений в коде.
+docker compose up -d --build
+
+# Пересобрать и перезапустить один сервис.
+docker compose up -d --build server
+
+# Применить правку server/.env без пересборки образа.
+docker compose up -d server
+
+# Состояние сервисов и логи.
+docker compose ps
+docker compose logs -f server
+docker compose logs -f --tail=100 postgres
+
+# Консоль psql внутри контейнера БД.
+docker compose exec postgres sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB"'
+
+# Остановить, не удаляя контейнеры.
+docker compose stop
+
+# Удалить контейнеры и сеть; том postgres_data с данными сохраняется.
+docker compose down
+
+# Удалить вместе с томом — база будет создана заново и потребует db:migrate.
+docker compose down -v
+```
 
 ## Стек
 
