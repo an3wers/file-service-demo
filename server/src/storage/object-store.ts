@@ -1,32 +1,30 @@
 /**
- * The seam between this service and whatever actually holds the bytes.
+ * Граница между сервисом и хранилищем байтов.
  *
- * Everything vendor-specific lives behind it: SDK commands, request signing,
- * pagination, and the several shapes a "not found" answer arrives in. Callers
- * work in object keys and never see a bucket — the adapter owns that.
+ * SDK, подписывание, пагинация и варианты ответа об отсутствии объекта
+ * остаются в адаптере. Вызывающий код работает с объектными ключами;
+ * бакетом управляет адаптер.
  *
- * Failures cross this seam as `AppError`. The two conditions that are not
- * failures — no object at a key, no upload behind an id — cross it as values,
- * because callers react to them differently: one confirmation path turns a
- * missing object into a 409, another treats a vanished upload as "somebody else
- * already assembled it".
+ * Сбои передаются как `AppError`. Отсутствие объекта по ключу или загрузки
+ * по идентификатору передаётся значением: один сценарий подтверждения
+ * вернёт 409, а другой проверит, не собрана ли загрузка ранее.
  */
 
-/** What storage knows about an object that exists. */
+/** Данные существующего объекта, известные хранилищу. */
 export interface StoredObject {
   size: number | null;
   etag: string | null;
   contentType: string | null;
 }
 
-/** One part storage currently holds for an upload in flight. */
+/** Часть, которую хранилище уже приняло для живой составной загрузки. */
 export interface UploadedPart {
   partNumber: number;
   size: number;
   etag: string;
 }
 
-/** A multipart upload storage has open, as the orphan sweep sees it. */
+/** Открытая составная загрузка, доступная уборке для поиска сирот. */
 export interface MultipartUpload {
   key: string;
   uploadId: string;
@@ -44,7 +42,7 @@ export interface SignUploadOptions {
 }
 
 export interface SignDownloadOptions {
-  /** The name the browser should save the file under. */
+  /** Имя, под которым браузер должен сохранить файл. */
   name: string;
   contentType: string;
   disposition: "attachment" | "inline";
@@ -52,14 +50,14 @@ export interface SignDownloadOptions {
 }
 
 /**
- * Whether an upload was assembled here or had already settled elsewhere. A
- * `"gone"` answer is not an error: a lost response or a concurrent confirmation
- * both look like this, and the caller decides by reading the object.
+ * Результат сборки здесь или обнаружения уже завершённой загрузки.
+ * `"gone"` не считается ошибкой: потеря ответа и параллельное подтверждение
+ * дают такой результат. Вызывающий код проверяет сам объект.
  */
 export type CompleteOutcome = "assembled" | "gone";
 
 export interface ObjectStore {
-  /** Readiness: storage is reachable and the bucket is there. */
+  /** Проверка готовности: хранилище доступно и бакет существует. */
   checkAvailable(): Promise<void>;
 
   put(
@@ -68,17 +66,17 @@ export interface ObjectStore {
     options: PutOptions,
   ): Promise<{ etag: string | null }>;
 
-  /** `null` when no object exists at the key. */
+  /** `null`, если по ключу нет объекта. */
   head(key: string): Promise<StoredObject | null>;
 
-  /** Succeeds whether or not an object was there. */
+  /** Завершается успешно, даже если объекта не было. */
   remove(key: string): Promise<void>;
 
   signUpload(key: string, options: SignUploadOptions): Promise<string>;
 
   signDownload(key: string, options: SignDownloadOptions): Promise<string>;
 
-  /** Opens an upload and returns the id every later call needs. */
+  /** Открывает загрузку и возвращает идентификатор для последующих вызовов. */
   beginMultipart(
     key: string,
     options: { contentType: string },
@@ -92,25 +90,25 @@ export interface ObjectStore {
   ): Promise<string>;
 
   /**
-   * Every part held for this upload, ascending by part number. `null` when no
-   * upload answers to the id.
+   * Все сохранённые части загрузки по возрастанию номера.
+   * `null`, если загрузки с таким идентификатором нет.
    */
   listParts(key: string, uploadId: string): Promise<UploadedPart[] | null>;
 
-  /** Assembles the object out of the parts given, in the order given. */
+  /** Собирает объект из переданных частей в указанном порядке. */
   completeMultipart(
     key: string,
     uploadId: string,
     parts: UploadedPart[],
   ): Promise<CompleteOutcome>;
 
-  /** Cancels an upload in flight. Succeeds when there was nothing to cancel. */
+  /** Отменяет живую составную загрузку; отсутствие загрузки не считается ошибкой. */
   abortMultipart(key: string, uploadId: string): Promise<void>;
 
   /**
-   * Every upload currently open in the bucket. Only the orphan sweep needs this,
-   * and the count it walks is bounded by the active-upload limit plus whatever
-   * crashed, so the whole list comes back at once rather than page by page.
+   * Все открытые загрузки бакета для поиска сирот при уборке.
+   * Их количество ограничено лимитом активных загрузок и остатками после сбоев,
+   * поэтому список возвращается целиком.
    */
   listMultipartUploads(): Promise<MultipartUpload[]>;
 }

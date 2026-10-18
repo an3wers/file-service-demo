@@ -1,16 +1,15 @@
 /**
- * The clock the second implementations share.
+ * Общие управляемые часы тестовых реализаций.
  *
- * Three parties read the time in the rules worth testing: the database stamps
- * rows, storage stamps the uploads it opens, and the cleanup pass measures both
- * against an age. In production all three are the same wall clock, so a test
- * that moved only one of them would be exercising a world that cannot happen.
- * One clock, handed to all three, keeps them honest — and `advance` is what
- * turns a fresh reservation into an expired one.
+ * База ставит время на строках, хранилище — на открытых загрузках,
+ * а уборка проверяет их возраст. В рабочем окружении они используют
+ * одно время; изменение только одних часов в тесте создало бы
+ * нереальный сценарий. Поэтому всем передаются одни часы,
+ * а `advance` превращает свежее резервирование в просроченное.
  */
 export interface TestClock {
   now(): Date;
-  /** Moves the clock forward; timestamps already taken keep their value. */
+  /** Передвигает часы вперёд, сохраняя уже полученные отметки времени. */
   advance(hours: number): void;
 }
 

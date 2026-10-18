@@ -6,7 +6,7 @@ import {
   serviceUnavailable,
 } from "../errors.js";
 
-/** Wrong bucket, wrong keys, wrong signature: retrying changes nothing. */
+/** Неверный бакет, ключи доступа или подпись: повтор не устранит причину. */
 const MISCONFIGURED = new Set([
   "AccessDenied",
   "AuthorizationHeaderMalformed",
@@ -17,7 +17,7 @@ const MISCONFIGURED = new Set([
   "SignatureDoesNotMatch",
 ]);
 
-/** Storage is there but cannot answer right now; a retry is worth a try. */
+/** Хранилище доступно, но временно не может ответить; повтор может помочь. */
 const UNAVAILABLE = new Set([
   "InternalError",
   "NetworkingError",
@@ -27,7 +27,7 @@ const UNAVAILABLE = new Set([
   "TimeoutError",
 ]);
 
-/** Node-level socket failures, which reach us as the raw error from the handler. */
+/** Сбои сокета Node приходят как исходные ошибки обработчика. */
 const UNAVAILABLE_SYSCALLS = new Set([
   "ECONNREFUSED",
   "ECONNRESET",
@@ -48,9 +48,9 @@ interface AwsErrorShape {
 export type StorageContext = { operation: string } & Record<string, unknown>;
 
 /**
- * The only place that decides "S3 has no object at this key". HeadObject
- * answers with `NotFound`, GetObject with `NoSuchKey`, and some S3-compatible
- * implementations send neither shape back — only a bare 404.
+ * Единое распознавание отсутствия объекта в S3. HeadObject возвращает
+ * `NotFound`, GetObject — `NoSuchKey`, а некоторые совместимые реализации
+ * возвращают только статус 404.
  */
 export function isS3NotFound(error: unknown): boolean {
   if (error instanceof NotFound || error instanceof NoSuchKey) {
@@ -67,10 +67,10 @@ export function isS3NotFound(error: unknown): boolean {
 }
 
 /**
- * No upload answers to this id: it was completed, it was aborted, or it never
- * existed. The SDK ships no `NoSuchUpload` exception class, so this goes by name
- * and by the bare 404 the same way `isS3NotFound` does. Only call it on the
- * multipart commands, where a 404 cannot mean anything else.
+ * Загрузки с таким идентификатором нет: она завершена, отменена или
+ * не существовала. В SDK нет класса исключения `NoSuchUpload`, поэтому
+ * проверяем имя и статус 404, как в `isS3NotFound`. Применяется только
+ * к командам составной загрузки, где у 404 нет другого смысла.
  */
 export function isS3NoSuchUpload(error: unknown): boolean {
   const shape = error as AwsErrorShape | null | undefined;
@@ -81,16 +81,16 @@ export function isS3NoSuchUpload(error: unknown): boolean {
 }
 
 /**
- * Turns an AWS SDK failure into an AppError with a stable client-facing code.
- * Vendor internals (error name, request id, bucket, key) go to `logContext` so
- * they reach the log without being served to the caller.
+ * Преобразует сбой AWS SDK в AppError с устойчивым кодом для клиента.
+ * Внутренние данные поставщика (имя ошибки, идентификатор запроса, бакет,
+ * ключ) помещаются в `logContext`, чтобы попасть в журнал, но не в ответ.
  */
 export function storageError(
   error: unknown,
   context: StorageContext,
 ): AppError {
   if (error instanceof AppError) {
-    return error; // Already mapped further down the call; do not re-wrap.
+    return error; // Ошибка уже преобразована во вложенном вызове; повторно не оборачиваем.
   }
 
   const shape = (error ?? {}) as AwsErrorShape;

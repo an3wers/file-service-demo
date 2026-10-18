@@ -4,15 +4,15 @@ import type { ObjectStore } from "../storage/object-store.js";
 
 export interface HealthRouterDeps {
   objectStore: ObjectStore;
-  /** Rejects when the database is not answering. */
+  /** Отклоняет вызов, если база данных не отвечает. */
   checkDatabase: () => Promise<unknown>;
 }
 
 /**
- * Readiness asks each dependency the same way the working code does — storage
- * through the object store — so a deployment cannot pass its probe against one
- * client while every upload goes through another. Both checks arrive as
- * arguments for the same reason.
+ * Проверка готовности обращается к зависимостям так же, как рабочий код:
+ * к хранилищу — через его адаптер. Иначе проверка могла бы пройти на одном
+ * клиенте, пока загрузки используют другой. Обе проверки передаются извне,
+ * чтобы использовать те же зависимости, что и сервис.
  */
 export function createHealthRouter({
   objectStore,
@@ -20,7 +20,7 @@ export function createHealthRouter({
 }: HealthRouterDeps): Router {
   const healthRouter = Router();
 
-  /** Liveness: the process is up and serving. */
+  /** Проверка работоспособности: процесс запущен и обслуживает запросы. */
   healthRouter.get("/", (_req, res) => {
     res.status(200).json({
       status: "ok",
@@ -28,7 +28,7 @@ export function createHealthRouter({
     });
   });
 
-  /** Readiness: the dependencies this service cannot work without are reachable. */
+  /** Проверка готовности: необходимые сервису зависимости доступны. */
   healthRouter.get("/ready", async (_req, res) => {
     const [database, storage] = await Promise.all([
       checkDatabase().then(

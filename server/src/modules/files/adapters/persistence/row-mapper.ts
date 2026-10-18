@@ -17,7 +17,7 @@ export interface FileRow {
   etag: string | null;
   status: FileStatus;
   upload_source: UploadSource;
-  /** Set only while a multipart upload is in flight; cleared once it settles. */
+  /** Заполнено только у живой составной загрузки; очищается при её завершении. */
   upload_id: string | null;
   part_size: number | null;
   part_count: number | null;

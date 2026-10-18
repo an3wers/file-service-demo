@@ -2,8 +2,8 @@ import { describe, expect, it } from "vitest";
 import { createMemoryObjectStore } from "./memory-object-store.js";
 
 /**
- * Every later test believes whatever this adapter says, so the S3 rules it
- * claims to model are checked here rather than assumed.
+ * Остальные тесты полагаются на этот адаптер, поэтому воспроизводимые
+ * им правила S3 проверяются здесь явно.
  */
 describe("memory object store", () => {
   const key = "docs/8f1c2d3e-4a5b-4c6d-8e9f-0a1b2c3d4e5f.bin";

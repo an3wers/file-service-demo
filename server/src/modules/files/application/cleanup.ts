@@ -14,18 +14,16 @@ export interface CleanupModuleDeps {
   fileRows: FileRowsForCleanup;
   policy: UploadPolicy;
   /**
-   * The wall clock the age filter measures against. It is an argument for the
-   * same reason the policy is: the sweep's whole rule is "older than the TTL",
-   * and nothing that reads the clock for itself can be shown obeying it. The
-   * same port every other scenario takes, so a reservation's expiry and the
-   * sweep's age filter age together.
+   * Часы для проверки возраста передаются извне, чтобы правило «старше TTL»
+   * можно было проверить в тесте. Эти же часы используют остальные сценарии,
+   * поэтому резервирование и порог уборки отсчитывают время согласованно.
    */
   clock: Clock;
   confirmation: ConfirmationModule;
   operations: UploadOperations;
 }
 
-/** What one pass over the expired rows settled. */
+/** Результат одного прохода по просроченным строкам метаданных. */
 export interface SettleCounters {
   examined: number;
   recovered: number;
@@ -34,7 +32,7 @@ export interface SettleCounters {
   skipped: number;
 }
 
-/** What one pass over storage's open uploads cancelled. */
+/** Результат одного прохода отмены открытых загрузок в хранилище. */
 export interface SweepResult {
   examined: number;
   aborted: number;
@@ -42,30 +40,27 @@ export interface SweepResult {
 
 export interface CleanupModule {
   /**
-   * Rows that stayed `pending` past the TTL, each settled by what storage says
-   * actually happened rather than by what the row claims.
+   * Строки в состоянии `pending` с истёкшим TTL сверяются с фактическим
+   * состоянием объектного хранилища.
    */
   settleExpiredRows(): Promise<SettleCounters>;
 
-  /** Uploads storage still holds open that no metadata row points at. */
+  /** Открытые загрузки в хранилище, на которые не указывает ни одна строка метаданных. */
   sweepOrphanUploads(): Promise<SweepResult>;
 }
 
 const HOUR_MS = 60 * 60 * 1000;
 
 /**
- * The cleanup pass: the rules for what to do with an upload nobody ever
- * confirmed.
+ * Уборка определяет судьбу загрузок, которые никто не подтвердил.
  *
- * It is a module like the others and takes the same seams — storage, its own
- * narrow row interface, this deployment's policy — so the script that runs it
- * on a schedule only has to assemble those three and call it. Storage is
- * reached through the seam here too: the sweep asks for the open uploads, and
- * no vendor client is named in this file.
+ * Модуль получает объектное хранилище, узкий интерфейс строк метаданных
+ * и политику развёртывания. Скрипту по расписанию достаточно собрать
+ * зависимости и запустить проход; работа с SDK остаётся за адаптером.
  *
- * Both passes are safe to lose halfway through. What the first one leaves
- * behind — a row failed but its upload not yet aborted — is exactly what the
- * second one is for, and running either one twice settles nothing twice.
+ * Оба прохода можно безопасно прервать и повторить. Второй проход убирает
+ * то, что осталось после первого, например неотменённую составную загрузку
+ * уже неудавшегося файла.
  */
 export function createCleanupModule({
   objectStore,
@@ -79,8 +74,8 @@ export function createCleanupModule({
 
   return {
     /**
-     * Rows stay `pending` when a client asked for an upload and never confirmed
-     * it. Ask storage what actually happened rather than guessing from the row.
+     * Строка остаётся `pending`, если клиент запросил загрузку, но не подтвердил её.
+     * Фактический результат выясняем у хранилища.
      */
     async settleExpiredRows(): Promise<SettleCounters> {
       const expired = await fileRows.listExpiredPending(ttlHours);
@@ -124,17 +119,17 @@ export function createCleanupModule({
     },
 
     /**
-     * Uploads storage holds that no row points at — what a crash between opening
-     * the upload and the metadata insert leaves behind. Nothing else ever looks
-     * at those, and storage charges for their parts until somebody aborts them.
+     * Сбой между открытием загрузки и вставкой строки оставляет в хранилище
+     * сироту. Другие сценарии к ней не обращаются, а части тарифицируются
+     * до отмены загрузки.
      *
-     * The seam hands back every open upload at once, so the rows are asked about
-     * all of them in one question instead of one question per page.
+     * Интерфейс возвращает все открытые загрузки сразу, поэтому проверяем их
+     * наличие в таблице одним запросом.
      */
     async sweepOrphanUploads(): Promise<SweepResult> {
       const cutoff = clock.now().getTime() - ttlHours * HOUR_MS;
-      // The age filter is what keeps the sweep off uploads that are running right
-      // now: those have no row yet only for as long as the insert takes.
+      // Порог возраста защищает текущие загрузки: строки метаданных может ещё
+      // не быть, пока выполняется её вставка.
       const stale = (await objectStore.listMultipartUploads()).filter(
         (upload) => (upload.initiatedAt?.getTime() ?? 0) < cutoff,
       );

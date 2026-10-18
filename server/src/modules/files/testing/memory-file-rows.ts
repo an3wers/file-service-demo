@@ -18,42 +18,39 @@ import type { StoredFile } from "../domain/stored-file.js";
 import { FileNotFoundError } from "../domain/errors.js";
 
 /**
- * The second implementation of the row interfaces: the metadata table as a Map.
+ * Реализация интерфейсов строк метаданных на Map.
  *
- * It keeps real state rather than scripted answers, so a test can assert that a
- * row ended up confirmed instead of asserting that confirmation was called
- * once. That is the whole reason it exists — idempotence, claiming and TTL are
- * transitions, and a spy cannot show a transition.
+ * Хранит состояние, чтобы тест мог проверить результат перехода:
+ * идемпотентность, захват и истечение TTL нельзя подтвердить одним
+ * подсчётом вызовов.
  *
- * The rules reproduced here are the ones the SQL side guarantees and the code
- * leans on:
+ * Воспроизводит гарантии SQL, на которые опирается код:
  *
- * - a soft-deleted row is invisible to reads, confirmation and deletion;
- * - confirmation clears the multipart plan along with the upload id;
- * - claiming an expired upload succeeds exactly once and hands back the id that
- *   was cleared, not the null left behind;
- * - `(bucket, object_key)` is unique, and so is the id;
- * - listing sorts by the requested column, then by id, and pages the result.
+ * - удалённая строка недоступна для чтения, подтверждения и удаления;
+ * - подтверждение очищает план составной загрузки и её идентификатор;
+ * - захват просроченной загрузки срабатывает один раз и возвращает прежний
+ *   идентификатор, а не `null`, записанный при очистке;
+ * - идентификатор и пара `(bucket, object_key)` уникальны;
+ * - список сортируется по выбранному столбцу, затем по идентификатору
+ *   и разбивается на страницы.
  *
- * Time is a knob here. TTL is the one rule that cannot be exercised without
- * moving the clock, so the rows read one — shared with storage when a harness
- * hands the same one to both — and `advance` turns it.
+ * Для проверки TTL используются управляемые часы. Они могут быть общими
+ * с хранилищем; `advance` передвигает их.
  *
- * Failure is the other knob: `failNext` makes one call reject, which is how the
- * paths that have to undo a storage side effect when the table refuses a row
- * get exercised at all.
+ * `failNext` отклоняет один вызов, позволяя проверять откат состояния
+ * хранилища при отказе таблицы сохранить строку.
  */
 
 export interface MemoryFileRows extends FileRows {
   setTerminationGuard(guard: (id: string) => boolean): void;
-  /** Moves the clock forward, which is how a reserved row becomes expired. */
+  /** Передвигает часы, чтобы резервирование могло стать просроченным. */
   advance(hours: number): void;
-  /** Makes the next call to this method fail, for the error paths. */
+  /** Отклоняет следующий вызов этого метода для проверки обработки ошибок. */
   failNext(method: keyof FileRows, error: unknown): void;
   /**
-   * Lets somebody else settle the row in the instant before the next claim runs
-   * — a client confirming the upload the sweep is about to cancel. The claim
-   * exists to arbitrate exactly that race, and this is the only way to lose it.
+   * Позволяет изменить строку непосредственно перед следующим захватом:
+   * например, подтвердить загрузку, которую уборка собирается отменить.
+   * Так воспроизводится гонка, которую должен разрешать захват.
    */
   beforeNextClaim(run: () => Promise<void>): void;
 }
@@ -61,9 +58,9 @@ export interface MemoryFileRows extends FileRows {
 const HOUR_MS = 60 * 60 * 1000;
 
 /**
- * `size_bytes` is the one sortable column that can be null, and where a null
- * sits is a rule of its own: Postgres puts nulls last ascending and first
- * descending, while the direction applies to the values.
+ * `size_bytes` — единственный сортируемый столбец с допустимым `null`.
+ * Postgres размещает `null` в конце при сортировке по возрастанию
+ * и в начале при сортировке по убыванию.
  */
 function compareSizes(
   a: number | null,
@@ -101,7 +98,7 @@ export function createMemoryFileRows(
   let terminated = (_id: string) => false;
   let interleaved: (() => Promise<void>) | null = null;
 
-  /** Rows leave by value: a caller mutating one must not rewrite the table. */
+  /** Строки возвращаются копиями: изменения у вызывающего кода не меняют таблицу. */
   const copy = (row: FileRow): FileRow => ({ ...row });
 
   const live = (row: FileRow): boolean => row.deleted_at === null;
@@ -243,7 +240,7 @@ export function createMemoryFileRows(
       return true;
     },
 
-    /** Unlike the rest, the SQL statement carries no `deleted_at` check. */
+    /** В этом SQL-запросе, в отличие от остальных, нет проверки `deleted_at`. */
     async markFileFailed(id: string): Promise<void> {
       failures.check("markFileFailed");
 
@@ -306,7 +303,7 @@ export function createMemoryFileRows(
               return false;
             }
           } else if (
-            // "" with recursive means the whole bucket, so nothing is excluded.
+            // Пустая строка с recursive означает весь бакет, поэтому ничего не исключаем.
             directory !== "" &&
             row.directory !== directory &&
             !row.directory.startsWith(`${directory}/`)
@@ -351,8 +348,8 @@ export function createMemoryFileRows(
       const offset = (params.page - 1) * params.limit;
       const items = matched.slice(offset, offset + params.limit).map(copy);
 
-      // The total rides along with the page in SQL, so a page past the end
-      // reports no total at all. Callers see the same number here.
+      // В SQL итог передаётся вместе со страницей; если страница за концом списка,
+      // итога тоже нет. Здесь воспроизводится то же значение.
       return {
         items: items.map(toStoredFile),
         total: items.length > 0 ? matched.length : 0,
@@ -368,7 +365,7 @@ export function createMemoryFileRows(
 
       const wanted = new Set(ids);
 
-      // No `deleted_at` or status check: the sweep asks the whole table.
+      // Без проверки `deleted_at` и статуса: уборка обращается ко всей таблице.
       return new Set(
         [...rows.values()]
           .map((row) => row.upload_id)

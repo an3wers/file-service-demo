@@ -9,8 +9,8 @@ import type {
 } from "../domain/ports/file-rows.js";
 
 /**
- * Every later test believes whatever this implementation says about a row, so
- * the SQL rules it claims to model are checked here rather than assumed.
+ * Остальные тесты полагаются на поведение этой реализации строк метаданных,
+ * поэтому воспроизводимые ею правила SQL проверяются здесь явно.
  */
 describe("memory file rows", () => {
   let nextId = 0;

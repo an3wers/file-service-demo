@@ -5,20 +5,20 @@ import {
   serviceUnavailable,
 } from "../errors.js";
 
-/** SQLSTATE classes that mean "the database is not answering", not "bad query". */
+/** Классы SQLSTATE, означающие недоступность базы данных, а не ошибку запроса. */
 const UNAVAILABLE_STATES = new Set([
-  "08000", // connection_exception
-  "08001", // sqlclient_unable_to_establish_sqlconnection
-  "08003", // connection_does_not_exist
-  "08004", // sqlserver_rejected_establishment_of_sqlconnection
-  "08006", // connection_failure
-  "53300", // too_many_connections
-  "57P01", // admin_shutdown
-  "57P02", // crash_shutdown
-  "57P03", // cannot_connect_now
+  "08000", // Ошибка соединения
+  "08001", // Клиент не смог установить SQL-соединение
+  "08003", // Соединение не существует
+  "08004", // Сервер отклонил установление SQL-соединения
+  "08006", // Сбой соединения
+  "53300", // Слишком много соединений
+  "57P01", // Остановка администратором
+  "57P02", // Аварийная остановка
+  "57P03", // Подключение сейчас невозможно
 ]);
 
-/** Socket-level failures, which reach us as plain Node errors without a SQLSTATE. */
+/** Сбои сокета приходят как обычные ошибки Node без SQLSTATE. */
 const UNAVAILABLE_SYSCALLS = new Set([
   "ECONNREFUSED",
   "ECONNRESET",
@@ -30,10 +30,9 @@ const UNAVAILABLE_SYSCALLS = new Set([
 ]);
 
 /**
- * node-postgres raises its own connection failures as bare `Error`s with no
- * code at all — which is exactly what a remote database that stops answering
- * produces, since the packets are dropped rather than refused. The message is
- * the only thing left to match on.
+ * node-postgres сообщает о некоторых сбоях соединения обычным `Error` без кода.
+ * Так происходит, когда удалённая база перестаёт отвечать и пакеты теряются,
+ * а не отклоняются. Распознать такой сбой можно только по сообщению.
  */
 const UNAVAILABLE_MESSAGES = [
   "connection terminated",
@@ -50,7 +49,7 @@ interface PgErrorShape {
   message?: unknown;
 }
 
-/** The error plus its `cause` chain — pg wraps the real failure one level down. */
+/** Ошибка и цепочка её `cause`: pg оборачивает исходный сбой на один уровень. */
 function chain(error: unknown): PgErrorShape[] {
   const links: PgErrorShape[] = [];
   let current = error;
@@ -78,9 +77,9 @@ function isUnreachable(links: PgErrorShape[]): boolean {
 }
 
 /**
- * Translates the failures a healthy service can actually hit into AppErrors.
- * Anything else — a constraint the code should never violate, a syntax error —
- * is returned untouched so it still surfaces as a 500 with its stack.
+ * Преобразует ожидаемые сбои зависимостей в AppError.
+ * Нарушения ограничений и ошибки синтаксиса остаются без изменений,
+ * чтобы возвращаться как 500 с исходным стеком в журнале.
  */
 export function databaseError(error: unknown): unknown {
   if (error instanceof AppError) {

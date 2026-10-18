@@ -1,4 +1,4 @@
-/** RFC 5987 header so browsers save the file under its original name. */
+/** Заголовок по RFC 5987 позволяет браузеру сохранить файл с исходным именем. */
 export function contentDisposition(
   name: string,
   type: "attachment" | "inline",

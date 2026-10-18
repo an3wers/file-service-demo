@@ -239,6 +239,8 @@ export function createUploadOperation(
       numbers = numbers.filter((number) => !uploaded.has(number));
       partsDone.value = uploaded.size;
       sentBytes.value = status.uploadedBytes;
+      // Принятые ранее части входят в общий прогресс, иначе первое событие
+      // новой передачи обнулит уже учтённые байты.
       for (const number of uploaded)
         loaded.set(
           number,
@@ -337,6 +339,8 @@ export function createUploadOperation(
 
     try {
       if (deleted) throw new Error("Результат операции удалён");
+      // Потеря ответа не означает неудачу загрузки: перед новой передачей
+      // выясняем результат прежней операции, чтобы не создать дубликат.
       if (attempted) {
         const result = await resolveResult(signal);
         signal.throwIfAborted();
@@ -498,6 +502,8 @@ export function createUploadOperation(
   }
 
   function stop(): void {
+    // Ответы остановленного запуска больше не должны менять состояние:
+    // его catch и finally проверяют поколение перед записью.
     generation += 1;
     controller.abort();
     uploading.value = false;

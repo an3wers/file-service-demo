@@ -76,13 +76,13 @@ const envSchema = z.object({
     .positive()
     .max(604800)
     .default(300),
-  // Zero is allowed and means "settle everything pending right now": it is how
-  // the cleanup pass is exercised without waiting out a real TTL.
+  // Ноль означает «сверить все ожидающие загрузки прямо сейчас» и позволяет
+  // проверять уборку без ожидания полного TTL.
   PENDING_TTL_HOURS: z.coerce.number().int().nonnegative().default(24),
 
-  // A part below 5 MiB is rejected by S3 itself, so the floor is the protocol's
-  // and not a preference. The ceilings are ours: they keep a bad `.env` from
-  // turning into an S3 error on the first upload instead of a startup failure.
+  // S3 отклоняет части меньше 5 МиБ: нижняя граница задана протоколом.
+  // Верхние границы задаём сами, чтобы неверный `.env` приводил к ошибке
+  // при запуске, а не к отказу S3 во время первой загрузки.
   MULTIPART_THRESHOLD_MB: z.coerce.number().int().min(5).default(100),
   MULTIPART_PART_SIZE_MB: z.coerce.number().int().min(5).default(16),
   MULTIPART_MAX_PARTS: z.coerce
@@ -97,8 +97,8 @@ const envSchema = z.object({
     .positive()
     .max(1000)
     .default(100),
-  // Not a technical ceiling: past ~6 the browser's per-origin connection limit
-  // queues the rest anyway, and every extra slot is another part held in memory.
+  // При значениях выше примерно 6 браузер всё равно ставит запросы в очередь
+  // из-за лимита соединений с одним источником; каждый слот также занимает память под часть.
   MULTIPART_MAX_CONCURRENCY: z.coerce.number().int().min(1).max(16).default(4),
   MULTIPART_MAX_ACTIVE_UPLOADS: z.coerce.number().int().positive().default(10),
   PRESIGN_PART_TTL_SECONDS: z.coerce
@@ -184,7 +184,7 @@ export const config = {
     endpoint: env.S3_ENDPOINT,
     region: env.S3_REGION,
     bucket: env.S3_BUCKET_NAME,
-    // Cloud.ru expects the access key id as `<tenant_id>:<key_id>`.
+    // Cloud.ru ожидает идентификатор ключа доступа в формате `<tenant_id>:<key_id>`.
     accessKeyId: `${env.S3_TENANT_ID}:${env.KEY_ID}`,
     secretAccessKey: env.KEY_SECRET,
   },

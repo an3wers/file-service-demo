@@ -53,6 +53,8 @@ async function terminate(
   uploadId: string | undefined,
   execute: Execute,
 ): Promise<void> {
+  // Окончательная неудача не должна перезаписать уже сохранённую отмену
+  // или удаление: поздно найденный объект всё равно подлежит очистке.
   await execute(
     `insert into upload_terminations (operation_id, reason, upload_id) values ($1, $2, $3)
      on conflict (operation_id) do update set
@@ -230,6 +232,8 @@ export function createSqlUploadOperations({
             broken = error instanceof Error ? error : new Error(String(error));
           }
         }
+        // Если снять блокировку не удалось, соединение уничтожается:
+        // возвращать его в пул с удерживаемой блокировкой нельзя.
         client.release(broken);
       }
     },

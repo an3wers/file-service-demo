@@ -29,15 +29,14 @@ import type {
 const MIB = 1024 * 1024;
 
 /**
- * Hard limits of the multipart protocol itself, the same in every S3-compatible
- * store that speaks it. Not configurable, and not a deployment's policy: a plan
- * that breaks these is rejected by storage rather than by us. Vendor knowledge,
- * so it lives here rather than in the domain — the assembly clamps a
- * deployment's config with it before handing the result to the domain as
- * `PlanLimits`.
+ * Обязательные пределы протокола составной загрузки одинаковы
+ * для совместимых хранилищ и не настраиваются политикой развёртывания:
+ * хранилище отклонит нарушающий их план. Это знание поставщика остаётся
+ * у адаптера. При сборке оно ограничивает конфигурацию, а домен получает
+ * результат в виде `PlanLimits`.
  */
 export const PROTOCOL_LIMITS = {
-  /** Every part except the last one. The last may be any size at all. */
+  /** Нижняя граница для всех частей, кроме последней, чей размер может быть любым. */
   minPartSize: 5 * MIB,
   maxPartSize: 5 * 1024 * MIB,
   maxParts: 10_000,
@@ -45,12 +44,11 @@ export const PROTOCOL_LIMITS = {
 } as const;
 
 /**
- * The adapter that talks to S3. The bucket is fixed at construction: it is the
- * one fact every call would otherwise have to carry, and nothing in this service
- * writes to a second one.
+ * Адаптер S3 фиксирует бакет при создании: все вызовы работают с одним
+ * бакетом, поэтому передавать его каждый раз не требуется.
  *
- * Object keys carry the file id (`<directory>/<uuid>.<ext>`), so a key in the
- * log context is enough to trace a failure back to its row.
+ * Объектный ключ содержит идентификатор файла (`<directory>/<uuid>.<ext>`),
+ * поэтому ключа в журнале достаточно для поиска строки метаданных.
  */
 export function createS3ObjectStore(
   client: S3Client,
@@ -62,7 +60,7 @@ export function createS3ObjectStore(
     context: Record<string, unknown> = {},
   ) => storageError(error, { operation, bucket, ...context });
 
-  /** Parts S3 cannot identify are dropped: completing with one would corrupt the object. */
+  /** Части без данных для идентификации отбрасываются, чтобы не повредить сборку объекта. */
   const toUploadedPart = (part: {
     PartNumber?: number | undefined;
     ETag?: string | undefined;
@@ -133,7 +131,7 @@ export function createS3ObjectStore(
       try {
         return await getSignedUrl(
           client,
-          // The signature covers Content-Type, so the client must send it verbatim.
+          // Подпись включает Content-Type, поэтому клиент должен передать его без изменений.
           new PutObjectCommand({
             Bucket: bucket,
             Key: key,
@@ -187,10 +185,10 @@ export function createS3ObjectStore(
     },
 
     /**
-     * Deliberately bare: only what identifies the part goes into the signature.
-     * Content-Type belongs to the object and is fixed by CreateMultipartUpload;
-     * anything else signed here would have to be reproduced by the browser byte
-     * for byte.
+     * В подпись включается только то, что идентифицирует часть.
+     * Content-Type относится ко всему объекту и задаётся в CreateMultipartUpload.
+     * Любые дополнительные подписанные данные браузеру пришлось бы
+     * воспроизводить байт в байт.
      */
     async signPart(key, uploadId, partNumber, options): Promise<string> {
       try {
@@ -210,8 +208,8 @@ export function createS3ObjectStore(
     },
 
     /**
-     * Paginated on purpose: a page carries at most 1000 parts, and an upload is
-     * allowed 10 000 of them.
+     * Части читаются постранично: одна страница содержит не больше 1000 частей,
+     * а загрузка может состоять из 10 000.
      */
     async listParts(key, uploadId): Promise<UploadedPart[] | null> {
       const parts: UploadedPart[] = [];
@@ -237,8 +235,8 @@ export function createS3ObjectStore(
             }
           }
 
-          // S3 returns parts in ascending PartNumber order and pages continue
-          // that order, so the concatenation is already sorted for completion.
+          // S3 возвращает части по возрастанию PartNumber и сохраняет этот порядок
+          // между страницами, поэтому объединённый список уже готов для сборки.
           marker = page.IsTruncated ? page.NextPartNumberMarker : undefined;
         } while (marker);
       } catch (error) {
@@ -260,7 +258,7 @@ export function createS3ObjectStore(
             Key: key,
             UploadId: uploadId,
             MultipartUpload: {
-              // ETags go back exactly as S3 gave them, quotes included.
+              // ETag передаётся обратно без изменений, включая кавычки.
               Parts: parts.map((part) => ({
                 PartNumber: part.partNumber,
                 ETag: part.etag,
@@ -272,8 +270,8 @@ export function createS3ObjectStore(
         return "assembled";
       } catch (error) {
         if (isS3NoSuchUpload(error)) {
-          // Two confirmations raced. S3 settled it; the loser reads the winner's
-          // result off the object instead of failing.
+          // При гонке подтверждений S3 уже завершил сборку; проигравший читает
+          // результат по объекту вместо возврата ошибки.
           return "gone";
         }
 
@@ -292,7 +290,7 @@ export function createS3ObjectStore(
         );
       } catch (error) {
         if (isS3NoSuchUpload(error)) {
-          return; // Nothing left to cancel.
+          return; // Загрузка уже отсутствует; отменять нечего.
         }
 
         throw fail(error, "AbortMultipartUpload", { key, uploadId });

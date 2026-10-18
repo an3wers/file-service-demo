@@ -9,12 +9,12 @@ const MAX_NAME_LENGTH = 255;
 const CONTROL_CHARS = /[\u0000-\u001f\u007f]/;
 
 /**
- * Turns a client-supplied directory into a safe object key prefix.
+ * Превращает каталог от клиента в безопасный префикс объектного ключа.
  *
- * The result never has leading, trailing or repeated slashes; the empty string
- * means "bucket root". This is the only place untrusted input becomes part of
- * an object key, so traversal segments are rejected outright rather than
- * silently rewritten.
+ * Результат не содержит начальных, конечных и повторяющихся слешей;
+ * пустая строка означает корень бакета. Здесь недоверенный ввод становится
+ * частью объектного ключа, поэтому сегменты обхода пути отклоняются,
+ * а не исправляются молча.
  */
 export function normalizeDirectory(input: string | undefined | null): string {
   if (!input) {
@@ -57,7 +57,7 @@ export function normalizeDirectory(input: string | undefined | null): string {
   return directory;
 }
 
-/** Strips any path the client may have sent along with the file name. */
+/** Убирает путь, который клиент мог передать вместе с именем файла. */
 export function sanitizeFileName(input: string): string {
   const name = input
     .normalize("NFC")
@@ -80,8 +80,8 @@ export function fileExtension(name: string): string {
 }
 
 /**
- * The key is derived before the bytes exist, which is what makes the presigned
- * flow possible: the server hands out a URL for a key it has already recorded.
+ * Объектный ключ задаётся до появления байтов, чтобы сервер мог выдать
+ * подписанную ссылку на ключ, уже сохранённый в строке метаданных.
  */
 export function buildObjectKey(
   directory: string,

@@ -1,8 +1,8 @@
 /**
- * busboy (inside multer) decodes non-extended `filename` parameters as latin1,
- * so a UTF-8 name arrives as mojibake. Re-reading those latin1 bytes as UTF-8
- * recovers the original, but only when the string really does look like raw
- * bytes — otherwise an already-correct name would be destroyed.
+ * busboy внутри multer декодирует обычный параметр `filename` как latin1,
+ * поэтому имя в UTF-8 искажается. Повторное чтение этих байтов как UTF-8
+ * восстанавливает имя только тогда, когда строка похожа на исходные байты;
+ * иначе можно испортить уже правильно декодированное имя.
  */
 export function decodeOriginalName(name: string): string {
   let hasHighByte = false;
@@ -11,7 +11,7 @@ export function decodeOriginalName(name: string): string {
     const code = char.codePointAt(0) ?? 0;
 
     if (code > 0xff) {
-      return name; // Contains real multi-byte characters: already decoded.
+      return name; // Строка уже содержит декодированные символы за пределами одного байта.
     }
 
     if (code > 0x7f) {
@@ -20,7 +20,7 @@ export function decodeOriginalName(name: string): string {
   }
 
   if (!hasHighByte) {
-    return name; // Pure ASCII: nothing to repair.
+    return name; // Только ASCII: исправлять нечего.
   }
 
   const bytes = Buffer.from(name, "latin1");

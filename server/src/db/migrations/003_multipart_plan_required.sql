@@ -1,11 +1,11 @@
--- A live multipart upload is a row that still carries an `upload_id`. Its plan
--- is written once, when the upload is opened, and read from then on: part
--- ranges handed to the client have to match the parts already stored, so a row
--- that lost its plan cannot be recovered by recomputing one.
+-- Живая составная загрузка сохраняет `upload_id`. Её план записывается
+-- один раз при открытии: диапазоны байтов, выданные клиенту, должны совпадать
+-- с уже сохранёнными частями, поэтому потерянный план нельзя восстановить
+-- повторным расчётом.
 --
--- Rows that predate this rule are settled rather than migrated: without a plan
--- nothing can finish them, and `db:cleanup` would have marked them failed at
--- their TTL anyway.
+-- Старые строки без плана переводятся в неудавшиеся: завершить такие загрузки
+-- невозможно, а `db:cleanup` всё равно пометил бы их неудавшимися
+-- после истечения TTL.
 update files
    set status = 'failed', upload_id = null, updated_at = now()
  where upload_id is not null

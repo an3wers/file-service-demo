@@ -9,7 +9,7 @@
       "@/*": ["./src/*"]
     },
 
-    /* Linting */
+    /* Проверка стиля кода */
     "noUnusedLocals": true,
     "noUnusedParameters": true,
     "erasableSyntaxOnly": true,

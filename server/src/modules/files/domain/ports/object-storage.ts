@@ -17,7 +17,7 @@ import type {
  * подходит под каждый, и сборка передаёт всем сценариям один экземпляр.
  */
 
-/** Storage as the files module handles it: put, confirm, sign, remove. */
+/** Объектное хранилище для загрузки, подтверждения, подписывания и удаления файлов. */
 export interface ObjectStoreForFiles {
   put(
     key: string,
@@ -25,17 +25,17 @@ export interface ObjectStoreForFiles {
     options: PutOptions,
   ): Promise<{ etag: string | null }>;
 
-  /** `null` when no object exists at the key. */
+  /** `null`, если по ключу нет объекта. */
   head(key: string): Promise<StoredObject | null>;
 
-  /** Succeeds whether or not an object was there. */
+  /** Завершается успешно, даже если объекта не было. */
   remove(key: string): Promise<void>;
 
   signUpload(key: string, options: SignUploadOptions): Promise<string>;
 
   signDownload(key: string, options: SignDownloadOptions): Promise<string>;
 
-  /** Cancels an upload in flight, for a delete that catches a live multipart file. */
+  /** Отменяет живую составную загрузку при удалении файла. */
   abortMultipart(key: string, uploadId: string): Promise<void>;
 }
 
@@ -53,7 +53,7 @@ export interface ObjectStoreForMultipart {
     options: { expiresIn: number },
   ): Promise<string>;
 
-  /** `null` when no upload answers to the id. */
+  /** `null`, если загрузки с таким идентификатором нет. */
   listParts(key: string, uploadId: string): Promise<UploadedPart[] | null>;
 
   completeMultipart(
@@ -65,7 +65,7 @@ export interface ObjectStoreForMultipart {
   abortMultipart(key: string, uploadId: string): Promise<void>;
 }
 
-/** Storage as the cleanup pass handles it: check, inspect, cancel, list. */
+/** Объектное хранилище для проверки, просмотра и отмены загрузок при уборке. */
 export interface ObjectStoreForCleanup {
   head(key: string): Promise<StoredObject | null>;
 
@@ -73,6 +73,6 @@ export interface ObjectStoreForCleanup {
 
   abortMultipart(key: string, uploadId: string): Promise<void>;
 
-  /** Every upload storage still holds open, for the orphan sweep. */
+  /** Все открытые загрузки в хранилище для поиска сирот. */
   listMultipartUploads(): Promise<MultipartUpload[]>;
 }

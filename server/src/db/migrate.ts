@@ -59,7 +59,7 @@ export async function migrate(): Promise<void> {
   }
 }
 
-// Run standalone via `npm run db:migrate`.
+// Отдельный запуск через `npm run db:migrate`.
 if (import.meta.url === `file://${process.argv[1]}`) {
   try {
     await migrate();

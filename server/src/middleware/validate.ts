@@ -15,10 +15,10 @@ export function validateBody(schema: ZodType): RequestHandler {
 }
 
 /**
- * Express 5 defines `req.query` as a getter-only property, so the parsed value
- * cannot be written back the way `validateBody` does with `req.body`. Validated
- * query strings and route params are published on `res.locals` instead, and
- * read back through the `validatedQuery` / `validatedParams` helpers below.
+ * В Express 5 у `req.query` есть только геттер, поэтому результат разбора нельзя
+ * записать обратно, как `validateBody` делает с `req.body`. Проверенные параметры
+ * запроса и маршрута сохраняются в `res.locals` и читаются через
+ * `validatedQuery` и `validatedParams`.
  */
 export function validateQuery(schema: ZodType): RequestHandler {
   return (req, res, next) => {

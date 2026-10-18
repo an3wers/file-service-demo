@@ -6,11 +6,11 @@ import globals from "globals";
 import prettier from "eslint-config-prettier/flat";
 
 /**
- * Vendor packages a module's domain and application layers must never reach
- * for directly — that knowledge belongs to the adapter that speaks the
- * protocol. Node builtins and this project's own shared kernel (`logger.ts`,
- * the `storage/` port types) are not in this list on purpose: see
- * `src/modules/files/README.md` for why the boundary stops there.
+ * Сторонние пакеты, к которым домен и прикладной слой модуля не должны обращаться
+ * напрямую: знание протокола принадлежит соответствующему адаптеру.
+ * Встроенные модули Node и общее ядро проекта (`logger.ts`, типы порта
+ * `storage/`) намеренно исключены: причины такой границы описаны
+ * в `src/modules/files/README.md`.
  */
 const VENDOR_PACKAGES = [
   "pg",
@@ -31,29 +31,26 @@ const HTTP_ERRORS = {
 const MODULES_DIR = fileURLToPath(new URL("src/modules/", import.meta.url));
 
 /**
- * One name per module under `src/modules`, read from disk rather than typed
- * out by hand: a rule that named `files` literally would stop protecting a
- * module the day a second one is added next to it, and nobody editing that
- * new module would think to come back here and extend a list.
+ * Имена модулей в `src/modules` читаются с диска. Если перечислить их вручную,
+ * правило перестанет защищать новые модули, а при их добавлении легко забыть
+ * обновить этот список.
  */
 const MODULE_NAMES = readdirSync(MODULES_DIR, { withFileTypes: true })
   .filter((entry) => entry.isDirectory())
   .map((entry) => entry.name);
 
 /**
- * "Outside the module, only index.ts is visible" has to name which module,
- * because the file being linted is not always the file doing the reaching —
- * a sibling module's own code is just as "outside" as `composition.ts` is.
- * `except` is the module whose own files are being linted: its cross-layer
- * imports are governed by the layer rules below, not by this one.
+ * Правило «снаружи модуля виден только index.ts» задаётся для каждого модуля:
+ * код соседнего модуля находится за его границей так же, как `composition.ts`.
+ * `except` — модуль, чьи файлы сейчас проверяются; его внутренние импорты
+ * между слоями проверяются правилами ниже.
  *
- * Known gap: `no-restricted-imports` matches the import specifier's text, not
- * where it resolves to. A file outside `modules/<name>/` that descends into it
- * (`composition.ts`'s `./modules/files/...`) spells the module's name and gets
- * caught; a sibling module reaching sideways-then-in via `..` (from
- * `modules/other/x.ts`, `../files/domain/...`) never spells it and slips past.
- * Closing this for real needs path-resolved zones (e.g. `eslint-plugin-import`'s
- * `no-restricted-paths`).
+ * Известное ограничение: `no-restricted-imports` проверяет текст пути импорта,
+ * а не файл, к которому он ведёт. Импорт `./modules/files/...` из
+ * `composition.ts` содержит имя модуля и обнаруживается. Импорт соседнего
+ * модуля через `..`, например `../files/domain/...` из `modules/other/x.ts`,
+ * может обойти проверку. Для устранения нужны правила с разрешением путей,
+ * например `no-restricted-paths` из `eslint-plugin-import`.
  */
 const boundaryPatterns = (except) =>
   MODULE_NAMES.filter((name) => name !== except).map((name) => ({
