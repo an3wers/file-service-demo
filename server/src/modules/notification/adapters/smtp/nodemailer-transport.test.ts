@@ -39,7 +39,11 @@ describe("SMTP-транспорт", () => {
   it("создаёт соединение только при отправке и возвращает идентификатор принятого письма", async () => {
     const transport = createSmtpTransport(settings);
     expect(nodemailer.createTransport).not.toHaveBeenCalled();
-    expect(await transport.send(message)).toEqual({ messageId: "smtp-id" });
+    expect(await transport.send(message)).toEqual({
+      messageId: "smtp-id",
+      accepted: [message.to],
+      rejected: [],
+    });
     expect(sendMail).toHaveBeenCalledExactlyOnceWith(message);
     expect(nodemailer.createTransport).toHaveBeenCalledWith({
       host: "smtp.example.com",
@@ -57,34 +61,6 @@ describe("SMTP-транспорт", () => {
       debug: false,
     });
   });
-  it("принимает адрес с нормализованным регистром домена SMTP", async () => {
-    sendMail.mockResolvedValue({
-      messageId: "smtp-id",
-      accepted: ["Recipient@example.com"],
-      rejected: [],
-    });
-    await expect(
-      createSmtpTransport(settings).send({
-        ...message,
-        to: "Recipient@EXAMPLE.COM",
-      }),
-    ).resolves.toEqual({ messageId: "smtp-id" });
-  });
-
-  it("отклоняет принятие адреса с другим регистром локальной части", async () => {
-    sendMail.mockResolvedValue({
-      messageId: "smtp-id",
-      accepted: ["recipient@example.com"],
-      rejected: [],
-    });
-    await expect(
-      createSmtpTransport(settings).send({
-        ...message,
-        to: "Recipient@EXAMPLE.COM",
-      }),
-    ).rejects.toMatchObject({ code: "EMAIL_SEND_FAILED" });
-  });
-
   it("требует STARTTLS и применяет отдельные таймауты без пула", async () => {
     await createSmtpTransport({
       ...settings,
@@ -109,35 +85,12 @@ describe("SMTP-транспорт", () => {
     );
   });
 
-  it.each([
-    { messageId: "smtp-id", accepted: [], rejected: [message.to] },
-    { messageId: "smtp-id", accepted: ["other@example.com"], rejected: [] },
-    { messageId: "smtp-id", accepted: [message.to], rejected: [message.to] },
-    { messageId: "", accepted: [message.to], rejected: [] },
-  ])(
-    "не считает идентификатор доказательством принятия получателя: %j",
-    async (result) => {
-      sendMail.mockResolvedValue(result);
-      await expect(
-        createSmtpTransport(settings).send(message),
-      ).rejects.toMatchObject({ code: "EMAIL_SEND_FAILED" });
-      expect(sendMail).toHaveBeenCalledTimes(1);
-    },
-  );
-
-  it.each(["ECONNECTION", "ETIMEDOUT", "EENVELOPE"])(
-    "скрывает отказ библиотеки без повтора: %s",
-    async (code) => {
-      sendMail.mockRejectedValue(
-        Object.assign(new Error("private SMTP detail"), { code }),
-      );
-      await expect(
-        createSmtpTransport(settings).send(message),
-      ).rejects.toMatchObject({
-        code: "EMAIL_SEND_FAILED",
-        message: "Email submission failed",
-      });
-      expect(sendMail).toHaveBeenCalledTimes(1);
-    },
-  );
+  it("передаёт исходную ошибку библиотеки без повтора", async () => {
+    const cause = new Error("SMTP failure");
+    sendMail.mockRejectedValue(cause);
+    await expect(createSmtpTransport(settings).send(message)).rejects.toBe(
+      cause,
+    );
+    expect(sendMail).toHaveBeenCalledTimes(1);
+  });
 });

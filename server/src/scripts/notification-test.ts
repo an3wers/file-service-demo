@@ -32,7 +32,10 @@ if (
       error instanceof NotificationError
         ? error
         : new NotificationError("EMAIL_SEND_FAILED");
-    logger.error({ err: failure, code: failure.code }, failure.message);
+    logger.error(
+      { err: new NotificationError(failure.code), code: failure.code },
+      failure.message,
+    );
     process.exitCode = 1;
   }
 }

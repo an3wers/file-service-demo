@@ -1,7 +1,10 @@
 import { createFilesPersistence } from "./modules/files/persistence.js";
 import type { FilesModuleDependencies } from "./modules/files/index.js";
 import type { AppDeps } from "./app.js";
-import { createNotification as assembleNotification } from "./modules/notification/index.js";
+import {
+  createNotification as assembleNotification,
+  createSmtpTransport,
+} from "./modules/notification/index.js";
 import type { Notification } from "./modules/notification/index.js";
 import type { Express } from "express";
 import { createApp } from "./app.js";
@@ -114,7 +117,16 @@ export function buildApp(
 }
 
 export function createNotification(): Notification {
-  return assembleNotification(config.notification);
+  const settings = config.notification;
+  return assembleNotification(
+    settings.enabled
+      ? {
+          enabled: true,
+          from: settings.from,
+          transport: createSmtpTransport(settings.smtp),
+        }
+      : settings,
+  );
 }
 
 export function createUploadMaintenance(): () => Promise<void> {

@@ -8,8 +8,11 @@ const messages: Record<NotificationErrorCode, string> = {
 };
 
 export class NotificationError extends Error {
-  constructor(readonly code: NotificationErrorCode) {
-    super(messages[code]);
+  constructor(
+    readonly code: NotificationErrorCode,
+    options?: ErrorOptions,
+  ) {
+    super(messages[code], options);
     this.name = "NotificationError";
   }
 }

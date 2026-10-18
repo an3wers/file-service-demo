@@ -1,48 +1,33 @@
-import { Socket, Server } from "node:net";
 import { inspect } from "node:util";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
+let createNotificationHarness: typeof import("../modules/notification/testing/notification.harness.js").createNotificationHarness;
 
-const { sendMail, info, error, warn } = vi.hoisted(() => ({
-  sendMail: vi.fn(),
+const { info, error, warn } = vi.hoisted(() => ({
   info: vi.fn(),
   error: vi.fn(),
   warn: vi.fn(),
 }));
 
-vi.mock("nodemailer", () => ({
-  default: { createTransport: () => ({ sendMail }) },
+let harness: ReturnType<typeof createNotificationHarness>;
+vi.mock("../composition.js", () => ({
+  createNotification: () => harness.notification,
 }));
 vi.mock("../logger.js", () => ({ logger: { info, error, warn } }));
 
 const originalArgv = process.argv;
 const originalExitCode = process.exitCode;
 
-beforeEach(() => {
+beforeEach(async () => {
   vi.resetModules();
   vi.clearAllMocks();
   process.exitCode = undefined;
   process.argv = ["node", "notification-test.ts"];
-  for (const [key, value] of Object.entries({
-    NOTIFICATION_ENABLED: "true",
-    SMTP_HOST: "smtp.example.com",
-    SMTP_PORT: "465",
-    SMTP_TLS_MODE: "implicit",
-    SMTP_USER: "sender@example.com",
-    SMTP_PASSWORD: "smtp-secret-value",
-    SMTP_FROM: "sender@example.com",
-  }))
-    vi.stubEnv(key, value);
-  vi.spyOn(Socket.prototype, "connect").mockImplementation(() => {
-    throw new Error("Unexpected network connection");
-  });
-  vi.spyOn(Server.prototype, "listen").mockImplementation(() => {
-    throw new Error("Unexpected server startup");
-  });
+  ({ createNotificationHarness } =
+    await import("../modules/notification/testing/notification.harness.js"));
+  harness = createNotificationHarness();
 });
 
 afterEach(() => {
-  expect(Socket.prototype.connect).not.toHaveBeenCalled();
-  expect(Server.prototype.listen).not.toHaveBeenCalled();
   process.argv = originalArgv;
   process.exitCode = originalExitCode;
 });
@@ -50,7 +35,7 @@ afterEach(() => {
 it("отклоняет команду без получателя до отправки", async () => {
   await import("./notification-test.js");
   expect(process.exitCode).toBe(1);
-  expect(sendMail).not.toHaveBeenCalled();
+  expect(harness.transport.messages).toEqual([]);
   expect(error).toHaveBeenCalledWith(
     { code: "INVALID_ARGUMENTS" },
     expect.stringContaining("--to"),
@@ -59,19 +44,21 @@ it("отклоняет команду без получателя до отпр�
 
 it("отправляет фиксированное письмо и сообщает принятие SMTP с кодом ноль", async () => {
   process.argv.push("--to", "recipient@example.com");
-  sendMail.mockResolvedValue({
+  harness.transport.result = {
     messageId: "message-123",
     accepted: ["recipient@example.com"],
     rejected: [],
-  });
+  };
   await import("./notification-test.js");
   expect(process.exitCode).toBe(0);
-  expect(sendMail).toHaveBeenCalledExactlyOnceWith({
-    from: "sender@example.com",
-    to: "recipient@example.com",
-    subject: "File service SMTP test",
-    text: "This is a test email from the file service.",
-  });
+  expect(harness.transport.messages).toEqual([
+    {
+      from: "sender@example.com",
+      to: "recipient@example.com",
+      subject: "File service SMTP test",
+      text: "This is a test email from the file service.",
+    },
+  ]);
   expect(info).toHaveBeenCalledWith(
     { code: "EMAIL_ACCEPTED" },
     expect.stringContaining("accepted by SMTP"),
@@ -79,11 +66,11 @@ it("отправляет фиксированное письмо и сообща
 });
 
 it("сообщает выключенные уведомления и завершает команду с ошибкой без отправки", async () => {
-  vi.stubEnv("NOTIFICATION_ENABLED", "false");
+  harness = createNotificationHarness({ enabled: false });
   process.argv.push("--to", "recipient@example.com");
   await import("./notification-test.js");
   expect(process.exitCode).toBe(1);
-  expect(sendMail).not.toHaveBeenCalled();
+  expect(harness.transport.messages).toEqual([]);
   expect(error).toHaveBeenCalledWith(
     {
       err: expect.objectContaining({ code: "NOTIFICATION_DISABLED" }),
@@ -95,12 +82,12 @@ it("сообщает выключенные уведомления и завер
 
 it("скрывает детали сбоя SMTP и завершает команду с ошибкой после одной попытки", async () => {
   process.argv.push("--to", "recipient@example.com");
-  sendMail.mockRejectedValue(
-    new Error("smtp-secret-value This is a test email from the file service."),
+  harness.transport.failure = new Error(
+    "smtp-secret-value This is a test email from the file service.",
   );
   await import("./notification-test.js");
   expect(process.exitCode).toBe(1);
-  expect(sendMail).toHaveBeenCalledTimes(1);
+  expect(harness.transport.messages).toHaveLength(1);
   expect(error).toHaveBeenCalledExactlyOnceWith(
     {
       err: expect.objectContaining({ code: "EMAIL_SEND_FAILED" }),
@@ -109,15 +96,6 @@ it("скрывает детали сбоя SMTP и завершает коман
     "Email submission failed",
   );
   expect(info).not.toHaveBeenCalled();
-  expect(warn).toHaveBeenCalledExactlyOnceWith(
-    {
-      err: expect.objectContaining({
-        code: "EMAIL_SEND_FAILED",
-        message: "Email submission failed",
-      }),
-    },
-    "Email submission failed",
-  );
   expect(inspect(warn.mock.calls)).not.toContain("smtp-secret-value");
   expect(inspect(warn.mock.calls)).not.toContain("This is a test email");
   expect(inspect(error.mock.calls)).not.toContain("smtp-secret-value");
@@ -126,11 +104,11 @@ it("скрывает детали сбоя SMTP и завершает коман
 
 it("не считает отказ получателя успешной отправкой при наличии идентификатора", async () => {
   process.argv.push("--to", "recipient@example.com");
-  sendMail.mockResolvedValue({
+  harness.transport.result = {
     messageId: "message-123",
     accepted: [],
     rejected: ["recipient@example.com"],
-  });
+  };
   await import("./notification-test.js");
   expect(process.exitCode).toBe(1);
   expect(error).toHaveBeenCalledWith(
@@ -147,16 +125,17 @@ it("ожидает принятия письма прежде чем сообщ�
   process.argv.push("--to", "recipient@example.com");
   type Result = { messageId: string; accepted: string[]; rejected: string[] };
   let accept!: (result: Result) => void;
-  sendMail.mockReturnValue(
-    new Promise<Result>((resolve) => {
+  harness.transport.send = async (message) => {
+    harness.transport.messages.push(message);
+    return new Promise<Result>((resolve) => {
       accept = resolve;
-    }),
-  );
+    });
+  };
   let completed = false;
   const command = import("./notification-test.js").then(() => {
     completed = true;
   });
-  await vi.waitFor(() => expect(sendMail).toHaveBeenCalledTimes(1));
+  await vi.waitFor(() => expect(harness.transport.messages).toHaveLength(1));
   expect(completed).toBe(false);
   expect(process.exitCode).toBeUndefined();
   expect(info).not.toHaveBeenCalled();
@@ -184,7 +163,7 @@ it.each([
     process.argv.push(...args);
     await import("./notification-test.js");
     expect(process.exitCode).toBe(1);
-    expect(sendMail).not.toHaveBeenCalled();
+    expect(harness.transport.messages).toEqual([]);
     expect(error).toHaveBeenCalledExactlyOnceWith(
       { code: "INVALID_ARGUMENTS" },
       "Usage: npm run notification:test -w server -- --to recipient@example.com",
