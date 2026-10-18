@@ -12,7 +12,7 @@
         └─────────────────────┼──────────────────────┘
                               │
                         application/
-                (uploads · multipart · catalog · cleanup)
+          (uploads · confirmation · catalog · cleanup)
                               │
                           domain/
               (stored-file · keys · upload-plan · upload-policy ·

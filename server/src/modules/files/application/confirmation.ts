@@ -6,13 +6,13 @@ import type {
   ObjectStoreForMultipart,
 } from "../domain/ports/object-storage.js";
 import type { UploadOperationSession } from "../domain/ports/upload-operations.js";
-import type { StoredFile } from "../domain/stored-file.js";
+import type { LiveMultipartUpload, StoredFile } from "../domain/stored-file.js";
 import {
   FileNotFoundError,
+  MultipartIncompleteError,
   MultipartNotFoundError,
   UploadNotCompletedError,
 } from "../domain/errors.js";
-import type { MultipartModule } from "./multipart.js";
 
 export type ConfirmationContext = Pick<
   UploadOperationSession,
@@ -48,20 +48,39 @@ export interface ConfirmationModule {
 export function createConfirmationModule({
   objectStore,
   fileRows,
-  multipart,
   clock,
   policy,
 }: {
   clock: Clock;
   policy: Pick<UploadPolicy, "pendingTtlHours">;
   objectStore: Pick<ObjectStoreForFiles, "head" | "abortMultipart" | "remove"> &
-    Pick<ObjectStoreForMultipart, "listParts">;
+    Pick<ObjectStoreForMultipart, "listParts" | "completeMultipart">;
   fileRows: Pick<
     FileRowsForFiles,
     "findFileById" | "isFileDeleted" | "markFileReady" | "failFileIfUnchanged"
   >;
-  multipart: Pick<MultipartModule, "completeMultipartUpload">;
 }): ConfirmationModule {
+  async function assemble({
+    key,
+    uploadId,
+    plan,
+  }: LiveMultipartUpload): Promise<void> {
+    // The part list comes from storage rather than from the client, so the
+    // result reflects the bytes that were actually stored.
+    const parts = await objectStore.listParts(key, uploadId);
+
+    if (!parts) return; // Already assembled, or never existed; the object decides.
+
+    if (parts.length !== plan.partCount) {
+      throw new MultipartIncompleteError(
+        "Not every part has been uploaded yet; upload the missing parts before completing",
+        { uploaded: parts.length, expected: plan.partCount },
+      );
+    }
+
+    await objectStore.completeMultipart(key, uploadId, parts);
+  }
+
   async function cleanup(
     session: ConfirmationContext,
   ): Promise<CleanupResult | null> {
@@ -124,8 +143,7 @@ export function createConfirmationModule({
     const expired =
       file.attemptStartedAt.getTime() <
       clock.now().getTime() - policy.pendingTtlHours * 60 * 60 * 1000;
-    if (complete && file.kind === "multipart")
-      await multipart.completeMultipartUpload(file);
+    if (complete && file.kind === "multipart") await assemble(file);
     const stored = await objectStore.head(file.key);
     if (context) {
       const cleaned = await cleanup(context);

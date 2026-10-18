@@ -32,17 +32,14 @@ function uploadRequest(size = THREE_PART_SIZE) {
 describe("multipart uploads", () => {
   describe("part ranges", () => {
     it("hands out the ranges of the plan recorded at start, with a shorter last part", async () => {
-      const { multipart, rowOf } = await buildHarnessWithDirectories({
+      const { files, startMultipart } = await buildHarnessWithDirectories({
         partUrlBatch: 3,
       });
 
-      const started = await multipart.createMultipartUpload(uploadRequest());
-      const { parts } = await multipart.createPartUrls(
-        await rowOf(started.id),
-        {
-          partNumbers: [1, 2, 3],
-        },
-      );
+      const started = await startMultipart(uploadRequest());
+      const { parts } = await files.getPartUrls(started.id, {
+        partNumbers: [1, 2, 3],
+      });
 
       expect(started).toMatchObject({
         size: THREE_PART_SIZE,
@@ -67,20 +64,20 @@ describe("multipart uploads", () => {
     });
 
     it("signs the first batch at the start, capped by the policy", async () => {
-      const { multipart } = await buildHarnessWithDirectories();
+      const { startMultipart } = await buildHarnessWithDirectories();
 
-      const started = await multipart.createMultipartUpload(uploadRequest());
+      const started = await startMultipart(uploadRequest());
 
       // Политика подписывает по две ссылки за раз, а план — на три части.
       expect(started.parts.map((part) => part.partNumber)).toEqual([1, 2]);
     });
 
     it("refuses a part number outside the plan", async () => {
-      const { multipart, rowOf } = await buildHarnessWithDirectories();
+      const { files, startMultipart } = await buildHarnessWithDirectories();
 
-      const started = await multipart.createMultipartUpload(uploadRequest());
-      const error = await thrownBy(async () =>
-        multipart.createPartUrls(await rowOf(started.id), { partNumbers: [4] }),
+      const started = await startMultipart(uploadRequest());
+      const error = await thrownBy(() =>
+        files.getPartUrls(started.id, { partNumbers: [4] }),
       );
 
       expect(error).toBeInstanceOf(InvalidPartNumberError);
@@ -88,13 +85,12 @@ describe("multipart uploads", () => {
     });
 
     it("refuses a batch longer than the policy allows, naming the limit", async () => {
-      const { multipart, rowOf, policy } = await buildHarnessWithDirectories();
+      const { files, startMultipart, policy } =
+        await buildHarnessWithDirectories();
 
-      const started = await multipart.createMultipartUpload(uploadRequest());
-      const error = await thrownBy(async () =>
-        multipart.createPartUrls(await rowOf(started.id), {
-          partNumbers: [1, 2, 3],
-        }),
+      const started = await startMultipart(uploadRequest());
+      const error = await thrownBy(() =>
+        files.getPartUrls(started.id, { partNumbers: [1, 2, 3] }),
       );
 
       expect(error).toBeInstanceOf(InvalidPartNumberError);
@@ -106,10 +102,10 @@ describe("multipart uploads", () => {
 
   describe("admission", () => {
     it("refuses over the concurrent-upload limit before anything opens in storage", async () => {
-      const { multipart, objectStore, fileRows } =
+      const { startMultipart, objectStore, fileRows } =
         await buildHarnessWithDirectories({ maxActiveUploads: 1 });
 
-      await multipart.createMultipartUpload(uploadRequest());
+      await startMultipart(uploadRequest());
 
       // Открытие загрузки заминировано: если бы лимит проверялся после него,
       // наружу вышла бы эта ошибка, а не отказ по лимиту. Конечное состояние
@@ -119,9 +115,7 @@ describe("multipart uploads", () => {
         new Error("storage was reached first"),
       );
 
-      const error = await thrownBy(() =>
-        multipart.createMultipartUpload(uploadRequest()),
-      );
+      const error = await thrownBy(() => startMultipart(uploadRequest()));
 
       expect(error).toBeInstanceOf(TooManyActiveUploadsError);
       expect(error).toMatchObject({ details: { active: 1, limit: 1 } });
@@ -132,13 +126,11 @@ describe("multipart uploads", () => {
 
   describe("cleaning up after a failed start", () => {
     it("aborts the upload it opened when the first batch of URLs cannot be signed", async () => {
-      const { multipart, objectStore, rowCount } =
+      const { startMultipart, objectStore, rowCount } =
         await buildHarnessWithDirectories();
 
       objectStore.failNext("signPart", new Error("signing is down"));
-      const error = await thrownBy(() =>
-        multipart.createMultipartUpload(uploadRequest()),
-      );
+      const error = await thrownBy(() => startMultipart(uploadRequest()));
 
       expect(error.message).toBe("signing is down");
       // Ни открытой загрузки в хранилище, ни строки метаданных: следов нет.
@@ -149,18 +141,16 @@ describe("multipart uploads", () => {
 
   describe("status of an interrupted upload", () => {
     it("reports the part numbers and bytes storage actually holds", async () => {
-      const { multipart, objectStore, rowOf } =
+      const { files, startMultipart, objectStore } =
         await buildHarnessWithDirectories();
 
-      const started = await multipart.createMultipartUpload(uploadRequest());
+      const started = await startMultipart(uploadRequest());
 
       // Клиент успел отправить первую и третью части и оборвался.
       objectStore.uploadPart(started.uploadId, 1, Buffer.alloc(5 * MIB, 1));
       objectStore.uploadPart(started.uploadId, 3, Buffer.alloc(2 * MIB, 3));
 
-      expect(
-        await multipart.getMultipartStatus(await rowOf(started.id)),
-      ).toEqual({
+      expect(await files.getMultipartStatus(started.id)).toEqual({
         id: started.id,
         uploadId: started.uploadId,
         size: THREE_PART_SIZE,
@@ -172,29 +162,25 @@ describe("multipart uploads", () => {
     });
 
     it("reports nothing uploaded while storage holds no parts", async () => {
-      const { multipart, rowOf } = await buildHarnessWithDirectories();
+      const { files, startMultipart } = await buildHarnessWithDirectories();
 
-      const started = await multipart.createMultipartUpload(uploadRequest());
+      const started = await startMultipart(uploadRequest());
 
-      expect(
-        await multipart.getMultipartStatus(await rowOf(started.id)),
-      ).toMatchObject({
+      expect(await files.getMultipartStatus(started.id)).toMatchObject({
         uploadedParts: [],
         uploadedBytes: 0,
       });
     });
 
     it("conflicts when storage no longer knows the upload", async () => {
-      const { multipart, objectStore, rowOf } =
+      const { files, startMultipart, objectStore } =
         await buildHarnessWithDirectories();
 
-      const started = await multipart.createMultipartUpload(uploadRequest());
+      const started = await startMultipart(uploadRequest());
 
       await objectStore.abortMultipart(started.key, started.uploadId);
 
-      const error = await thrownBy(async () =>
-        multipart.getMultipartStatus(await rowOf(started.id)),
-      );
+      const error = await thrownBy(() => files.getMultipartStatus(started.id));
 
       expect(error).toBeInstanceOf(MultipartNotFoundError);
     });
@@ -202,15 +188,13 @@ describe("multipart uploads", () => {
 
   describe("завершение составной загрузки", () => {
     it("отказывает в завершении, пока в хранилище долетели не все части", async () => {
-      const { multipart, objectStore, rowOf } =
+      const { files, startMultipart, objectStore } =
         await buildHarnessWithDirectories();
 
-      const started = await multipart.createMultipartUpload(uploadRequest());
+      const started = await startMultipart(uploadRequest());
       objectStore.uploadPart(started.uploadId, 1, Buffer.alloc(5 * MIB, 1));
 
-      const error = await thrownBy(async () =>
-        multipart.completeMultipartUpload(await rowOf(started.id)),
-      );
+      const error = await thrownBy(() => files.completeUpload(started.id));
 
       expect(error).toBeInstanceOf(MultipartIncompleteError);
       expect(error).toMatchObject({ details: { uploaded: 1, expected: 3 } });
@@ -219,10 +203,10 @@ describe("multipart uploads", () => {
 
   describe("deleting a live multipart upload", () => {
     it("удаляет части и объект под зарезервированным ключом", async () => {
-      const { multipart, files, objectStore, fileRows } =
+      const { startMultipart, files, objectStore, fileRows } =
         await buildHarnessWithDirectories();
 
-      const started = await multipart.createMultipartUpload(uploadRequest());
+      const started = await startMultipart(uploadRequest());
 
       objectStore.uploadPart(started.uploadId, 1, Buffer.alloc(5 * MIB, 1));
       objectStore.uploadObject(started.key, Buffer.from("bystander"));

@@ -62,13 +62,11 @@ export interface FileRowsForFiles {
   ): Promise<{ items: StoredFile[]; total: number }>;
 }
 
-/** Rows as the multipart module handles them: admission, then reservation. */
+/** Строки для составной загрузки: допуск, затем резервирование. */
 export interface FileRowsForMultipart {
   reserveFile(input: InsertFileInput): Promise<StoredFile>;
   /** Slots taken by uploads that have neither completed nor been abandoned. */
   countActiveMultipart(): Promise<number>;
-
-  insertFile(input: InsertFileInput): Promise<StoredFile>;
 }
 
 /** Rows as the cleanup pass handles them: find what went stale, then settle it. */
@@ -84,7 +82,7 @@ export interface FileRowsForCleanup {
   findKnownUploadIds(ids: string[]): Promise<Set<string>>;
 }
 
-/** Everything the three modules together ask of the rows. */
+/** Всё, что сценарии вместе требуют от строк. */
 export type FileRows = FileRowsForFiles &
   FileRowsForMultipart &
   FileRowsForCleanup;

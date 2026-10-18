@@ -18,7 +18,6 @@ export type UploadOperationFileRows = Pick<
   FileRowsForFiles,
   | "findFileById"
   | "isFileDeleted"
-  | "insertFile"
   | "reserveFile"
   | "markFileReady"
   | "markFileFailed"

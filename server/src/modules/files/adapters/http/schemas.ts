@@ -28,9 +28,9 @@ export const presignUploadSchema = z.object({
 });
 
 export const partUrlsSchema = z.object({
-  // Shape only: a non-empty list of positive integers. How many may be asked
-  // for at once is this deployment's policy, and which numbers exist needs the
-  // stored plan, so both are checked in the multipart module.
+  // Только форма: сколько номеров можно запросить за раз, задаёт Политика
+  // загрузки, а какие номера существуют — сохранённый План, поэтому обе
+  // проверки выполняет модуль загрузок.
   partNumbers: z.array(z.coerce.number().int().positive()).min(1),
 });
 

@@ -79,7 +79,7 @@ it("уборка сохраняет подтверждение после реш
 
 it("сверяет готовые части без сборки и подтверждает составную загрузку только явно", async () => {
   const h = buildHarness();
-  const started = await h.multipart.createMultipartUpload({
+  const started = await h.startMultipart({
     filename: "a.bin",
     size: 12 * 1024 * 1024,
   });
@@ -105,7 +105,7 @@ it("сверяет готовые части без сборки и подтве
 
 it("восстанавливает историческую неудачу по фактическому размеру без выдуманного ожидания", async () => {
   const h = buildHarness();
-  const started = await h.multipart.createMultipartUpload({
+  const started = await h.startMultipart({
     filename: "a.bin",
     size: 12 * 1024 * 1024,
   });
@@ -161,7 +161,7 @@ it("сохранённое окончательное намерение зап�
 
 it("отказ проверки хранилища при просрочке сохраняет живую составную загрузку", async () => {
   const h = buildHarness();
-  const started = await h.multipart.createMultipartUpload({
+  const started = await h.startMultipart({
     filename: "a.bin",
     size: 12 * 1024 * 1024,
   });
@@ -445,7 +445,7 @@ it("подготовка повтора освобождает остановл�
 
 it("решение о просрочке не отменяет составную загрузку до конкурентного подтверждения", async () => {
   const h = buildHarness();
-  const started = await h.multipart.createMultipartUpload({
+  const started = await h.startMultipart({
     filename: "a.bin",
     size: 12 * 1024 * 1024,
   });
@@ -467,7 +467,7 @@ it("решение о просрочке не отменяет составну�
 
 it("сбой отмены после установленной просрочки оставляет части уборке сирот и допускает позднее подтверждение", async () => {
   const h = buildHarness();
-  const started = await h.multipart.createMultipartUpload({
+  const started = await h.startMultipart({
     filename: "a.bin",
     size: 12 * 1024 * 1024,
   });

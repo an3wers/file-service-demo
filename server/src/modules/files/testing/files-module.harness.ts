@@ -8,9 +8,12 @@ import { createMemoryObjectStore } from "../../../storage/memory-object-store.js
 import type { MemoryObjectStore } from "../../../storage/memory-object-store.js";
 import { createMemoryFileRows } from "./memory-file-rows.js";
 import type { MemoryFileRows } from "./memory-file-rows.js";
-import type { UploadsModule } from "../application/uploads.js";
+import type {
+  CreatePresignedUploadInput,
+  PresignMultipartResult,
+  UploadsModule,
+} from "../application/uploads.js";
 import type { CatalogModule } from "../application/catalog.js";
-import type { MultipartModule } from "../application/multipart.js";
 import type { CleanupModule } from "../application/cleanup.js";
 import type { UploadPolicy } from "../domain/upload-policy.js";
 import type { StoredFile } from "../domain/stored-file.js";
@@ -56,8 +59,9 @@ export interface Harness {
   dependencies: FilesModuleDependencies;
   /** The uploads and catalog scenarios merged behind one facade, as routes see it. */
   files: UploadsModule & CatalogModule;
-  /** The same multipart module the uploads module drives. */
-  multipart: MultipartModule;
+  startMultipart(
+    input: CreatePresignedUploadInput & { size: number },
+  ): Promise<PresignMultipartResult>;
   confirmation: ConfirmationModule;
   operations: UploadOperations;
   /** The real cleanup module, on the same storage and rows. */
@@ -94,14 +98,19 @@ export function buildHarness(
     policy,
     clock,
   };
-  const { multipart, confirmation, uploads, catalog, cleanup } =
+  const { confirmation, uploads, catalog, cleanup } =
     assembleFiles(dependencies);
 
   return {
     dependencies,
     confirmation,
     operations,
-    multipart,
+    async startMultipart(input) {
+      const started = await uploads.createPresignedUpload(input);
+      if (started.strategy !== "multipart")
+        throw new Error(`Expected a multipart upload, got ${started.strategy}`);
+      return started;
+    },
     files: { ...uploads, ...catalog },
     cleanup,
     objectStore,

@@ -1,7 +1,6 @@
 import { createConfirmationModule } from "./application/confirmation.js";
 import { createUploadsModule } from "./application/uploads.js";
 import { createCatalogModule } from "./application/catalog.js";
-import { createMultipartModule } from "./application/multipart.js";
 import { createCleanupModule } from "./application/cleanup.js";
 import { systemClock, type Clock } from "./domain/ports/clock.js";
 import type { FileRows } from "./domain/ports/file-rows.js";
@@ -32,13 +31,11 @@ export interface FilesModuleDependencies extends FilesPersistence {
 export function assembleFiles(dependencies: FilesModuleDependencies) {
   assertValidPlanLimits(dependencies.policy.planLimits);
   const deps = { ...dependencies, clock: dependencies.clock ?? systemClock };
-  const multipart = createMultipartModule(deps);
-  const confirmation = createConfirmationModule({ ...deps, multipart });
-  const uploads = createUploadsModule({ ...deps, multipart, confirmation });
+  const confirmation = createConfirmationModule(deps);
+  const uploads = createUploadsModule({ ...deps, confirmation });
   const catalog = createCatalogModule({ ...deps, confirmation });
   const cleanup = createCleanupModule({ ...deps, confirmation });
   return {
-    multipart,
     confirmation,
     uploads,
     catalog,

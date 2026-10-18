@@ -9,16 +9,12 @@ import type {
 } from "../../../../storage/object-store.js";
 
 /**
- * The seam between the modules that reason about files and object storage,
- * narrowed the same way the row interfaces in `file-rows.ts` are: each module
- * declares only the operations it actually calls, so its dependency reads as a
- * list of what it does to storage. The files module never opens a multipart
- * upload, cleanup never signs a URL, and a test double only has to answer for
- * the slice it stands in for.
+ * Шов между сценариями и объектным хранилищем, сужённый так же, как интерфейсы
+ * строк в `file-rows.ts`: сценарий берёт только те операции, которые зовёт.
+ * Уборка не подписывает ссылок, а тестовому двойнику достаточно отвечать за свой срез.
  *
- * There is still one adapter behind all three — `storage/`'s `ObjectStore` is
- * structurally wide enough to satisfy every interface here, so the assembly
- * hands the same instance to all three modules without adapting anything.
+ * Адаптер за всеми тремя интерфейсами один: общий `ObjectStore` структурно
+ * подходит под каждый, и сборка передаёт всем сценариям один экземпляр.
  */
 
 /** Storage as the files module handles it: put, confirm, sign, remove. */
@@ -43,7 +39,7 @@ export interface ObjectStoreForFiles {
   abortMultipart(key: string, uploadId: string): Promise<void>;
 }
 
-/** Storage as the multipart module handles it: open, sign, assemble, cancel. */
+/** Хранилище для составной загрузки: открыть, подписать, собрать, отменить. */
 export interface ObjectStoreForMultipart {
   beginMultipart(
     key: string,

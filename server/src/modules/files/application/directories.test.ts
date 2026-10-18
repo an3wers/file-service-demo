@@ -72,10 +72,10 @@ describe("постоянные каталоги", () => {
     );
   });
 
-  it.each(["server", "single", "multipart", "multipart-direct"])(
+  it.each(["server", "single", "multipart"])(
     "не загружает в неизвестный каталог способом %s",
     async (mode) => {
-      const { files, multipart, rowCount, objectStore } = buildHarness();
+      const { files, rowCount, objectStore } = buildHarness();
       const input = {
         filename: "a.txt",
         directory: "unknown",
@@ -88,12 +88,10 @@ describe("постоянные каталоги", () => {
               size: 1,
               bytes: Buffer.from("a"),
             })
-          : mode === "multipart-direct"
-            ? multipart.createMultipartUpload(input)
-            : files.createPresignedUpload({
-                ...input,
-                size: mode === "single" ? 1 : input.size,
-              });
+          : files.createPresignedUpload({
+              ...input,
+              size: mode === "single" ? 1 : input.size,
+            });
       await expect(run).rejects.toMatchObject({
         name: "DirectoryNotFoundError",
       });

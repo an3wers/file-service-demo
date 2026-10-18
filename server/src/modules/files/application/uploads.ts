@@ -7,6 +7,10 @@ import type {
   UploadOperationSession,
 } from "../domain/ports/upload-operations.js";
 import {
+  FileNotFoundError,
+  InvalidPartNumberError,
+  MultipartNotFoundError,
+  TooManyActiveUploadsError,
   UploadOperationConflictError,
   UploadOperationProcessingError,
 } from "../domain/errors.js";
@@ -14,32 +18,76 @@ import { normalizeDirectory } from "../domain/keys.js";
 import { requireDirectory } from "../domain/directories.js";
 import type { DirectoriesForUpload } from "../domain/ports/directories.js";
 import type { Clock } from "../domain/ports/clock.js";
-import { FileNotFoundError, MultipartNotFoundError } from "../domain/errors.js";
 import type { FileRowsForFiles } from "../domain/ports/file-rows.js";
-import type { ObjectStoreForFiles } from "../domain/ports/object-storage.js";
 import type {
-  MultipartModule,
-  MultipartStatus,
-  PartUrlsInput,
-  PartUrlsResult,
-  PresignMultipartResult,
-} from "./multipart.js";
+  ObjectStoreForFiles,
+  ObjectStoreForMultipart,
+} from "../domain/ports/object-storage.js";
 import { expiresAt, reserveKey } from "../domain/reservation.js";
-import { needsMultipart } from "../domain/upload-plan.js";
-import type { StoredFile } from "../domain/stored-file.js";
+import {
+  needsMultipart,
+  partRange,
+  planMultipart,
+} from "../domain/upload-plan.js";
+import { statusOf } from "../domain/stored-file.js";
+import type { LiveMultipartUpload, StoredFile } from "../domain/stored-file.js";
 import type { UploadPolicy } from "../domain/upload-policy.js";
 
 export interface UploadsModuleDeps {
   confirmation: ConfirmationModule;
   operations: UploadOperations;
-  objectStore: Pick<ObjectStoreForFiles, "put" | "signUpload">;
+  objectStore: Pick<ObjectStoreForFiles, "put" | "signUpload"> &
+    Pick<
+      ObjectStoreForMultipart,
+      "beginMultipart" | "signPart" | "listParts" | "abortMultipart"
+    >;
   directories: DirectoriesForUpload;
   fileRows: FileRowsForFiles;
   policy: UploadPolicy;
-  /** Multipart is a separate module this one drives, not a branch inside it. */
-  multipart: MultipartModule;
   /** The wall clock a reservation's `expiresAt` reads, shared with every other scenario. */
   clock: Clock;
+}
+
+export interface MultipartPartDto {
+  partNumber: number;
+  /** Byte range in the source file: the client slices exactly this. */
+  offset: number;
+  size: number;
+  url: string;
+}
+
+export interface PresignMultipartResult {
+  strategy: "multipart";
+  id: string;
+  key: string;
+  directory: string;
+  uploadId: string;
+  size: number;
+  partSize: number;
+  partCount: number;
+  /** How many parts the client may keep in flight; the server owns this number. */
+  maxConcurrency: number;
+  expiresAt: Date;
+  parts: MultipartPartDto[];
+}
+
+export interface PartUrlsInput {
+  partNumbers: number[];
+}
+
+export interface PartUrlsResult {
+  expiresAt: Date;
+  parts: MultipartPartDto[];
+}
+
+export interface MultipartStatus {
+  id: string;
+  uploadId: string;
+  size: number | null;
+  partSize: number | null;
+  partCount: number | null;
+  uploadedParts: number[];
+  uploadedBytes: number;
 }
 
 export interface UploadThroughServerInput {
@@ -115,6 +163,20 @@ function fileNotFound(id: string) {
   return new FileNotFoundError(`File ${id} was not found`);
 }
 
+/** A file is only a live multipart upload while it is in that state. */
+function requireLiveUpload(file: StoredFile): LiveMultipartUpload {
+  if (file.kind !== "multipart") {
+    throw new MultipartNotFoundError(
+      `File ${file.id} has no multipart upload in progress`,
+      {
+        status: statusOf(file),
+      },
+    );
+  }
+
+  return file;
+}
+
 export function createUploadsModule({
   confirmation,
   operations,
@@ -122,7 +184,6 @@ export function createUploadsModule({
   fileRows,
   directories,
   policy,
-  multipart,
   clock,
 }: UploadsModuleDeps): UploadsModule {
   async function requireFile(id: string): Promise<StoredFile> {
@@ -182,7 +243,7 @@ export function createUploadsModule({
 
   function pendingInput(
     record: UploadOperationRecord,
-    source: "server" | "presigned",
+    source: "server" | "presigned" | "multipart",
     status: "pending" | "failed" = "pending",
   ) {
     const { id, key, directory, originalName, extension, contentType } =
@@ -198,6 +259,144 @@ export function createUploadsModule({
       etag: null,
       status,
       uploadSource: source,
+    };
+  }
+
+  async function signParts(
+    {
+      key,
+      uploadId,
+      plan,
+    }: Pick<LiveMultipartUpload, "key" | "uploadId" | "plan">,
+    partNumbers: number[],
+  ): Promise<MultipartPartDto[]> {
+    // Signing is HMAC and never touches the network, so these run together; the
+    // batch cap is what keeps the burst off the event loop for too long.
+    return await Promise.all(
+      partNumbers.map(async (partNumber) => ({
+        partNumber,
+        ...partRange(plan, partNumber),
+        url: await objectStore.signPart(key, uploadId, partNumber, {
+          expiresIn: policy.presignPartTtlSeconds,
+        }),
+      })),
+    );
+  }
+
+  async function presignMultipart(
+    upload: Pick<
+      LiveMultipartUpload,
+      "id" | "key" | "directory" | "uploadId" | "plan"
+    >,
+  ): Promise<PresignMultipartResult> {
+    const { id, key, directory, uploadId, plan } = upload;
+    const parts = await signParts(
+      upload,
+      Array.from(
+        { length: Math.min(plan.partCount, policy.partUrlBatch) },
+        (_, index) => index + 1,
+      ),
+    );
+    return {
+      strategy: "multipart",
+      id,
+      key,
+      directory,
+      uploadId,
+      size: plan.size,
+      partSize: plan.partSize,
+      partCount: plan.partCount,
+      maxConcurrency: policy.maxConcurrency,
+      expiresAt: expiresAt(clock, policy.presignPartTtlSeconds),
+      parts,
+    };
+  }
+
+  async function startMultipart(
+    record: UploadOperationRecord,
+    size: number,
+    session: UploadOperationSession,
+  ): Promise<PresignMultipartResult> {
+    const { id, key, directory, contentType } = record.reservation;
+
+    // Both of these refuse before anything exists in storage to roll back.
+    const plan = planMultipart(size, policy.planLimits);
+    const active = await session.fileRows.countActiveMultipart();
+
+    if (active >= policy.maxActiveUploads) {
+      throw new TooManyActiveUploadsError(
+        "Too many multipart uploads are already in progress; finish or cancel one first",
+        { active, limit: policy.maxActiveUploads },
+      );
+    }
+
+    const uploadId = await objectStore.beginMultipart(key, { contentType });
+
+    try {
+      const result = await presignMultipart({
+        id,
+        key,
+        directory,
+        uploadId,
+        plan,
+      });
+      await session.fileRows.reserveFile({
+        ...pendingInput(record, "multipart"),
+        sizeBytes: plan.size,
+        uploadId,
+        partSize: plan.partSize,
+        partCount: plan.partCount,
+      });
+      return result;
+    } catch (error) {
+      // Unlike the single-PUT flow, opening the upload is a side effect:
+      // without this the bucket keeps an upload nobody can reach, and storage
+      // bills for the parts that land in it.
+      await objectStore
+        .abortMultipart(key, uploadId)
+        .catch((cleanupError: unknown) => {
+          logger.error(
+            { err: cleanupError, id, key, uploadId },
+            "Failed to abort multipart upload after its metadata row could not be written",
+          );
+        });
+
+      throw error;
+    }
+  }
+
+  async function signPartBatch(
+    file: StoredFile,
+    { partNumbers: requested }: PartUrlsInput,
+  ): Promise<PartUrlsResult> {
+    const upload = requireLiveUpload(file);
+    const { plan } = upload;
+
+    // Both bounds on a part number live here: how many may be asked for at
+    // once, and whether each one exists in this upload's plan. The cap is on
+    // the request as sent, before duplicates are dropped — it is what bounds
+    // the work of reading the request, not just the signing that follows.
+    if (requested.length > policy.partUrlBatch) {
+      throw new InvalidPartNumberError(
+        `At most ${policy.partUrlBatch} part URLs can be signed in one request`,
+        { maxBatch: policy.partUrlBatch },
+      );
+    }
+
+    const partNumbers = [...new Set(requested)].sort((a, b) => a - b);
+
+    for (const partNumber of partNumbers) {
+      if (partNumber > plan.partCount) {
+        throw new InvalidPartNumberError(
+          `Part ${partNumber} is outside the 1..${plan.partCount} range of this upload`,
+          { partCount: plan.partCount },
+        );
+      }
+    }
+
+    return {
+      expiresAt: expiresAt(clock, policy.presignPartTtlSeconds),
+      parts: await signParts(upload, partNumbers),
     };
   }
 
@@ -342,23 +541,17 @@ export function createUploadsModule({
             record.reservation.id,
           );
           if (file?.kind === "multipart") {
-            try {
-              const resumed = await multipart.resumeMultipartUpload(file);
+            if (await objectStore.listParts(file.key, file.uploadId)) {
+              const resumed = await presignMultipart(file);
               await session.markMultipartStopped(null);
               return resumed;
-            } catch (error) {
-              if (!(error instanceof MultipartNotFoundError)) throw error;
-              await session.fileRows.reserveFile(
-                pendingInput(record, "presigned", "failed"),
-              );
             }
+            await session.fileRows.reserveFile(
+              pendingInput(record, "presigned", "failed"),
+            );
           }
           if (needsMultipart(input.size, policy.multipartThresholdBytes)) {
-            const result = await multipart.createMultipartUpload(
-              { ...input, size: input.size! },
-              record.reservation,
-              session.fileRows,
-            );
+            const result = await startMultipart(record, input.size!, session);
             await requireOpen(session);
             return result;
           }
@@ -394,14 +587,31 @@ export function createUploadsModule({
           await requireOpen(session);
           const file = await session.fileRows.findFileById(id);
           if (!file) throw fileNotFound(id);
-          return await multipart.createPartUrls(file, input);
+          return await signPartBatch(file, input);
         });
-      return await multipart.createPartUrls(await requireFile(id), input);
+      return await signPartBatch(await requireFile(id), input);
     },
 
     /** Which parts storage already holds, so an interrupted upload can resume. */
     async getMultipartStatus(id) {
-      return await multipart.getMultipartStatus(await requireFile(id));
+      const { key, uploadId, plan } = requireLiveUpload(await requireFile(id));
+      const parts = await objectStore.listParts(key, uploadId);
+
+      if (!parts) {
+        throw new MultipartNotFoundError(
+          `Object storage has no multipart upload for file ${id}`,
+        );
+      }
+
+      return {
+        id,
+        uploadId,
+        size: plan.size,
+        partSize: plan.partSize,
+        partCount: plan.partCount,
+        uploadedParts: parts.map((part) => part.partNumber),
+        uploadedBytes: parts.reduce((total, part) => total + part.size, 0),
+      };
     },
 
     async completeUpload(id) {

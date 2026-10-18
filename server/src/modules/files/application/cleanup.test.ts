@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { describe, expect, it, vi } from "vitest";
 import type { MemoryObjectStore } from "../../../storage/memory-object-store.js";
 import type { UploadedPart } from "../../../storage/object-store.js";
@@ -82,10 +83,10 @@ describe("cleanup", () => {
     });
 
     it("recovers a multipart upload storage had already assembled", async () => {
-      const { multipart, cleanup, objectStore, rowOf, advance } =
+      const { startMultipart, cleanup, objectStore, rowOf, advance } =
         await buildHarnessWithDirectories();
 
-      const started = await multipart.createMultipartUpload(multipartUpload());
+      const started = await startMultipart(multipartUpload());
 
       const parts = uploadEveryPart(objectStore, started.uploadId);
 
@@ -118,10 +119,10 @@ describe("cleanup", () => {
     });
 
     it("marks a multipart upload failed when neither the upload nor an object is left", async () => {
-      const { multipart, cleanup, objectStore, rowOf, advance } =
+      const { startMultipart, cleanup, objectStore, rowOf, advance } =
         await buildHarnessWithDirectories();
 
-      const started = await multipart.createMultipartUpload(multipartUpload());
+      const started = await startMultipart(multipartUpload());
 
       // Загрузки в хранилище больше нет, а объект так и не собрался.
       await objectStore.abortMultipart(started.key, started.uploadId);
@@ -139,11 +140,31 @@ describe("cleanup", () => {
       expect(objectStore.objectKeys()).toEqual([]);
     });
 
-    it("leaves the upload alone when the claim is lost to whoever settled the row", async () => {
-      const { files, multipart, cleanup, objectStore, rowOf, advance } =
+    it("не отменяет загрузку строки без операции, подтверждённой между проверкой и захватом", async () => {
+      const { files, cleanup, objectStore, fileRows, rowOf, advance } =
         await buildHarnessWithDirectories();
 
-      const started = await multipart.createMultipartUpload(multipartUpload());
+      const id = randomUUID();
+      const key = `docs/${id}.bin`;
+      const uploadId = await objectStore.beginMultipart(key, {
+        contentType: "text/plain",
+      });
+      await fileRows.reserveFile({
+        id,
+        objectKey: key,
+        directory: "docs",
+        originalName: "report.bin",
+        extension: "bin",
+        contentType: "text/plain",
+        sizeBytes: THREE_PART_SIZE,
+        etag: null,
+        status: "pending",
+        uploadSource: "multipart",
+        uploadId,
+        partSize: 5 * MIB,
+        partCount: 3,
+      });
+      const started = { id, key, uploadId };
 
       uploadEveryPart(objectStore, started.uploadId);
       advance(PAST_TTL);
@@ -169,10 +190,10 @@ describe("cleanup", () => {
     });
 
     it("aborts an abandoned multipart upload and fails its row", async () => {
-      const { multipart, cleanup, objectStore, rowOf, advance } =
+      const { startMultipart, cleanup, objectStore, rowOf, advance } =
         await buildHarnessWithDirectories();
 
-      const started = await multipart.createMultipartUpload(multipartUpload());
+      const started = await startMultipart(multipartUpload());
 
       objectStore.uploadPart(started.uploadId, 1, Buffer.alloc(5 * MIB, 1));
       advance(PAST_TTL);
@@ -193,13 +214,13 @@ describe("cleanup", () => {
 
   describe("orphan sweep", () => {
     it("aborts uploads no row points at, sparing known and fresh ones", async () => {
-      const { multipart, cleanup, objectStore, advance } =
+      const { startMultipart, cleanup, objectStore, advance } =
         await buildHarnessWithDirectories();
 
       const orphan = await objectStore.beginMultipart("docs/orphan.bin", {
         contentType: "text/plain",
       });
-      const known = await multipart.createMultipartUpload(multipartUpload());
+      const known = await startMultipart(multipartUpload());
 
       advance(PAST_TTL);
 
