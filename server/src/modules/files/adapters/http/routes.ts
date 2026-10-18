@@ -36,16 +36,17 @@ export interface FilesRouterDeps {
   uploads: UploadsModule;
   catalog: CatalogModule;
   /**
-   * The multipart/form-data parser for the one uploaded field, already carrying
-   * this deployment's size limit.
+   * Парсер multipart/form-data для единственного загружаемого поля, уже несущий
+   * ограничение размера, заданное в этом развёртывании.
    */
   uploadSingleFile: RequestHandler;
 }
 
 /**
- * The routes get modules that are already built. Nothing here knows which
- * object store or which database is behind them, which is what keeps a route
- * about HTTP: validate, call one method, choose a status.
+ * Роуты получают уже собранные модули. Здесь ничего не знают о том, какое
+ * объектное хранилище или какая база данных стоят за ними, — именно это
+ * позволяет роуту оставаться про HTTP: провалидировать, вызвать один метод,
+ * выбрать статус.
  */
 export function createFilesRouter({
   uploads,
@@ -54,7 +55,7 @@ export function createFilesRouter({
 }: FilesRouterDeps): Router {
   const filesRouter = Router();
 
-  // Upload proxied through the server (multipart/form-data).
+  // Загрузка через сервер как прокси (multipart/form-data).
   filesRouter.post(
     "/",
     uploadSingleFile,
@@ -80,6 +81,8 @@ export function createFilesRouter({
     },
   );
 
+  // Чтение сохранённого исхода операции; опрос не трогает хранилище, поэтому
+  // клиент может узнать судьбу прерванной загрузки, не передавая данные заново.
   filesRouter.get(
     "/upload-operations/:id",
     validateParams(idParamsSchema),
@@ -94,6 +97,8 @@ export function createFilesRouter({
     },
   );
 
+  // Сверить операцию с объектным хранилищем: после обрыва связи клиент просит
+  // сервер установить фактический исход, а не угадывать его по таймауту.
   filesRouter.post(
     "/upload-operations/:id/resolve",
     validateParams(idParamsSchema),
@@ -112,6 +117,8 @@ export function createFilesRouter({
     },
   );
 
+  // Клиент знает, что загрузка не удалась: фиксируем провал и убираем остатки,
+  // чтобы строка брони и занятое место в хранилище не оставались за операцией.
   filesRouter.post(
     "/upload-operations/:id/fail",
     validateParams(idParamsSchema),
@@ -126,6 +133,8 @@ export function createFilesRouter({
     },
   );
 
+  // Пользователь отказался от загрузки: снимаем операцию и удаляем уже
+  // принятые данные, освобождая квоту.
   filesRouter.post(
     "/upload-operations/:id/cancel",
     validateParams(idParamsSchema),
@@ -140,8 +149,9 @@ export function createFilesRouter({
     },
   );
 
-  // Step 1 of the direct-to-storage flow: reserve the key and hand out a signed URL —
-  // or, past the multipart threshold, a split plan with the first batch of them.
+  // Шаг 1 сценария прямой загрузки в хранилище: зарезервировать ключ и выдать
+  // подписанный URL — или, если превышен порог multipart, план разбиения
+  // с первой партией таких URL.
   filesRouter.post(
     "/presign-upload",
     validateBody(presignUploadSchema),
@@ -163,7 +173,7 @@ export function createFilesRouter({
     },
   );
 
-  // A further batch of part URLs, and the way an expired one gets reissued.
+  // Очередная партия URL частей, а также способ перевыпуска истёкшего.
   filesRouter.post(
     "/:id/multipart/part-urls",
     validateParams(idParamsSchema),
@@ -177,8 +187,8 @@ export function createFilesRouter({
     },
   );
 
-  // What storage already holds, so an interrupted upload can pick up where it
-  // stopped.
+  // Что уже принято хранилищем, чтобы прерванная загрузка могла продолжиться
+  // с места остановки.
   filesRouter.get(
     "/:id/multipart",
     validateParams(idParamsSchema),
@@ -189,6 +199,8 @@ export function createFilesRouter({
     },
   );
 
+  // Страница каталога: фильтр, поиск, сортировка и пагинация считаются на
+  // сервере, чтобы клиент получил список сразу с метаданными страницы.
   filesRouter.get(
     "/",
     validateQuery(listFilesQuerySchema),
@@ -208,6 +220,8 @@ export function createFilesRouter({
     },
   );
 
+  // Карточка одного файла; ссылку подписываем только по флагу withUrl, чтобы
+  // не тратить её на запрос, которому нужны одни метаданные.
   filesRouter.get(
     "/:id",
     validateParams(idParamsSchema),
@@ -221,10 +235,10 @@ export function createFilesRouter({
     },
   );
 
-  // Step 2 of the direct-to-storage flow: verify against storage and record the
-  // real size.
-  // Multipart uploads are assembled here too, so the client confirms the same way
-  // whichever strategy it used.
+  // Шаг 2 сценария прямой загрузки в хранилище: сверить с хранилищем и записать
+  // фактический размер.
+  // Multipart-загрузки собираются здесь же, чтобы клиент подтверждал одинаково
+  // независимо от выбранной стратегии.
   filesRouter.post(
     "/:id/complete",
     validateParams(idParamsSchema),
@@ -235,6 +249,8 @@ export function createFilesRouter({
     },
   );
 
+  // Короткоживущая подписанная ссылка: сам объект в хранилище остаётся
+  // закрытым, а способ отдачи (attachment/inline) и срок выбирает клиент.
   filesRouter.get(
     "/:id/download-url",
     validateParams(idParamsSchema),
@@ -247,6 +263,8 @@ export function createFilesRouter({
     },
   );
 
+  // Удаление файла — 204: после него возвращать нечего, а признак успеха несёт
+  // сам код ответа.
   filesRouter.delete(
     "/:id",
     validateParams(idParamsSchema),
@@ -264,6 +282,8 @@ export function createFilesRouter({
 export function createDirectoriesRouter(catalog: CatalogModule): Router {
   const directoriesRouter = Router();
 
+  // Подкаталоги одного уровня: нужны для навигации, поэтому отдаём только
+  // детей запрошенного родителя, без рекурсии.
   directoriesRouter.get(
     "/",
     validateQuery(directoriesQuerySchema),
@@ -274,6 +294,8 @@ export function createDirectoriesRouter(catalog: CatalogModule): Router {
     },
   );
 
+  // Создание каталога внутри существующего родителя; 201, потому что появляется
+  // новый ресурс со своим адресом.
   directoriesRouter.post(
     "/",
     validateBody(createDirectorySchema),
