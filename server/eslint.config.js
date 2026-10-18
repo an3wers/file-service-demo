@@ -100,6 +100,18 @@ const moduleImportRules = MODULE_NAMES.flatMap((name) => [
       VENDOR_PACKAGES,
     ),
   },
+  {
+    files: [`src/modules/${name}/adapters/persistence/**/*.ts`],
+    ignores: [`src/modules/${name}/adapters/persistence/**/*.test.ts`],
+    rules: restrictImports([
+      ...boundaryPatterns(name),
+      {
+        group: ["./sql-*"],
+        message:
+          "Адаптер хранения не знает другой адаптер: их связывает persistence.ts",
+      },
+    ]),
+  },
 ]);
 
 export default tseslint.config(

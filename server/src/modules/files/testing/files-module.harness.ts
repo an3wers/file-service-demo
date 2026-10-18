@@ -83,13 +83,18 @@ export interface Harness {
 
 export function buildHarness(
   policyOverrides: Partial<UploadPolicy> = {},
+  { lockWaitMs }: { lockWaitMs?: number } = {},
 ): Harness {
   const clock = createTestClock();
   const objectStore = createMemoryObjectStore({ clock });
   const fileRows = createMemoryFileRows({ clock, bucket: BUCKET });
   const policy = testPolicy(policyOverrides);
   const directories = createMemoryDirectories(fileRows);
-  const operations = createMemoryUploadOperations(fileRows);
+  const operations = createMemoryUploadOperations(
+    fileRows,
+    directories,
+    lockWaitMs === undefined ? {} : { lockWaitMs },
+  );
   const dependencies = {
     objectStore,
     fileRows,

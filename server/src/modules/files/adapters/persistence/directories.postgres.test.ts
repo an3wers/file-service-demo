@@ -1,4 +1,4 @@
-import { createSqlUploadOperations } from "./sql-upload-operations.js";
+import { createFilesPersistence } from "../../persistence.js";
 import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -91,7 +91,7 @@ describe("постоянные каталоги на PostgreSQL", () => {
     const harness = buildHarness();
     const catalog = createCatalogModule({
       confirmation: harness.confirmation,
-      operations: createSqlUploadOperations("test"),
+      operations: createFilesPersistence("test").operations,
       objectStore: harness.objectStore,
       fileRows: createSqlFileRows("test"),
       directories: createSqlDirectories(),

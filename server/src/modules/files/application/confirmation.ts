@@ -6,6 +6,7 @@ import type {
   ObjectStoreForMultipart,
 } from "../domain/ports/object-storage.js";
 import type { UploadOperationSession } from "../domain/ports/upload-operations.js";
+import { attemptDeadline } from "../domain/stored-file.js";
 import type { LiveMultipartUpload, StoredFile } from "../domain/stored-file.js";
 import {
   FileNotFoundError,
@@ -140,9 +141,7 @@ export function createConfirmationModule({
     if (!file)
       return { status: (await rows.isFileDeleted(id)) ? "deleted" : "failed" };
     if (file.kind === "ready") return { status: "succeeded", file };
-    const expired =
-      file.attemptStartedAt.getTime() <
-      clock.now().getTime() - policy.pendingTtlHours * 60 * 60 * 1000;
+    const expired = attemptDeadline(file, policy.pendingTtlHours) < clock.now();
     if (complete && file.kind === "multipart") await assemble(file);
     const stored = await objectStore.head(file.key);
     if (context) {

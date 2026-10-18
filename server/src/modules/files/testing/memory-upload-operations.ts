@@ -5,11 +5,14 @@ import type {
   UploadOperations,
   UploadOperationRecord,
 } from "../domain/ports/upload-operations.js";
+import type { DirectoriesForUpload } from "../domain/ports/directories.js";
 
 export function createMemoryUploadOperations(
   fileRows: UploadOperationFileRows & {
     setTerminationGuard?: (guard: (id: string) => boolean) => void;
   },
+  directories: DirectoriesForUpload,
+  { lockWaitMs = 5_000 }: { lockWaitMs?: number } = {},
 ): UploadOperations {
   const records = new Map<string, UploadOperationRecord>();
   const active = new Map<string, Promise<void>>();
@@ -31,6 +34,22 @@ export function createMemoryUploadOperations(
       uploadId: uploadId ?? previous?.uploadId ?? null,
     });
   }
+  async function waitForRelease(id: string, wait: boolean): Promise<boolean> {
+    const deadline = Date.now() + lockWaitMs;
+    while (active.has(id)) {
+      const left = deadline - Date.now();
+      if (!wait || left <= 0) return false;
+      let timer!: ReturnType<typeof setTimeout>;
+      await Promise.race([
+        active.get(id),
+        new Promise<void>((resolve) => {
+          timer = setTimeout(resolve, left);
+        }),
+      ]);
+      clearTimeout(timer);
+    }
+    return true;
+  }
   return {
     async read(id) {
       return {
@@ -49,11 +68,8 @@ export function createMemoryUploadOperations(
         )?.[0] ?? null
       );
     },
-    async exclusive(id, run, wait = false) {
-      while (active.has(id)) {
-        if (!wait) return null;
-        await active.get(id);
-      }
+    async exclusive(id, run, { wait = false } = {}) {
+      if (!(await waitForRelease(id, wait))) return { busy: true };
       let release!: () => void;
       active.set(
         id,
@@ -62,8 +78,9 @@ export function createMemoryUploadOperations(
         }),
       );
       try {
-        return await run({
+        const value = await run({
           fileRows,
+          directories,
           async termination() {
             return terminations.get(id) ?? null;
           },
@@ -84,6 +101,7 @@ export function createMemoryUploadOperations(
             records.set(id, record);
           },
         });
+        return { busy: false, value };
       } finally {
         active.delete(id);
         release();

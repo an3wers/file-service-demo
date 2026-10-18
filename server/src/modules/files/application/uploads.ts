@@ -2,6 +2,7 @@ import type { ConfirmationModule } from "./confirmation.js";
 import { logger } from "../../../logger.js";
 import { randomUUID } from "node:crypto";
 import type {
+  ExclusiveOptions,
   UploadOperations,
   UploadOperationRecord,
   UploadOperationSession,
@@ -16,7 +17,6 @@ import {
 } from "../domain/errors.js";
 import { normalizeDirectory } from "../domain/keys.js";
 import { requireDirectory } from "../domain/directories.js";
-import type { DirectoriesForUpload } from "../domain/ports/directories.js";
 import type { Clock } from "../domain/ports/clock.js";
 import type { FileRowsForFiles } from "../domain/ports/file-rows.js";
 import type {
@@ -29,7 +29,7 @@ import {
   partRange,
   planMultipart,
 } from "../domain/upload-plan.js";
-import { statusOf } from "../domain/stored-file.js";
+import { attemptDeadline, statusOf } from "../domain/stored-file.js";
 import type { LiveMultipartUpload, StoredFile } from "../domain/stored-file.js";
 import type { UploadPolicy } from "../domain/upload-policy.js";
 
@@ -41,7 +41,6 @@ export interface UploadsModuleDeps {
       ObjectStoreForMultipart,
       "beginMultipart" | "signPart" | "listParts" | "abortMultipart"
     >;
-  directories: DirectoriesForUpload;
   fileRows: FileRowsForFiles;
   policy: UploadPolicy;
   /** The wall clock a reservation's `expiresAt` reads, shared with every other scenario. */
@@ -182,7 +181,6 @@ export function createUploadsModule({
   operations,
   objectStore,
   fileRows,
-  directories,
   policy,
   clock,
 }: UploadsModuleDeps): UploadsModule {
@@ -206,14 +204,22 @@ export function createUploadsModule({
   async function exclusive<T>(
     id: string,
     run: (session: UploadOperationSession) => Promise<T>,
-    wait = false,
+    options: ExclusiveOptions = {},
   ): Promise<T> {
-    const result = await operations.exclusive(id, run, wait);
-    if (result === null)
+    const result = await operations.exclusive(id, run, options);
+    if (result.busy)
       throw new UploadOperationProcessingError(
         "Upload operation is still processing",
       );
-    return result;
+    return result.value;
+  }
+
+  async function orProcessing(
+    id: string,
+    run: (session: UploadOperationSession) => Promise<UploadOperationResult>,
+  ): Promise<UploadOperationResult> {
+    const result = await operations.exclusive(id, run);
+    return result.busy ? { status: "processing" } : result.value;
   }
 
   async function requireOperation(
@@ -244,7 +250,6 @@ export function createUploadsModule({
   function pendingInput(
     record: UploadOperationRecord,
     source: "server" | "presigned" | "multipart",
-    status: "pending" | "failed" = "pending",
   ) {
     const { id, key, directory, originalName, extension, contentType } =
       record.reservation;
@@ -257,9 +262,40 @@ export function createUploadsModule({
       contentType,
       sizeBytes: record.size,
       etag: null,
-      status,
+      status: "pending" as const,
       uploadSource: source,
     };
+  }
+
+  function attemptExpired(file: StoredFile): boolean {
+    return attemptDeadline(file, policy.pendingTtlHours) < clock.now();
+  }
+
+  function linkSeconds(attemptStartedAt: Date, seconds: number): number {
+    const deadline = attemptDeadline(
+      { attemptStartedAt },
+      policy.pendingTtlHours,
+    );
+    const left = Math.floor(
+      (deadline.getTime() - clock.now().getTime()) / 1000,
+    );
+    if (left < 1)
+      throw new UploadOperationProcessingError(
+        "Срок попытки истекает; результат выяснит сверка",
+      );
+    return Math.min(seconds, left);
+  }
+
+  async function currentAttempt(
+    id: string,
+    session?: UploadOperationSession,
+  ): Promise<StoredFile | null> {
+    const rows = session?.fileRows ?? fileRows;
+    const file = await rows.findFileById(id);
+    if (!file || statusOf(file) !== "pending" || !attemptExpired(file))
+      return file;
+    await confirmation.reconcile(id, session);
+    return await rows.findFileById(id);
   }
 
   async function signParts(
@@ -269,6 +305,7 @@ export function createUploadsModule({
       plan,
     }: Pick<LiveMultipartUpload, "key" | "uploadId" | "plan">,
     partNumbers: number[],
+    expiresIn: number,
   ): Promise<MultipartPartDto[]> {
     // Signing is HMAC and never touches the network, so these run together; the
     // batch cap is what keeps the burst off the event loop for too long.
@@ -277,7 +314,7 @@ export function createUploadsModule({
         partNumber,
         ...partRange(plan, partNumber),
         url: await objectStore.signPart(key, uploadId, partNumber, {
-          expiresIn: policy.presignPartTtlSeconds,
+          expiresIn,
         }),
       })),
     );
@@ -286,16 +323,21 @@ export function createUploadsModule({
   async function presignMultipart(
     upload: Pick<
       LiveMultipartUpload,
-      "id" | "key" | "directory" | "uploadId" | "plan"
+      "id" | "key" | "directory" | "uploadId" | "plan" | "attemptStartedAt"
     >,
   ): Promise<PresignMultipartResult> {
     const { id, key, directory, uploadId, plan } = upload;
+    const ttl = linkSeconds(
+      upload.attemptStartedAt,
+      policy.presignPartTtlSeconds,
+    );
     const parts = await signParts(
       upload,
       Array.from(
         { length: Math.min(plan.partCount, policy.partUrlBatch) },
         (_, index) => index + 1,
       ),
+      ttl,
     );
     return {
       strategy: "multipart",
@@ -307,7 +349,7 @@ export function createUploadsModule({
       partSize: plan.partSize,
       partCount: plan.partCount,
       maxConcurrency: policy.maxConcurrency,
-      expiresAt: expiresAt(clock, policy.presignPartTtlSeconds),
+      expiresAt: expiresAt(clock, ttl),
       parts,
     };
   }
@@ -339,6 +381,7 @@ export function createUploadsModule({
         directory,
         uploadId,
         plan,
+        attemptStartedAt: clock.now(),
       });
       await session.fileRows.reserveFile({
         ...pendingInput(record, "multipart"),
@@ -394,9 +437,13 @@ export function createUploadsModule({
       }
     }
 
+    const ttl = linkSeconds(
+      upload.attemptStartedAt,
+      policy.presignPartTtlSeconds,
+    );
     return {
-      expiresAt: expiresAt(clock, policy.presignPartTtlSeconds),
-      parts: await signParts(upload, partNumbers),
+      expiresAt: expiresAt(clock, ttl),
+      parts: await signParts(upload, partNumbers, ttl),
     };
   }
 
@@ -448,52 +495,51 @@ export function createUploadsModule({
       };
     },
     async resolveUploadOperation(id, stoppedUploadId) {
-      return (
-        (await operations.exclusive(id, async (session) => {
-          const disposed = await confirmation.cleanup(session);
-          if (disposed) return disposed;
-          const record = await session.read();
-          return record
-            ? await confirmation.reconcile(
-                record.reservation.id,
-                session,
-                stoppedUploadId,
-              )
-            : { status: "absent" as const };
-        })) ?? { status: "processing" }
-      );
+      return await orProcessing(id, async (session) => {
+        const disposed = await confirmation.cleanup(session);
+        if (disposed) return disposed;
+        const record = await session.read();
+        return record
+          ? await confirmation.reconcile(
+              record.reservation.id,
+              session,
+              stoppedUploadId,
+            )
+          : { status: "absent" };
+      });
     },
 
     async cancelUploadOperation(id) {
       await operations.terminate(id, "cancelled");
-      return (
-        (await operations.exclusive(id, confirmation.cleanup)) ?? {
-          status: "processing",
-        }
+      return await orProcessing(
+        id,
+        async (session) =>
+          (await confirmation.cleanup(session)) ?? { status: "processing" },
       );
     },
 
     async failUploadOperation(id) {
-      return (
-        (await operations.exclusive(id, async (session) => {
-          const disposed = await confirmation.cleanup(session);
-          if (disposed) return disposed;
-          const record = await session.read();
-          if (record) {
-            const outcome = await resolveOperation(record, session);
-            if (outcome.status !== "failed") return outcome;
-          }
-          await session.terminate("failed");
-          return (await confirmation.cleanup(session))!;
-        })) ?? { status: "processing" }
-      );
+      return await orProcessing(id, async (session) => {
+        const disposed = await confirmation.cleanup(session);
+        if (disposed) return disposed;
+        const record = await session.read();
+        if (record) {
+          const outcome = await resolveOperation(record, session);
+          if (outcome.status !== "failed") return outcome;
+        }
+        await session.terminate("failed");
+        return (await confirmation.cleanup(session))!;
+      });
     },
 
     async uploadThroughServer(input) {
-      await requireDirectory(directories, normalizeDirectory(input.directory));
       return await exclusive(
         input.operationId ?? randomUUID(),
         async (session) => {
+          await requireDirectory(
+            session.directories,
+            normalizeDirectory(input.directory),
+          );
           await requireOpen(session);
           const record = await requireOperation(session, input);
           const outcome = await confirmation.prepareRetry(
@@ -520,10 +566,13 @@ export function createUploadsModule({
     },
 
     async createPresignedUpload(input) {
-      await requireDirectory(directories, normalizeDirectory(input.directory));
       return await exclusive(
         input.operationId ?? randomUUID(),
         async (session) => {
+          await requireDirectory(
+            session.directories,
+            normalizeDirectory(input.directory),
+          );
           await requireOpen(session);
           const record = await requireOperation(session, input);
           const outcome = await resolveOperation(record, session);
@@ -537,18 +586,14 @@ export function createUploadsModule({
             };
           if (outcome.status !== "failed" && outcome.status !== "pending")
             throw fileNotFound(record.reservation.id);
-          const file = await session.fileRows.findFileById(
-            record.reservation.id,
-          );
+          const file = await currentAttempt(record.reservation.id, session);
           if (file?.kind === "multipart") {
             if (await objectStore.listParts(file.key, file.uploadId)) {
               const resumed = await presignMultipart(file);
               await session.markMultipartStopped(null);
               return resumed;
             }
-            await session.fileRows.reserveFile(
-              pendingInput(record, "presigned", "failed"),
-            );
+            await session.fileRows.markFileFailed(file.id);
           }
           if (needsMultipart(input.size, policy.multipartThresholdBytes)) {
             const result = await startMultipart(record, input.size!, session);
@@ -556,12 +601,16 @@ export function createUploadsModule({
             return result;
           }
           const { id, key, directory, contentType } = record.reservation;
-          const ttl = policy.presignUploadTtlSeconds;
+          const continued = file?.kind === "reserved" ? file : null;
+          const ttl = linkSeconds(
+            continued?.attemptStartedAt ?? clock.now(),
+            policy.presignUploadTtlSeconds,
+          );
           const uploadUrl = await objectStore.signUpload(key, {
             contentType,
             expiresIn: ttl,
           });
-          if (outcome.status !== "pending")
+          if (!continued)
             await session.fileRows.reserveFile(
               pendingInput(record, "presigned"),
             );
@@ -585,11 +634,13 @@ export function createUploadsModule({
       if (operationId)
         return await exclusive(operationId, async (session) => {
           await requireOpen(session);
-          const file = await session.fileRows.findFileById(id);
+          const file = await currentAttempt(id, session);
           if (!file) throw fileNotFound(id);
           return await signPartBatch(file, input);
         });
-      return await signPartBatch(await requireFile(id), input);
+      const file = await currentAttempt(id);
+      if (!file) throw fileNotFound(id);
+      return await signPartBatch(file, input);
     },
 
     /** Which parts storage already holds, so an interrupted upload can resume. */
@@ -629,7 +680,7 @@ export function createUploadsModule({
           await requireOpen(session);
           return result;
         },
-        true,
+        { wait: true },
       );
     },
   };

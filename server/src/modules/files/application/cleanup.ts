@@ -95,13 +95,18 @@ export function createCleanupModule({
       for (const file of expired) {
         try {
           const operationId = await operations.findIdByFileId(file.id);
-          const outcome: ReconciliationResult | null = operationId
+          const locked = operationId
             ? await operations.exclusive(
                 operationId,
                 async (session) =>
                   await confirmation.reconcile(file.id, session),
               )
-            : await confirmation.reconcile(file.id);
+            : null;
+          const outcome: ReconciliationResult | null = !locked
+            ? await confirmation.reconcile(file.id)
+            : locked.busy
+              ? null
+              : locked.value;
           if (outcome?.status === "succeeded") counters.recovered += 1;
           else if (outcome?.status === "failed") {
             counters.failed += 1;

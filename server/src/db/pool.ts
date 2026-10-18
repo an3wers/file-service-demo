@@ -32,6 +32,11 @@ pool.on("error", (error) => {
   logger.error({ err: error }, "Idle PostgreSQL client error");
 });
 
+export type Execute = <T extends pg.QueryResultRow>(
+  text: string,
+  values?: unknown[],
+) => Promise<pg.QueryResult<T>>;
+
 /**
  * Every repository call goes through here, so this is the one place that has to
  * translate driver failures into AppErrors.

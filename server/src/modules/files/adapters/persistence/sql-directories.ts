@@ -1,10 +1,12 @@
-import { query } from "../../../../db/pool.js";
+import { query, type Execute } from "../../../../db/pool.js";
 import type { DirectoriesForCatalog } from "../../domain/ports/directories.js";
 
-export function createSqlDirectories(): DirectoriesForCatalog {
+export function createSqlDirectories(
+  execute: Execute = query,
+): DirectoriesForCatalog {
   return {
     async exists(path) {
-      const { rows } = await query<{ exists: boolean }>(
+      const { rows } = await execute<{ exists: boolean }>(
         "select exists(select 1 from directories where path = $1) as exists",
         [path],
       );
@@ -12,14 +14,14 @@ export function createSqlDirectories(): DirectoriesForCatalog {
     },
     async create(parent, name) {
       const path = parent ? `${parent}/${name}` : name;
-      const { rowCount } = await query(
+      const { rowCount } = await execute(
         "insert into directories (path, parent, name) values ($1, $2, $3) on conflict (path) do nothing",
         [path, parent, name],
       );
       return rowCount === 1;
     },
     async listChildren(parent) {
-      const { rows } = await query<{
+      const { rows } = await execute<{
         path: string;
         name: string;
         file_count: number;

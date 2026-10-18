@@ -1,5 +1,5 @@
 import { FileNotFoundError } from "../../domain/errors.js";
-import { query } from "../../../../db/pool.js";
+import { query, type Execute } from "../../../../db/pool.js";
 import type {
   FileRows,
   ReadyValues,
@@ -81,8 +81,11 @@ export async function countActiveMultipart(execute = query): Promise<number> {
   return rows[0]?.count ?? 0;
 }
 
-export async function softDeleteFile(id: string): Promise<StoredFile | null> {
-  const { rows } = await query<FileRow>(
+export async function softDeleteFile(
+  id: string,
+  execute = query,
+): Promise<StoredFile | null> {
+  const { rows } = await execute<FileRow>(
     `update files
         set deleted_at = now(), updated_at = now()
       where id = $1 and deleted_at is null
@@ -93,12 +96,16 @@ export async function softDeleteFile(id: string): Promise<StoredFile | null> {
   return rows[0] ? toStoredFile(rows[0]) : null;
 }
 
-export async function hardDeleteFile(id: string): Promise<void> {
-  await query("delete from files where id = $1", [id]);
+export async function hardDeleteFile(
+  id: string,
+  execute = query,
+): Promise<void> {
+  await execute("delete from files where id = $1", [id]);
 }
 
 export async function listFiles(
   params: ListFilesParams,
+  execute = query,
 ): Promise<{ items: StoredFile[]; total: number }> {
   const conditions = ["deleted_at is null"];
   const values: unknown[] = [];
@@ -134,7 +141,7 @@ export async function listFiles(
   const offset = addParam((params.page - 1) * params.limit);
 
   // count(*) over() rides along with the page, saving a second round trip.
-  const { rows } = await query<FileRow & { total_count: number }>(
+  const { rows } = await execute<FileRow & { total_count: number }>(
     `select *, count(*) over() as total_count
        from files
       where ${conditions.join(" and ")}
@@ -153,12 +160,15 @@ export async function listFiles(
  * Which of these upload ids the metadata table still knows about. Used by the
  * orphan sweep, where anything missing here is an upload no row can reach.
  */
-export async function findKnownUploadIds(ids: string[]): Promise<Set<string>> {
+export async function findKnownUploadIds(
+  ids: string[],
+  execute = query,
+): Promise<Set<string>> {
   if (ids.length === 0) {
     return new Set();
   }
 
-  const { rows } = await query<{ upload_id: string }>(
+  const { rows } = await execute<{ upload_id: string }>(
     "select upload_id from files where upload_id = any($1::text[])",
     [ids],
   );
@@ -192,7 +202,10 @@ export async function listExpiredPending(
  * row writer the domain talks about when it says the column is filled by
  * "whoever writes the row", not by the scenario that asked for the insert.
  */
-export function createSqlFileRows(bucket: string, execute = query): FileRows {
+export function createSqlFileRows(
+  bucket: string,
+  execute: Execute = query,
+): FileRows {
   async function insertFile(
     input: InsertFileInput,
     replace = false,
@@ -274,9 +287,9 @@ export function createSqlFileRows(bucket: string, execute = query): FileRows {
       return rows.length > 0;
     },
     countActiveMultipart: () => countActiveMultipart(execute),
-    softDeleteFile,
-    listFiles,
-    findKnownUploadIds,
+    softDeleteFile: (id) => softDeleteFile(id, execute),
+    listFiles: (params) => listFiles(params, execute),
+    findKnownUploadIds: (ids) => findKnownUploadIds(ids, execute),
     listExpiredPending: (ttlHours) => listExpiredPending(ttlHours, execute),
   };
 }

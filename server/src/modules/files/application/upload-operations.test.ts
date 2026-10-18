@@ -2,8 +2,27 @@ import { randomUUID } from "node:crypto";
 import { describe, expect, it, vi } from "vitest";
 import {
   buildHarness,
+  PENDING_TTL_HOURS,
   THREE_PART_SIZE,
 } from "../testing/files-module.harness.js";
+import {
+  MultipartNotFoundError,
+  UploadOperationProcessingError,
+} from "../domain/errors.js";
+
+const HOUR_MS = 60 * 60 * 1000;
+
+function expiresIn(url: string) {
+  return Number(new URL(url).searchParams.get("expiresIn"));
+}
+
+function multipartInput() {
+  return {
+    operationId: randomUUID(),
+    filename: "big.bin",
+    size: THREE_PART_SIZE,
+  };
+}
 
 function input() {
   return {
@@ -453,4 +472,111 @@ it("ошибка проверки остановленной передачи с
     status: "cancelled",
   });
   expect(h.objectStore.openUploads()).toEqual([]);
+});
+
+describe("срок попытки против уборки", () => {
+  it("ссылки возобновлённой составной загрузки не переживают срок попытки", async () => {
+    const h = buildHarness({ partUrlBatch: 1 });
+    const upload = multipartInput();
+    const first = await h.startMultipart(upload);
+    h.objectStore.uploadPart(first.uploadId, 1, Buffer.alloc(first.partSize));
+    const deadline = new Date(
+      (await h.rowOf(first.id)).attemptStartedAt.getTime() +
+        PENDING_TTL_HOURS * HOUR_MS,
+    );
+    h.advance(PENDING_TTL_HOURS - 0.125);
+    const resumed = await h.files.createPresignedUpload(upload);
+    expect(resumed).toMatchObject({
+      strategy: "multipart",
+      uploadId: first.uploadId,
+      expiresAt: deadline,
+    });
+    if (resumed.strategy !== "multipart")
+      throw new Error("Ожидалась составная загрузка");
+    expect(resumed.parts.map((part) => expiresIn(part.url))).toEqual([450]);
+    const batch = await h.files.getPartUrls(first.id, { partNumbers: [2] });
+    expect(batch.expiresAt).toEqual(deadline);
+    expect(batch.parts.map((part) => expiresIn(part.url))).toEqual([450]);
+    h.advance(0.25);
+    expect(await h.cleanup.settleExpiredRows()).toMatchObject({
+      failed: 1,
+      aborted: 1,
+    });
+    await expect(
+      h.files.getPartUrls(first.id, { partNumbers: [3] }),
+    ).rejects.toBeInstanceOf(MultipartNotFoundError);
+  });
+
+  it("пачка ссылок после срока попытки не выдаётся: операция сначала сверяется", async () => {
+    const h = buildHarness({ partUrlBatch: 1 });
+    const upload = multipartInput();
+    const first = await h.startMultipart(upload);
+    const signPart = vi.spyOn(h.objectStore, "signPart");
+    h.advance(PENDING_TTL_HOURS + 1);
+    await expect(
+      h.files.getPartUrls(first.id, { partNumbers: [2] }),
+    ).rejects.toBeInstanceOf(MultipartNotFoundError);
+    expect(signPart).not.toHaveBeenCalled();
+    expect(h.objectStore.openUploads()).toEqual([]);
+    expect(await h.rowOf(first.id)).toMatchObject({ kind: "failed" });
+  });
+
+  it("возобновление после срока начинает новую составную загрузку с полным окном, и уборка её не отменяет", async () => {
+    const h = buildHarness();
+    const upload = multipartInput();
+    const first = await h.startMultipart(upload);
+    h.objectStore.uploadPart(first.uploadId, 1, Buffer.alloc(first.partSize));
+    h.advance(PENDING_TTL_HOURS + 1);
+    const resumed = await h.files.createPresignedUpload(upload);
+    if (resumed.strategy !== "multipart")
+      throw new Error("Ожидалась составная загрузка");
+    expect(resumed.id).toBe(first.id);
+    expect(resumed.uploadId).not.toBe(first.uploadId);
+    expect(h.objectStore.openUploads().map((open) => open.uploadId)).toEqual([
+      resumed.uploadId,
+    ]);
+    expect(resumed.parts.map((part) => expiresIn(part.url))).toEqual([
+      900, 900,
+    ]);
+    expect(await h.cleanup.settleExpiredRows()).toMatchObject({
+      examined: 0,
+    });
+    for (let part = 1; part <= resumed.partCount; part++)
+      h.objectStore.uploadPart(
+        resumed.uploadId,
+        part,
+        Buffer.alloc(
+          Math.min(
+            resumed.partSize,
+            THREE_PART_SIZE - (part - 1) * resumed.partSize,
+          ),
+        ),
+      );
+    expect(await h.files.completeUpload(first.id)).toMatchObject({
+      kind: "ready",
+      size: THREE_PART_SIZE,
+    });
+  });
+
+  it("подтверждение ждёт занятую операцию ограниченно и сообщает, что она ещё обрабатывается", async () => {
+    const h = buildHarness({}, { lockWaitMs: 20 });
+    const upload = { operationId: randomUUID(), filename: "a.txt", size: 5 };
+    const reserved = await h.files.createPresignedUpload(upload);
+    h.objectStore.uploadObject(reserved.key, Buffer.from("hello"));
+    let release!: () => void;
+    const held = h.operations.exclusive(
+      upload.operationId,
+      () =>
+        new Promise<void>((resolve) => {
+          release = resolve;
+        }),
+    );
+    await expect(h.files.completeUpload(reserved.id)).rejects.toBeInstanceOf(
+      UploadOperationProcessingError,
+    );
+    const waiting = h.files.completeUpload(reserved.id);
+    release();
+    await held;
+    await expect(waiting).resolves.toMatchObject({ kind: "ready" });
+  });
 });

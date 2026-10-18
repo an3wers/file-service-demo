@@ -15,7 +15,7 @@ import { pool } from "../../../../db/pool.js";
 import { migrate } from "../../../../db/migrate.js";
 import { createSqlDirectories } from "./sql-directories.js";
 import { createSqlFileRows } from "./sql-file-rows.js";
-import { createSqlUploadOperations } from "./sql-upload-operations.js";
+import { createFilesPersistence } from "../../persistence.js";
 import {
   buildHarness,
   THREE_PART_SIZE,
@@ -43,15 +43,15 @@ function assemble(objectStore: ReturnType<typeof buildHarness>["objectStore"]) {
   const { policy } = buildHarness();
   const fileRows = createSqlFileRows("test");
   const deps = {
-    operations: createSqlUploadOperations("test"),
+    operations: createFilesPersistence("test").operations,
     objectStore,
     fileRows,
     directories: createSqlDirectories(),
     policy,
     clock: systemClock,
   };
-  const { confirmation, uploads, catalog } = assembleFiles(deps);
-  return { confirmation, ...uploads, ...catalog };
+  const { confirmation, uploads, catalog, cleanup } = assembleFiles(deps);
+  return { confirmation, cleanup, ...uploads, ...catalog };
 }
 
 async function withSingleConnection(run: () => Promise<void>) {
@@ -68,6 +68,10 @@ async function withSingleConnection(run: () => Promise<void>) {
     pool.options.connectionTimeoutMillis = previousTimeout;
   }
 }
+function expiresIn(url: string) {
+  return Number(new URL(url).searchParams.get("expiresIn"));
+}
+
 function input() {
   return {
     operationId: randomUUID(),
@@ -180,7 +184,7 @@ describe("операции загрузки в PostgreSQL", () => {
     await expect(
       assemble(objectStore).uploadThroughServer(upload),
     ).rejects.toThrow("Нет связи");
-    const operations = createSqlUploadOperations("test");
+    const operations = createFilesPersistence("test").operations;
     const { record } = await operations.read(upload.operationId);
     expect(
       await assemble(objectStore).getUploadOperation(upload.operationId),
@@ -366,7 +370,7 @@ it("PostgreSQL сохраняет окончательное намерение 
   const reserved = await assemble(objectStore).createPresignedUpload(upload);
   const rows = createSqlFileRows("test");
   const expected = (await rows.findFileById(reserved.id))!;
-  await createSqlUploadOperations("test").terminate(
+  await createFilesPersistence("test").operations.terminate(
     upload.operationId,
     "cancelled",
   );
@@ -408,7 +412,7 @@ it("общая очистка PostgreSQL переживает частичный
     const { objectStore } = buildHarness();
     const upload = { ...input(), size: THREE_PART_SIZE };
     const reserved = await assemble(objectStore).createPresignedUpload(upload);
-    const operations = createSqlUploadOperations("test");
+    const operations = createFilesPersistence("test").operations;
     await operations.terminate(upload.operationId, "failed");
     objectStore.failNext("remove", new Error("Нет связи"));
     await expect(
@@ -419,7 +423,7 @@ it("общая очистка PostgreSQL переживает частичный
     expect(objectStore.openUploads()).toEqual([]);
     objectStore.uploadObject(reserved.key, Buffer.alloc(1), "text/plain");
     const restarted = assemble(objectStore);
-    const restartedOperations = createSqlUploadOperations("test");
+    const restartedOperations = createFilesPersistence("test").operations;
     expect(await restartedOperations.listTerminated()).toContain(
       upload.operationId,
     );
@@ -427,13 +431,13 @@ it("общая очистка PostgreSQL переживает частичный
       await restartedOperations.exclusive(upload.operationId, (session) =>
         restarted.confirmation.cleanup(session),
       ),
-    ).toEqual({ status: "discarded" });
+    ).toEqual({ busy: false, value: { status: "discarded" } });
     expect(objectStore.objectKeys()).toEqual([]);
     expect(
       await restartedOperations.exclusive(upload.operationId, (session) =>
         restarted.confirmation.reconcile(reserved.id, session),
       ),
-    ).toEqual({ status: "discarded" });
+    ).toEqual({ busy: false, value: { status: "discarded" } });
     await expect(restarted.completeUpload(reserved.id)).rejects.toMatchObject({
       name: "FileNotFoundError",
     });
@@ -568,7 +572,7 @@ it("сохраняет остановку составной передачи м
   objectStore.uploadPart(first.uploadId, 1, Buffer.alloc(first.partSize));
   const rows = createSqlFileRows("test");
   const before = await rows.findFileById(first.id);
-  const operations = createSqlUploadOperations("test");
+  const operations = createFilesPersistence("test").operations;
   await operations.exclusive(upload.operationId, async () => {
     expect(
       await assemble(objectStore).resolveUploadOperation(
@@ -610,5 +614,50 @@ it("сохраняет остановку составной передачи м
   expect(await rows.findFileById(first.id)).toEqual(before);
   expect(await restarted.getMultipartStatus(first.id)).toMatchObject({
     uploadedParts: [1],
+  });
+});
+
+it("уборка PostgreSQL не обрывает составную загрузку, возобновлённую у края срока или после него", async () => {
+  await withSingleConnection(async () => {
+    const { objectStore } = buildHarness();
+    const module = assemble(objectStore);
+    const upload = { ...input(), size: THREE_PART_SIZE };
+    const first = await module.createPresignedUpload(upload);
+    if (first.strategy !== "multipart")
+      throw new Error("Ожидалась составная загрузка");
+    objectStore.uploadPart(first.uploadId, 1, Buffer.alloc(first.partSize));
+    await pool.query(
+      "update files set attempt_started_at = now() - interval '23 hours 52 minutes 30 seconds' where id = $1",
+      [first.id],
+    );
+    const resumed = await module.createPresignedUpload(upload);
+    if (resumed.strategy !== "multipart")
+      throw new Error("Ожидалась составная загрузка");
+    expect(resumed.uploadId).toBe(first.uploadId);
+    for (const part of resumed.parts) {
+      expect(expiresIn(part.url)).toBeGreaterThan(400);
+      expect(expiresIn(part.url)).toBeLessThanOrEqual(450);
+    }
+    await pool.query(
+      "update files set attempt_started_at = now() - interval '25 hours' where id = $1",
+      [first.id],
+    );
+    expect(await module.cleanup.settleExpiredRows()).toMatchObject({
+      failed: 1,
+      aborted: 1,
+    });
+    const restarted = await module.createPresignedUpload(upload);
+    if (restarted.strategy !== "multipart")
+      throw new Error("Ожидалась составная загрузка");
+    expect(restarted.uploadId).not.toBe(first.uploadId);
+    expect(restarted.parts.map((part) => expiresIn(part.url))).toEqual([
+      900, 900,
+    ]);
+    expect(await module.cleanup.settleExpiredRows()).toMatchObject({
+      examined: 0,
+    });
+    expect(objectStore.openUploads().map((open) => open.uploadId)).toEqual([
+      restarted.uploadId,
+    ]);
   });
 });

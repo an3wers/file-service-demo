@@ -212,8 +212,7 @@ export function createCatalogModule({
         cleanupId,
         confirmation.cleanup,
       );
-      if (result === null)
-        throw new FileNotReadyError("Удаление ещё выполняется");
+      if (result.busy) throw new FileNotReadyError("Удаление ещё выполняется");
     },
 
     async createDirectory(input) {

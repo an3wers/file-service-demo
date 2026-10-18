@@ -1,4 +1,5 @@
 import type { FileRowsForFiles, FileRowsForMultipart } from "./file-rows.js";
+import type { DirectoriesForUpload } from "./directories.js";
 import type { Reservation } from "../reservation.js";
 
 export type UploadTerminationReason = "cancelled" | "failed" | "deleted";
@@ -25,14 +26,24 @@ export type UploadOperationFileRows = Pick<
 > &
   Pick<FileRowsForMultipart, "countActiveMultipart">;
 
-export interface UploadOperationSession {
+export interface UploadOperationSessionPorts {
   fileRows: UploadOperationFileRows;
+  directories: DirectoriesForUpload;
+}
+
+export interface UploadOperationSession extends UploadOperationSessionPorts {
   read(): Promise<UploadOperationRecord | null>;
   termination(): Promise<UploadTermination | null>;
   terminate(reason: UploadTerminationReason, uploadId?: string): Promise<void>;
   checked(): Promise<void>;
   markMultipartStopped(uploadId: string | null): Promise<void>;
   save(record: UploadOperationRecord): Promise<void>;
+}
+
+export type ExclusiveResult<T> = { busy: false; value: T } | { busy: true };
+
+export interface ExclusiveOptions {
+  wait?: boolean;
 }
 
 export interface UploadOperations {
@@ -50,6 +61,6 @@ export interface UploadOperations {
   exclusive<T>(
     id: string,
     run: (session: UploadOperationSession) => Promise<T>,
-    wait?: boolean,
-  ): Promise<T | null>;
+    options?: ExclusiveOptions,
+  ): Promise<ExclusiveResult<T>>;
 }

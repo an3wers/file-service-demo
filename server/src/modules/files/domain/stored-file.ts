@@ -53,3 +53,12 @@ export function statusOf(file: StoredFile): FileStatus {
       return "failed";
   }
 }
+
+const HOUR_MS = 60 * 60 * 1000;
+
+export function attemptDeadline(
+  file: Pick<StoredFile, "attemptStartedAt">,
+  ttlHours: number,
+): Date {
+  return new Date(file.attemptStartedAt.getTime() + ttlHours * HOUR_MS);
+}

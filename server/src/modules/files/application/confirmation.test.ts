@@ -130,7 +130,10 @@ it("при восстановлении неудачи использует ож
     "size-operation",
     async (session) => await h.confirmation.reconcile(reserved.id, session),
   );
-  expect(mismatch).toEqual({ status: "failed", reason: "size_mismatch" });
+  expect(mismatch).toEqual({
+    busy: false,
+    value: { status: "failed", reason: "size_mismatch" },
+  });
   expect(await h.rowOf(reserved.id)).toMatchObject({ kind: "failed" });
   h.objectStore.uploadObject(reserved.key, Buffer.from("hello"), "text/plain");
   expect(
@@ -138,7 +141,10 @@ it("при восстановлении неудачи использует ож
       "size-operation",
       async (session) => await h.confirmation.reconcile(reserved.id, session),
     ),
-  ).toMatchObject({ status: "succeeded", file: { size: 5 } });
+  ).toMatchObject({
+    busy: false,
+    value: { status: "succeeded", file: { size: 5 } },
+  });
 });
 
 it("сохранённое окончательное намерение запрещает позднее подтверждение даже без контекста", async () => {
@@ -191,13 +197,13 @@ it.each(["cancelled", "deleted"] as const)(
       h.operations.exclusive("cleanup-ready", (session) =>
         h.confirmation.cleanup(session),
       );
-    expect(await clean()).toEqual({ status: reason });
+    expect(await clean()).toEqual({ busy: false, value: { status: reason } });
     expect(await h.rowOf(file.id)).toMatchObject({ kind: "failed" });
     expect(h.objectStore.objectKeys()).toEqual([]);
     h.advance(24 * 365 * 30);
     expect(await h.operations.listTerminated()).toContain("cleanup-ready");
     h.objectStore.uploadObject(file.key, Buffer.from("hello"), "text/plain");
-    expect(await clean()).toEqual({ status: reason });
+    expect(await clean()).toEqual({ busy: false, value: { status: reason } });
     expect(h.objectStore.objectKeys()).toEqual([]);
   },
 );
@@ -224,7 +230,7 @@ it("сохраняет идентификатор составной загру�
     await h.operations.exclusive("cleanup-multipart", (session) =>
       h.confirmation.cleanup(session),
     ),
-  ).toEqual({ status: "discarded" });
+  ).toEqual({ busy: false, value: { status: "discarded" } });
   expect(h.objectStore.openUploads()).toEqual([]);
 });
 
@@ -436,7 +442,7 @@ it("подготовка повтора освобождает остановл�
     await h.operations.exclusive(operationId, (session) =>
       h.confirmation.prepareRetry(started.id, session),
     ),
-  ).toEqual({ status: "failed" });
+  ).toEqual({ busy: false, value: { status: "failed" } });
   expect(h.objectStore.openUploads()).toEqual([]);
   expect(await h.confirmation.reconcile(started.id)).toEqual({
     status: "failed",
