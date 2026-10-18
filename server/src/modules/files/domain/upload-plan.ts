@@ -7,17 +7,17 @@ import {
 const MIB = 1024 * 1024;
 
 /**
- * What a deployment's policy hands the plan builder. `minPartSize` and
- * `maxPartSize` are the multipart protocol's own bounds — vendor knowledge the
- * domain does not own, declared next to the adapter that speaks the protocol
- * (`storage/s3-object-store.ts`'s `PROTOCOL_LIMITS`) and clamped into a
- * deployment's config at the assembly. The domain only knows it was handed
- * *some* bounds, and checks that they are sane before building a plan on them.
+ * Ограничения, которые политика развёртывания передаёт построителю плана.
+ * `minPartSize` и `maxPartSize` задаются протоколом составной загрузки.
+ * Они объявлены рядом с адаптером (`PROTOCOL_LIMITS` в
+ * `storage/s3-object-store.ts`) и ограничивают конфигурацию при сборке.
+ * Домен получает готовые пределы и проверяет их согласованность
+ * перед построением плана.
  */
 export interface PlanLimits {
-  /** Desired part size; grows if the file would not fit in `maxParts`. */
+  /** Желаемый размер части; увеличивается, если файл не помещается в `maxParts`. */
   partSize: number;
-  /** Every part except the last one. The last may be any size at all. */
+  /** Нижняя граница для всех частей, кроме последней, чей размер может быть любым. */
   minPartSize: number;
   maxPartSize: number;
   maxParts: number;
@@ -25,11 +25,10 @@ export interface PlanLimits {
 }
 
 /**
- * The domain no longer owns these numbers, so it cannot trust they arrived
- * sane — a deployment that mis-clamps its config would otherwise build plans
- * storage silently rejects, or worse, plans that lie about what they cover.
- * Exported so the assembly can run it once at startup, on top of the check
- * every call to `planMultipart` repeats anyway.
+ * Пределы приходят извне, поэтому домен проверяет их согласованность.
+ * Иначе неверная конфигурация даст план, который отклонит хранилище
+ * или который неверно покрывает файл. Проверка экспортируется для запуска
+ * при сборке и дополнительно выполняется при каждом `planMultipart`.
  */
 export function assertValidPlanLimits(limits: PlanLimits): void {
   const sane =
@@ -67,7 +66,7 @@ function ceilTo(value: number, step: number): number {
   return Math.ceil(value / step) * step;
 }
 
-/** Whether a file of this size goes through multipart rather than a single PUT. */
+/** Нужна ли для файла такого размера составная загрузка вместо одного PUT. */
 export function needsMultipart(
   size: number | undefined,
   threshold: number,
@@ -76,12 +75,11 @@ export function needsMultipart(
 }
 
 /**
- * Decides how a file is cut into parts. This is the whole of the split policy:
- * the client sends a size and gets back a plan it only has to follow.
+ * Определяет разбиение файла на части: клиент передаёт размер и получает
+ * готовый план, которому должен следовать.
  *
- * The limits arrive as an argument and have no default. They are a deployment's
- * policy, and a builder that could reach for the environment on its own would
- * be a builder no test can pin down.
+ * Пределы задаются политикой развёртывания и передаются явно, без значений
+ * по умолчанию, чтобы построение плана не зависело от окружения в тестах.
  */
 export function planMultipart(size: number, limits: PlanLimits): UploadPlan {
   assertValidPlanLimits(limits);
@@ -102,8 +100,8 @@ export function planMultipart(size: number, limits: PlanLimits): UploadPlan {
   let partSize = limits.partSize;
 
   if (Math.ceil(size / partSize) > limits.maxParts) {
-    // Round the required size up to a whole MiB rather than dividing exactly, so
-    // the part count lands inside the limit instead of one over it on rounding.
+    // Округляем необходимый размер вверх до целого МиБ, чтобы из-за округления
+    // количество частей не превысило предел на одну часть.
     partSize = ceilTo(Math.ceil(size / limits.maxParts), MIB);
   }
 
@@ -115,8 +113,8 @@ export function planMultipart(size: number, limits: PlanLimits): UploadPlan {
   const partCount = Math.ceil(size / partSize);
 
   if (partCount > limits.maxParts) {
-    // Unreachable while `maxObjectSize` stays at or below 5 TiB (10 000 parts of
-    // 5 GiB is 50 TiB); kept in case that ceiling is ever raised.
+    // Недостижимо при `maxObjectSize` не больше 5 ТиБ: 10 000 частей по 5 ГиБ
+    // вмещают около 50 ТиБ. Проверка оставлена на случай увеличения лимита.
     throw new FileTooLargeError(
       "File cannot be split into parts within the protocol limits",
       {
@@ -129,13 +127,13 @@ export function planMultipart(size: number, limits: PlanLimits): UploadPlan {
     size,
     partSize,
     partCount,
-    // Almost always smaller than `minPartSize`, and that is legal: the 5 MiB
-    // floor applies to every part except the last.
+    // Может быть меньше `minPartSize`: нижняя граница 5 МиБ
+    // не применяется к последней части.
     lastPartSize: size - (partCount - 1) * partSize,
   };
 }
 
-/** The byte range of one part — what the client feeds to `file.slice()`. */
+/** Диапазон байтов части, который клиент передаёт в `file.slice()`. */
 export function partRange(plan: UploadPlan, partNumber: number): PartRange {
   const offset = (partNumber - 1) * plan.partSize;
 

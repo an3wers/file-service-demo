@@ -4,7 +4,7 @@ import { checkDatabase, pool } from "./db/pool.js";
 import { logger } from "./logger.js";
 import { syncAuthUser } from "./modules/auth/index.js";
 
-// Fail at boot rather than on the first request that needs the database.
+// Проверяем базу при запуске, чтобы обнаружить сбой до первого рабочего запроса.
 try {
   await checkDatabase();
   logger.info("Connected to PostgreSQL");

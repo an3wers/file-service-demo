@@ -32,9 +32,8 @@ export interface AppDeps {
 }
 
 /**
- * Mounts routers that are already built. This is the HTTP shape of the service
- * and nothing more: which storage or database is behind a route is decided in
- * the assembly, not here.
+ * Подключает уже собранные маршрутизаторы и задаёт HTTP-интерфейс сервиса.
+ * Выбор хранилища и базы данных для маршрутов выполняется при сборке.
  */
 export function createApp({
   healthRouter,
@@ -87,10 +86,10 @@ export function createApp({
   app.use(MOUNTS.files, filesRouter);
   app.use(MOUNTS.directories, directoriesRouter);
 
-  // Express 5-compatible catch-all route.
+  // Маршрут для всех остальных адресов в синтаксисе Express 5.
   app.all("/{*path}", notFoundHandler);
 
-  // Error middleware must be registered last.
+  // Обработчик ошибок регистрируется последним.
   app.use(createErrorHandler(errorMappers));
 
   return app;

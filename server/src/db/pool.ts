@@ -5,9 +5,9 @@ import { databaseError } from "./errors.js";
 
 const { Pool, types } = pg;
 
-// `bigint` (OID 20) arrives as a string by default. Every bigint in this schema
-// (size_bytes, COUNT(*)) fits comfortably in a JS number, so parse it eagerly
-// and keep the API layer free of string/number ambiguity.
+// `bigint` (OID 20) по умолчанию приходит строкой. Все такие значения в схеме
+// (size_bytes, COUNT(*)) помещаются в JS number, поэтому преобразуем их сразу,
+// чтобы HTTP-слой всегда получал числа.
 types.setTypeParser(20, (value: string | null) =>
   value === null ? null : Number(value),
 );
@@ -22,9 +22,9 @@ export const pool = new Pool({
   ssl: config.database.ssl ? { rejectUnauthorized: false } : false,
   connectionTimeoutMillis: 10_000,
   idleTimeoutMillis: 30_000,
-  // Without this a wedged query holds its connection until the client gives up;
-  // with it Postgres cancels the query and returns 57014, which `databaseError`
-  // turns into a 503 instead of a hung request.
+  // Ограничение времени не даёт зависшему запросу удерживать соединение бесконечно.
+  // Postgres отменяет запрос с кодом 57014, который `databaseError` преобразует
+  // в ответ 503.
   statement_timeout: 15_000,
 });
 
@@ -38,8 +38,8 @@ export type Execute = <T extends pg.QueryResultRow>(
 ) => Promise<pg.QueryResult<T>>;
 
 /**
- * Every repository call goes through here, so this is the one place that has to
- * translate driver failures into AppErrors.
+ * Все обращения репозиториев проходят здесь, поэтому преобразование
+ * ошибок драйвера в AppError сосредоточено в одном месте.
  */
 export async function query<T extends pg.QueryResultRow>(
   text: string,

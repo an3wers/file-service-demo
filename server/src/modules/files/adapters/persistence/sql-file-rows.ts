@@ -16,7 +16,7 @@ const SORT_COLUMNS = {
   size_bytes: "size_bytes",
 } as const;
 
-/** LIKE treats `%` and `_` as wildcards; folder names legitimately contain both. */
+/** LIKE считает `%` и `_` шаблонами, хотя оба символа допустимы в именах каталогов. */
 function escapeLike(value: string): string {
   return value.replaceAll(/[\\%_]/g, String.raw`\$&`);
 }
@@ -70,7 +70,7 @@ export async function markFileFailed(
   );
 }
 
-/** Slots taken by multipart uploads that have neither completed nor been abandoned. */
+/** Слоты, занятые составными загрузками, которые ещё не завершены и не отменены. */
 export async function countActiveMultipart(execute = query): Promise<number> {
   const { rows } = await execute<{ count: number }>(
     `select count(*)::int as count
@@ -123,7 +123,7 @@ export async function listFiles(
     if (!params.recursive) {
       conditions.push(`directory = ${addParam(params.directory)}`);
     } else if (params.directory !== "") {
-      // "" with recursive means the whole bucket, so no condition is needed.
+      // Пустая строка с recursive означает весь бакет, поэтому условие не требуется.
       const exact = addParam(params.directory);
       const prefix = addParam(`${escapeLike(params.directory)}/%`);
       conditions.push(
@@ -140,7 +140,7 @@ export async function listFiles(
   const limit = addParam(params.limit);
   const offset = addParam((params.page - 1) * params.limit);
 
-  // count(*) over() rides along with the page, saving a second round trip.
+  // count(*) over() возвращает итог вместе со страницей, экономя отдельный запрос.
   const { rows } = await execute<FileRow & { total_count: number }>(
     `select *, count(*) over() as total_count
        from files
@@ -157,8 +157,8 @@ export async function listFiles(
 }
 
 /**
- * Which of these upload ids the metadata table still knows about. Used by the
- * orphan sweep, where anything missing here is an upload no row can reach.
+ * Идентификаторы загрузок, которые ещё известны таблице метаданных.
+ * Уборка считает сиротами загрузки, на которые не указывает ни одна строка.
  */
 export async function findKnownUploadIds(
   ids: string[],
@@ -193,14 +193,12 @@ export async function listExpiredPending(
 }
 
 /**
- * The same functions seen through the narrow interfaces the modules declare.
- * The annotation is the whole point of it: it is what makes the SQL side prove,
- * at compile time, that it still answers for every operation those modules ask
- * for. Callers take the one interface they need, never this bundle.
+ * Те же функции представлены через узкие интерфейсы модулей. Аннотация
+ * проверяет при компиляции, что реализация SQL поддерживает все требуемые
+ * операции. Вызывающий код получает только нужный ему интерфейс.
  *
- * `bucket` is fixed here rather than threaded through every call: this is the
- * row writer the domain talks about when it says the column is filled by
- * "whoever writes the row", not by the scenario that asked for the insert.
+ * `bucket` фиксируется при создании репозитория, а не передаётся в каждом
+ * вызове: столбец заполняет тот, кто сохраняет строку, а не сценарий загрузки.
  */
 export function createSqlFileRows(
   bucket: string,

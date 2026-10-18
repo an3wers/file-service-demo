@@ -4,13 +4,12 @@ import { logger } from "../logger.js";
 import { createS3Client } from "../storage/s3-client.js";
 
 /**
- * Bucket-level CORS, not server CORS: without it the browser's preflight for a
- * direct `PUT https://s3.cloud.ru/<bucket>/<key>` never succeeds and the whole
- * presigned upload flow is unusable from the client. Run once per bucket.
+ * Настраивает CORS бакета для прямого `PUT https://s3.cloud.ru/<bucket>/<key>`.
+ * Без этого предварительный запрос браузера не пройдёт и загрузка
+ * по подписанной ссылке не заработает. Запускается один раз для бакета.
  *
- * Administration of the bucket itself, which is vendor work by nature: it talks
- * to the SDK directly rather than through the object store, and assembles the
- * one client it needs.
+ * Управление бакетом зависит от поставщика, поэтому скрипт напрямую
+ * собирает нужный клиент SDK и обращается к нему.
  */
 const bucket = config.s3.bucket;
 const s3 = createS3Client({

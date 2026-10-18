@@ -1,30 +1,27 @@
 import type { PlanLimits } from "./upload-plan.js";
 
 /**
- * What this deployment has decided about uploads: from what size an upload
- * becomes multipart, how it is cut up, how many URLs are signed at a time, how
- * many uploads may run at once, how long links live and how long an upload may
- * stay unconfirmed before the cleanup pass settles it.
+ * Политика загрузки развёртывания: порог составной загрузки, размеры частей,
+ * число подписываемых ссылок, пределы одновременных загрузок, срок ссылок
+ * и ожидание подтверждения до уборки.
  *
- * It arrives as an argument rather than being read from the environment inside
- * the modules. These are numbers a deployment chooses, so a module that reached
- * for them itself could only be exercised by rewriting the environment around
- * it.
+ * Передаётся аргументом, чтобы модули не читали окружение самостоятельно:
+ * тест может задать нужные значения без изменения переменных окружения.
  */
 export interface UploadPolicy {
-  /** At or above this size an upload goes multipart instead of a single PUT. */
+  /** Начиная с этого размера используется составная загрузка вместо одного PUT. */
   multipartThresholdBytes: number;
 
-  /** What the plan builder is allowed to produce. */
+  /** Допустимые пределы для построения плана. */
   planLimits: PlanLimits;
 
-  /** How many part URLs are signed in one answer — the first batch and later ones. */
+  /** Число ссылок на части в одном ответе, включая первый пакет. */
   partUrlBatch: number;
 
-  /** How many parts the client may keep in flight; the server owns this number. */
+  /** Число одновременно передаваемых клиентом частей задаёт сервер. */
   maxConcurrency: number;
 
-  /** How many multipart uploads may be in progress across the service at once. */
+  /** Максимальное число одновременных составных загрузок во всём сервисе. */
   maxActiveUploads: number;
 
   presignUploadTtlSeconds: number;
@@ -32,9 +29,9 @@ export interface UploadPolicy {
   presignPartTtlSeconds: number;
 
   /**
-   * How long an upload may stay unconfirmed before the cleanup pass settles it.
-   * The same number bounds the age of an orphan: an upload younger than this may
-   * still be one the service is inserting a row for right now.
+   * Время ожидания подтверждения до уборки. Оно же задаёт минимальный возраст
+   * сироты: у более молодой загрузки строка метаданных ещё может быть
+   * в процессе вставки.
    */
   pendingTtlHours: number;
 }

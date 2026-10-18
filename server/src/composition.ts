@@ -39,7 +39,7 @@ export function createObjectStore(): ObjectStore {
   );
 }
 
-/** This deployment's upload policy, read off the environment exactly once. */
+/** Политика загрузки этого развёртывания считывается из окружения один раз. */
 export function uploadPolicy(): UploadPolicy {
   return {
     multipartThresholdBytes: config.uploads.multipartThresholdBytes,
@@ -47,7 +47,7 @@ export function uploadPolicy(): UploadPolicy {
       partSize: config.uploads.multipartPartSizeBytes,
       minPartSize: PROTOCOL_LIMITS.minPartSize,
       maxPartSize: PROTOCOL_LIMITS.maxPartSize,
-      // The configured ceilings are wishes; the protocol's are not negotiable.
+      // Настроенные пределы ограничиваются обязательными пределами протокола.
       maxParts: Math.min(
         config.uploads.multipartMaxParts,
         PROTOCOL_LIMITS.maxParts,

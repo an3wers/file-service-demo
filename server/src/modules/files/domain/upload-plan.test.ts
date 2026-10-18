@@ -69,8 +69,8 @@ describe("planMultipart", () => {
   });
 
   it("accepts a last part below the 5 MiB floor", () => {
-    // The minimum applies to every part except the last, so this is a valid
-    // plan rather than something to round away.
+    // Минимальный размер действует для всех частей, кроме последней, поэтому
+    // такой план допустим и не требует округления.
     const plan = planMultipart(16 * MIB + 1, limits);
 
     expect(plan).toMatchObject({ partCount: 2, lastPartSize: 1 });

@@ -6,9 +6,9 @@ import tailwindcss from "@tailwindcss/vite";
 // https://vite.dev/config/
 const __dirname = import.meta.dirname;
 
-// The API is proxied instead of called by absolute URL: the client then talks
-// to same-origin relative paths and CORS never enters the picture, in dev or
-// behind a single origin in production.
+// Запросы к API идут через прокси по относительным адресам того же источника.
+// Это избавляет от настройки CORS как при разработке, так и при размещении
+// клиента и сервера под одним источником в рабочем окружении.
 const API_TARGET = process.env.VITE_API_TARGET ?? "http://localhost:3000";
 
 const apiProxy = {
@@ -27,7 +27,7 @@ export default defineConfig({
   // бакета настроен ровно на http://localhost:5173. Молчаливый сдвиг на 5174
   // сломал бы presigned-загрузку непрозрачной CORS-ошибкой.
   server: { port: 5173, strictPort: true, proxy: apiProxy },
-  // `vite preview` needs the same proxy, otherwise the production build served
-  // locally has no API to talk to.
+  // Для `vite preview` нужен тот же прокси, чтобы локально запущенная
+  // производственная сборка могла обращаться к API.
   preview: { proxy: apiProxy },
 });

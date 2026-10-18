@@ -28,7 +28,7 @@ export interface CatalogModuleDeps {
   fileRows: FileRowsForFiles;
   directories: DirectoriesForCatalog;
   policy: UploadPolicy;
-  /** The wall clock a reservation's `expiresAt` reads, shared with every other scenario. */
+  /** Общие для всех сценариев часы, по которым задаётся `expiresAt` резервирования. */
   clock: Clock;
 }
 
@@ -146,8 +146,8 @@ export function createCatalogModule({
         return { file };
       }
 
-      // The caller asked for a link, so a signing failure is the whole answer
-      // failing rather than a card quietly served without one.
+      // Если запрошена ссылка, ошибка подписывания отклоняет весь ответ:
+      // карточка без запрошенной ссылки не возвращается.
       const downloadUrl = await presignDownload(file, {
         disposition: "attachment",
         expiresIn: policy.presignDownloadTtlSeconds,

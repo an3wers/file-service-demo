@@ -1,6 +1,6 @@
 /**
- * Every client-facing error code lives here. The list is the contract the
- * frontend's message table mirrors, so a code is never spelled out inline.
+ * Все коды ошибок для клиента определены здесь. Этот список — контракт,
+ * которому соответствует таблица сообщений клиента; коды не задаются на месте.
  */
 export const ERROR_CODES = {
   UNAUTHORIZED: "UNAUTHORIZED",
@@ -42,11 +42,12 @@ export const ERROR_CODES = {
 export type ErrorCode = (typeof ERROR_CODES)[keyof typeof ERROR_CODES];
 
 export interface AppErrorOptions {
-  /** The original failure, kept for the log line and for `err.cause` in pino. */
+  /** Исходная ошибка сохраняется для журнала и поля `err.cause` в pino. */
   cause?: unknown;
   /**
-   * Fields that belong in the log but not in the response. `details` is sent to
-   * the client, so bucket names, object keys and vendor error names go here.
+   * Поля для журнала, которые нельзя отправлять в ответе. `details` доступно
+   * клиенту, поэтому имена бакетов, объектные ключи и имена ошибок хранилища
+   * помещаются сюда.
    */
   logContext?: Record<string, unknown>;
 }
@@ -103,7 +104,7 @@ export const payloadTooLarge = (
 ) =>
   new AppError(413, ERROR_CODES.PAYLOAD_TOO_LARGE, message, details, options);
 
-/** Nothing is permanently wrong: free a slot and the same request goes through. */
+/** Временное ограничение: после освобождения слота тот же запрос может пройти. */
 export const tooManyRequests = (
   code: ErrorCode,
   message: string,
@@ -111,7 +112,7 @@ export const tooManyRequests = (
   options?: AppErrorOptions,
 ) => new AppError(429, code, message, details, options);
 
-/** The service reached a dependency and got an answer it cannot work with. */
+/** Зависимость ответила, но сервис не может обработать её ответ. */
 export const badGateway = (
   code: ErrorCode,
   message: string,
@@ -119,7 +120,7 @@ export const badGateway = (
   options?: AppErrorOptions,
 ) => new AppError(502, code, message, details, options);
 
-/** The dependency is unreachable or overloaded; retrying may well succeed. */
+/** Зависимость недоступна или перегружена; повторная попытка может пройти. */
 export const serviceUnavailable = (
   code: ErrorCode,
   message: string,

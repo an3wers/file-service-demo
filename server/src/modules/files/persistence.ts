@@ -12,6 +12,8 @@ export function createFilesPersistence(
     directories: createSqlDirectories(),
     operations: createSqlUploadOperations({
       lockWaitMs,
+      // Все запросы под блокировкой используют её соединение: обращение к общему
+      // пулу потребовало бы второго соединения и могло бы заблокировать операцию.
       sessionPorts: (execute) => ({
         fileRows: createSqlFileRows(bucket, execute),
         directories: createSqlDirectories(execute),

@@ -1,13 +1,12 @@
 /**
- * The wall clock every scenario reads through instead of `Date.now()` directly.
+ * Общие часы для всех сценариев заменяют прямые вызовы `Date.now()`.
  *
- * Cleanup's "older than the TTL" rule and a reservation's `expiresAt` both read
- * time, and a module that read it for itself could never be shown obeying
- * either rule in a test. One port, handed to every scenario, is what lets a
- * harness move a single clock and have both react to it.
+ * Уборка проверяет возраст относительно TTL, а резервирование задаёт
+ * `expiresAt`. Общий порт позволяет тестам передвигать одни часы
+ * и проверять согласованную реакцию обоих сценариев.
  *
- * Logging is not a port for the same reason in reverse: nothing here decides
- * anything by what the log carries.
+ * Журналирование не выделено в порт: содержимое журнала не влияет
+ * на решения этих сценариев.
  */
 export interface Clock {
   now(): Date;

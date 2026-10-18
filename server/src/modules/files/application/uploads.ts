@@ -43,13 +43,13 @@ export interface UploadsModuleDeps {
     >;
   fileRows: FileRowsForFiles;
   policy: UploadPolicy;
-  /** The wall clock a reservation's `expiresAt` reads, shared with every other scenario. */
+  /** Общие для всех сценариев часы, по которым задаётся `expiresAt` резервирования. */
   clock: Clock;
 }
 
 export interface MultipartPartDto {
   partNumber: number;
-  /** Byte range in the source file: the client slices exactly this. */
+  /** Диапазон байтов исходного файла, который клиент должен вырезать. */
   offset: number;
   size: number;
   url: string;
@@ -64,7 +64,7 @@ export interface PresignMultipartResult {
   size: number;
   partSize: number;
   partCount: number;
-  /** How many parts the client may keep in flight; the server owns this number. */
+  /** Число одновременно передаваемых клиентом частей задаёт сервер. */
   maxConcurrency: number;
   expiresAt: Date;
   parts: MultipartPartDto[];
@@ -162,7 +162,7 @@ function fileNotFound(id: string) {
   return new FileNotFoundError(`File ${id} was not found`);
 }
 
-/** A file is only a live multipart upload while it is in that state. */
+/** Файл считается живой составной загрузкой только в соответствующем состоянии. */
 function requireLiveUpload(file: StoredFile): LiveMultipartUpload {
   if (file.kind !== "multipart") {
     throw new MultipartNotFoundError(
@@ -276,6 +276,8 @@ export function createUploadsModule({
       { attemptStartedAt },
       policy.pendingTtlHours,
     );
+    // Ссылка не должна пережить попытку: после её срока уборка вправе
+    // отменить загрузку. Округление вниз сохраняет эту границу.
     const left = Math.floor(
       (deadline.getTime() - clock.now().getTime()) / 1000,
     );
@@ -307,8 +309,8 @@ export function createUploadsModule({
     partNumbers: number[],
     expiresIn: number,
   ): Promise<MultipartPartDto[]> {
-    // Signing is HMAC and never touches the network, so these run together; the
-    // batch cap is what keeps the burst off the event loop for too long.
+    // Подписывание использует HMAC без сетевых запросов, поэтому запускается вместе;
+    // ограничение размера пакета не даёт надолго занять цикл событий.
     return await Promise.all(
       partNumbers.map(async (partNumber) => ({
         partNumber,
@@ -361,7 +363,7 @@ export function createUploadsModule({
   ): Promise<PresignMultipartResult> {
     const { id, key, directory, contentType } = record.reservation;
 
-    // Both of these refuse before anything exists in storage to roll back.
+    // Обе проверки отклоняют запрос до появления в хранилище данных для отката.
     const plan = planMultipart(size, policy.planLimits);
     const active = await session.fileRows.countActiveMultipart();
 
@@ -392,9 +394,9 @@ export function createUploadsModule({
       });
       return result;
     } catch (error) {
-      // Unlike the single-PUT flow, opening the upload is a side effect:
-      // without this the bucket keeps an upload nobody can reach, and storage
-      // bills for the parts that land in it.
+      // Открытие составной загрузки создаёт состояние в хранилище.
+      // При ошибке сохранения строки его нужно отменить, иначе останется сирота,
+      // за части которой хранилище продолжит выставлять счёт.
       await objectStore
         .abortMultipart(key, uploadId)
         .catch((cleanupError: unknown) => {
@@ -415,10 +417,10 @@ export function createUploadsModule({
     const upload = requireLiveUpload(file);
     const { plan } = upload;
 
-    // Both bounds on a part number live here: how many may be asked for at
-    // once, and whether each one exists in this upload's plan. The cap is on
-    // the request as sent, before duplicates are dropped — it is what bounds
-    // the work of reading the request, not just the signing that follows.
+    // Проверяем число запрошенных номеров и их наличие в плане загрузки.
+    // Лимит применяется к исходному запросу до удаления дубликатов:
+    // он ограничивает затраты на чтение запроса,
+    // а также на последующее подписывание.
     if (requested.length > policy.partUrlBatch) {
       throw new InvalidPartNumberError(
         `At most ${policy.partUrlBatch} part URLs can be signed in one request`,
@@ -628,7 +630,7 @@ export function createUploadsModule({
       );
     },
 
-    /** A further batch of part URLs for an upload already in flight. */
+    /** Следующий пакет подписанных ссылок на части уже начатой загрузки. */
     async getPartUrls(id, input) {
       const operationId = await operations.findIdByFileId(id);
       if (operationId)
@@ -643,7 +645,7 @@ export function createUploadsModule({
       return await signPartBatch(file, input);
     },
 
-    /** Which parts storage already holds, so an interrupted upload can resume. */
+    /** Части, уже сохранённые в хранилище, для продолжения прерванной загрузки. */
     async getMultipartStatus(id) {
       const { key, uploadId, plan } = requireLiveUpload(await requireFile(id));
       const parts = await objectStore.listParts(key, uploadId);

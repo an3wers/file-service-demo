@@ -7,12 +7,12 @@ import type { Clock } from "./ports/clock.js";
 
 export const DEFAULT_CONTENT_TYPE = "application/octet-stream";
 
-/** Reads the clock every scenario shares, rather than `Date.now()` on its own. */
+/** Читает общие часы сценариев вместо прямого вызова `Date.now()`. */
 export function expiresAt(clock: Clock, seconds: number): Date {
   return new Date(clock.now().getTime() + seconds * 1000);
 }
 
-/** An id, a key and the names that go on the row, fixed before any bytes exist. */
+/** Идентификатор, объектный ключ и имена фиксируются до появления байтов. */
 export interface Reservation {
   id: string;
   key: string;
@@ -23,9 +23,9 @@ export interface Reservation {
 }
 
 /**
- * The step every upload path starts with, whichever way the bytes arrive: the
- * client's directory and filename are normalized, and the key is derived from
- * the directory and a fresh id rather than from the name.
+ * Первый шаг любого способа загрузки: нормализует каталог и имя файла
+ * от клиента. Объектный ключ строится из каталога и нового идентификатора,
+ * а не из имени файла.
  */
 export function reserveKey(input: {
   filename: string;

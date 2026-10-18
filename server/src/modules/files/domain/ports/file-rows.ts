@@ -1,6 +1,6 @@
 import type { StoredFile, FileStatus, UploadSource } from "../stored-file.js";
 
-/** No `bucket` field: the row writer fills that column from its own construction, not per call. */
+/** Поля `bucket` нет: сохраняющий строку адаптер берёт его из своих настроек. */
 export interface InsertFileInput {
   id: string;
   objectKey: string;
@@ -28,14 +28,14 @@ export interface ListFilesParams {
   order: "asc" | "desc";
 }
 
-/** What confirmation knows about an upload that finished. */
+/** Данные завершённой загрузки, необходимые для подтверждения. */
 export interface ReadyValues {
   sizeBytes: number | null;
   etag: string | null;
   contentType: string;
 }
 
-/** Rows as the files module handles them: reserve, confirm, list, delete. */
+/** Строки метаданных для резервирования, подтверждения, просмотра и удаления файлов. */
 export interface FileRowsForFiles {
   markFileFailed(id: string): Promise<void>;
   failFileIfUnchanged(expected: StoredFile): Promise<boolean>;
@@ -43,20 +43,20 @@ export interface FileRowsForFiles {
   isFileDeleted(id: string): Promise<boolean>;
   insertFile(input: InsertFileInput): Promise<StoredFile>;
 
-  /** `null` for a row that never existed or has been soft-deleted. */
+  /** `null`, если строка не существовала или помечена удалённой. */
   findFileById(id: string): Promise<StoredFile | null>;
 
   /**
-   * Moves a reserved row to `ready` and clears the multipart plan with it.
-   * `null` when the row is gone, which is what makes a repeated confirmation
-   * distinguishable from a first one.
+   * Переводит зарезервированную строку в `ready` и очищает план составной загрузки.
+   * Возвращает `null`, если строка исчезла; вызывающий код отличает этот случай
+   * от успешного подтверждения.
    */
   markFileReady(id: string, values: ReadyValues): Promise<StoredFile | null>;
 
-  /** `null` when the row was already deleted; deleting twice is not an error. */
+  /** `null`, если строка уже удалена; повторное удаление не считается ошибкой. */
   softDeleteFile(id: string): Promise<StoredFile | null>;
 
-  /** One page plus the total the page was cut from. */
+  /** Страница результатов и общее количество строк. */
   listFiles(
     params: ListFilesParams,
   ): Promise<{ items: StoredFile[]; total: number }>;
@@ -65,19 +65,19 @@ export interface FileRowsForFiles {
 /** Строки для составной загрузки: допуск, затем резервирование. */
 export interface FileRowsForMultipart {
   reserveFile(input: InsertFileInput): Promise<StoredFile>;
-  /** Slots taken by uploads that have neither completed nor been abandoned. */
+  /** Слоты загрузок, которые ещё не завершены и не отменены. */
   countActiveMultipart(): Promise<number>;
 }
 
-/** Rows as the cleanup pass handles them: find what went stale, then settle it. */
+/** Строки метаданных для поиска и обработки просроченных загрузок при уборке. */
 export interface FileRowsForCleanup {
-  /** Reserved rows past their TTL, oldest first. */
+  /** Просроченные резервирования, начиная с самых старых. */
   listExpiredPending(ttlHours: number): Promise<StoredFile[]>;
 
   /**
-   * Which of these upload ids the metadata table still knows about. The orphan
-   * sweep treats anything missing here as an upload no row can reach, so this
-   * one question is asked of every row, deleted and settled ones included.
+   * Идентификаторы загрузок, известные таблице метаданных. Уборка считает
+   * остальные загрузки сиротами, поэтому проверяются все строки, включая
+   * удалённые и уже обработанные.
    */
   findKnownUploadIds(ids: string[]): Promise<Set<string>>;
 }

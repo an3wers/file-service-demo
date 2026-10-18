@@ -66,11 +66,11 @@ export function createConfirmationModule({
     uploadId,
     plan,
   }: LiveMultipartUpload): Promise<void> {
-    // The part list comes from storage rather than from the client, so the
-    // result reflects the bytes that were actually stored.
+    // Список частей берём из хранилища, чтобы результат соответствовал
+    // действительно сохранённым байтам.
     const parts = await objectStore.listParts(key, uploadId);
 
-    if (!parts) return; // Already assembled, or never existed; the object decides.
+    if (!parts) return; // Уже собрана или не существовала; результат определяется по объекту.
 
     if (parts.length !== plan.partCount) {
       throw new MultipartIncompleteError(

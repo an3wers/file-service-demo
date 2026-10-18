@@ -22,17 +22,16 @@ export const MIB = 1024 * 1024;
 const GIB = 1024 * MIB;
 const BUCKET = "test-bucket";
 
-/** A 12 MiB file: three parts by the plan — 5 MiB, 5 MiB and 2 MiB. */
+/** Файл размером 12 МиБ: три части по плану — 5 МиБ, 5 МиБ и 2 МиБ. */
 export const THREE_PART_SIZE = 12 * MIB;
 
-/** How long a reservation stays untouched here; `advance` past it to expire one. */
+/** Срок резервирования; `advance` за его пределы делает резервирование просроченным. */
 export const PENDING_TTL_HOURS = 24;
 
 /**
- * The policy is stated here rather than read from the environment: a test picks
- * limits small enough to be seen in three parts and two uploads. Part size hits
- * the protocol floor of 5 MiB, so the plan is built on that rather than on
- * something smaller.
+ * Политика задана явно, чтобы тест мог проверить пределы на трёх частях
+ * и двух загрузках без изменения окружения. Размер части соответствует
+ * нижней границе протокола 5 МиБ; план строится с учётом этого ограничения.
  */
 function testPolicy(overrides: Partial<UploadPolicy> = {}): UploadPolicy {
   return {
@@ -57,27 +56,27 @@ function testPolicy(overrides: Partial<UploadPolicy> = {}): UploadPolicy {
 
 export interface Harness {
   dependencies: FilesModuleDependencies;
-  /** The uploads and catalog scenarios merged behind one facade, as routes see it. */
+  /** Сценарии загрузки и каталога объединены в фасад, доступный маршрутам. */
   files: UploadsModule & CatalogModule;
   startMultipart(
     input: CreatePresignedUploadInput & { size: number },
   ): Promise<PresignMultipartResult>;
   confirmation: ConfirmationModule;
   operations: UploadOperations;
-  /** The real cleanup module, on the same storage and rows. */
+  /** Настоящий модуль уборки с теми же хранилищем и строками метаданных. */
   cleanup: CleanupModule;
   objectStore: MemoryObjectStore;
   fileRows: MemoryFileRows;
   policy: UploadPolicy;
   /**
-   * Moves the shared clock forward: how a fresh reservation becomes expired.
-   * It is the same clock `fileRows.advance` turns — one of the two doors, not
-   * two clocks.
+   * Передвигает общие часы, превращая свежее резервирование в просроченное.
+   * `fileRows.advance` меняет эти же часы: это два способа управлять
+   * одним временем.
    */
   advance(hours: number): void;
-  /** The metadata row as a router would see it: by id. */
+  /** Строка метаданных по идентификатору, как её видит маршрутизатор. */
   rowOf(id: string): Promise<StoredFile>;
-  /** How many rows were written at all, deleted and failed ones included. */
+  /** Число всех записанных строк, включая удалённые и неудавшиеся загрузки. */
   rowCount(): Promise<number>;
 }
 
@@ -125,8 +124,8 @@ export function buildHarness(
       clock.advance(hours);
     },
     async rowCount() {
-      // A row with no live upload is invisible to the active-upload count, so
-      // "no row was written" is checked by listing rather than by that count.
+      // Строка без живой загрузки не входит в число активных загрузок, поэтому
+      // отсутствие вставленной строки проверяется через список строк.
       const { items } = await fileRows.listFiles({
         recursive: true,
         directory: "",
@@ -150,7 +149,7 @@ export function buildHarness(
   };
 }
 
-/** Hands back the thrown error, so a test can check its code and not just the throw. */
+/** Возвращает выброшенную ошибку, чтобы тест проверял её код, а не только факт сбоя. */
 export async function thrownBy(run: () => Promise<unknown>): Promise<Error> {
   try {
     await run();

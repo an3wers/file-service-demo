@@ -1,19 +1,18 @@
 /**
- * The failure knob the second implementations carry.
+ * Позволяет тестовым реализациям однократно воспроизвести отказ зависимости.
  *
- * Both of them model state rather than scripting answers, so the only thing a
- * test cannot reach by driving them normally is a dependency that refuses:
- * storage that is down, a table that rejects a row. This arms exactly one such
- * refusal, and the next call to that method spends it.
+ * При обычной работе они хранят состояние. Этот переключатель позволяет
+ * дополнительно проверить недоступность хранилища или отказ таблицы:
+ * следующий вызов указанного метода выбрасывает заданную ошибку.
  *
- * One call, not a mode: the paths worth testing are the ones that undo a side
- * effect after a failure, and they have to be able to finish undoing it.
+ * Отказ срабатывает один раз, чтобы последующие действия по откату
+ * могли завершиться успешно.
  */
 export interface FailureSwitch<M extends string> {
-  /** Throws the armed error when this is the armed method, and disarms it. */
+  /** Выбрасывает подготовленную ошибку для выбранного метода и сбрасывает её. */
   check(method: M): void;
 
-  /** Makes the next call to this method fail, for the error paths. */
+  /** Отклоняет следующий вызов этого метода для проверки обработки ошибок. */
   failNext(method: M, error: unknown): void;
 }
 

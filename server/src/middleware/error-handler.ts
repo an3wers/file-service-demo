@@ -22,9 +22,9 @@ export const notFoundHandler: RequestHandler = (req, _res, next) => {
 };
 
 /**
- * Normalizes everything that can reach the handler into an AppError, so status,
- * code and logging are decided once rather than per branch. Client-facing codes
- * therefore all come from `errors.ts`, including the ones Multer raises.
+ * Приводит ошибки к AppError, чтобы статус, код и запись в журнал выбирались
+ * единообразно. Все коды ошибок для клиента, включая ошибки Multer,
+ * берутся из `errors.ts`.
  */
 function toAppError(error: unknown, mappers: readonly ErrorMapper[]): AppError {
   if (error instanceof AppError) {
@@ -78,8 +78,8 @@ export const createErrorHandler =
   (mappers: readonly ErrorMapper[]): ErrorRequestHandler =>
   (error, req, res, _next) => {
     const appError = toAppError(error, mappers);
-    // `req.log` is the pino-http child carrying `req.id`, so the error line can be
-    // matched against the access line for the same request.
+    // `req.log` — дочерний журнал pino-http с `req.id`, позволяющий сопоставить
+    // ошибку с записью доступа для того же запроса.
     const log = req.log ?? logger;
 
     log[appError.statusCode >= 500 ? "error" : "warn"](

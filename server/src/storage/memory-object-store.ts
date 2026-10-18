@@ -11,28 +11,24 @@ import type {
 } from "./object-store.js";
 
 /**
- * The second adapter: storage as a Map, with the S3 behaviours this service
- * actually leans on.
+ * Адаптер хранилища на Map воспроизводит нужное сервису поведение S3.
  *
- * It models state rather than scripting answers, so a test can assert that an
- * upload ended up assembled instead of asserting that we called the right
- * method. The rules reproduced here are the ones the code depends on:
+ * Хранит состояние, чтобы тесты проверяли результат загрузки, а не только
+ * вызовы методов. Правила, на которые опирается код:
  *
- * - parts come back ascending by part number;
- * - an upload disappears once it is completed or aborted, and every later call
- *   for it answers "no such upload";
- * - no object exists at the key until the upload is assembled;
- * - ETags are quoted, and echoing them back verbatim is what completion needs;
- * - an upload carries the moment it was opened, which is the only thing the
- *   orphan sweep has to judge its age by.
+ * - части возвращаются по возрастанию номера;
+ * - завершённая или отменённая загрузка исчезает, последующие обращения
+ *   сообщают об её отсутствии;
+ * - объект по ключу появляется только после сборки;
+ * - ETag заключён в кавычки и возвращается при завершении без изменений;
+ * - время открытия загрузки позволяет уборке определить возраст сироты.
  *
- * The clock comes from outside so that storage and the metadata table can share
- * one: an upload opened before the sweep's cutoff and the row reserved with it
- * have to age together.
+ * Часы передаются извне, чтобы хранилище и таблица метаданных использовали
+ * одно время: загрузка и её резервирование должны стареть согласованно.
  *
- * Signed URLs are fabricated. They are inspectable, but nothing can be uploaded
- * through them — a test moves bytes with `uploadObject` and `uploadPart`, which
- * is what the client would have done with the URL.
+ * Подписанные ссылки условные: их можно проверить, но нельзя использовать
+ * для передачи байтов. В тесте действия клиента выполняются через
+ * `uploadObject` и `uploadPart`.
  */
 
 interface StoredBytes {
@@ -47,21 +43,21 @@ interface OpenUpload {
   parts: Map<number, { body: Buffer; etag: string }>;
 }
 
-/** S3 quotes its ETags, and completion echoes them back including the quotes. */
+/** S3 заключает ETag в кавычки; при завершении они передаются обратно вместе с кавычками. */
 function etagOf(body: Buffer): string {
   return `"${createHash("md5").update(body).digest("hex")}"`;
 }
 
 export interface MemoryObjectStore extends ObjectStore {
-  /** What the client does with a `signUpload` URL. */
+  /** Действие клиента по ссылке, полученной через `signUpload`. */
   uploadObject(key: string, body: Buffer, contentType?: string): void;
-  /** What the client does with a `signPart` URL. */
+  /** Действие клиента по ссылке, полученной через `signPart`. */
   uploadPart(uploadId: string, partNumber: number, body: Buffer): void;
   objectAt(key: string): StoredBytes | null;
-  /** Every key bytes are stored under: what shows that no orphan was left. */
+  /** Все объектные ключи с сохранёнными байтами для проверки отсутствия сирот. */
   objectKeys(): string[];
   openUploads(): MultipartUpload[];
-  /** Makes the next call to this method fail, for the error paths. */
+  /** Отклоняет следующий вызов этого метода для проверки обработки ошибок. */
   failNext(method: keyof ObjectStore, error: unknown): void;
 }
 
@@ -73,7 +69,7 @@ export function createMemoryObjectStore(
   const clock = options.clock ?? createTestClock();
   const failures = createFailureSwitch<keyof ObjectStore>();
 
-  /** Storage is reached by id, not by key: a stale key would still find it. */
+  /** Загрузку ищем по идентификатору: поиск по устаревшему ключу мог бы найти другую загрузку. */
   const openUpload = (uploadId: string): OpenUpload | undefined =>
     uploads.get(uploadId);
 
