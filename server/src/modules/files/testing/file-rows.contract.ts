@@ -2,7 +2,11 @@ import { randomUUID } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import { AppError, ERROR_CODES } from "../../../errors.js";
 import { FileNotFoundError } from "../domain/errors.js";
-import type { FileRows, InsertFileInput } from "../domain/ports/file-rows.js";
+import type {
+  FileRows,
+  InsertFileInput,
+  ListFilesParams,
+} from "../domain/ports/file-rows.js";
 
 function reservation(
   overrides: Partial<InsertFileInput> = {},
@@ -84,6 +88,57 @@ export function describeFileRowsErrors(
         statusCode: 409,
         code: ERROR_CODES.DUPLICATE_RESOURCE,
       });
+    });
+  });
+}
+
+export function describeFileRowsPagination(
+  name: string,
+  create: () => FileRows,
+): void {
+  describe(`пагинация строк метаданных: ${name}`, () => {
+    it("сохраняет количество совпадений на странице за пределами списка", async () => {
+      const rows = create();
+      for (const directory of ["docs", "docs/2026", "other"]) {
+        await rows.insertFile(reservation({ directory, status: "ready" }));
+      }
+      await rows.insertFile(
+        reservation({ directory: "docs", status: "pending" }),
+      );
+      await rows.insertFile(
+        reservation({
+          directory: "docs",
+          status: "ready",
+          originalName: "other.bin",
+        }),
+      );
+      const deleted = await rows.insertFile(
+        reservation({ directory: "docs", status: "ready" }),
+      );
+      await rows.softDeleteFile(deleted.id);
+
+      const params: ListFilesParams = {
+        directory: "docs",
+        recursive: false,
+        search: "REPORT",
+        status: "ready",
+        page: 3,
+        limit: 1,
+        sort: "created_at",
+        order: "desc",
+      };
+      expect(await rows.listFiles(params)).toEqual({ items: [], total: 1 });
+      expect(await rows.listFiles({ ...params, recursive: true })).toEqual({
+        items: [],
+        total: 2,
+      });
+      expect(await rows.listFiles({ ...params, search: "missing" })).toEqual({
+        items: [],
+        total: 0,
+      });
+      expect(
+        await rows.listFiles({ ...params, search: "missing", page: 1 }),
+      ).toEqual({ items: [], total: 0 });
     });
   });
 }

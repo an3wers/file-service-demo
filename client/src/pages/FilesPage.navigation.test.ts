@@ -5,6 +5,7 @@ import { fireEvent, screen } from "@testing-library/vue";
 import FilesPage from "./FilesPage.vue";
 import { useFileBrowser } from "@/composables/useFileBrowser";
 import { startSession } from "@/api/session";
+import type { FileDto } from "@/types/api";
 
 function json(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), {
@@ -40,6 +41,75 @@ beforeEach(() => {
 afterEach(() => vi.useRealTimers());
 
 describe("состояние списка файлов в адресе страницы", () => {
+  it.each([2, 3])(
+    "возвращает к оставшимся файлам после удаления последнего файла страницы %i",
+    async (initialPage) => {
+      let deleted = false;
+      const file: FileDto = {
+        id: "c3346aa8-ad3d-4e74-8c13-8c7a04078a72",
+        name: "report-last.txt",
+        directory: "docs",
+        extension: "txt",
+        contentType: "text/plain",
+        size: 1,
+        etag: null,
+        status: "ready",
+        uploadSource: "server",
+        bucket: "test",
+        key: "docs/last.txt",
+        createdAt: "2026-01-01T00:00:00Z",
+        updatedAt: "2026-01-01T00:00:00Z",
+      };
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async (url: string, init?: RequestInit) => {
+          const parsed = new URL(url, "http://localhost");
+          if (init?.method === "DELETE") {
+            deleted = true;
+            return new Response(null, { status: 204 });
+          }
+          if (parsed.pathname === "/api/directories")
+            return json({ parent: "docs", items: [] });
+          const page = Number(parsed.searchParams.get("page"));
+          const total = (initialPage - 1) * 20 + (deleted ? 0 : 1);
+          return json({
+            items:
+              page === initialPage
+                ? deleted
+                  ? []
+                  : [file]
+                : [{ ...file, id: "remaining", name: "report-remaining.txt" }],
+            pagination: {
+              page,
+              limit: 20,
+              total,
+              totalPages: Math.ceil(total / 20),
+            },
+          });
+        }),
+      );
+      const { router } = await mountPage(
+        `/?directory=docs&search=report&page=${initialPage}&display=compact`,
+      );
+      await fireEvent.click(
+        screen.getByRole("button", { name: "Удалить файл" }),
+      );
+      await flushPromises();
+      await fireEvent.click(screen.getByRole("button", { name: "Удалить" }));
+      await flushPromises();
+      await flushPromises();
+
+      expect(screen.getByText("report-remaining.txt")).toBeTruthy();
+      expect(screen.queryByText("report-last.txt")).toBeNull();
+      expect(router.currentRoute.value.query).toEqual({
+        directory: "docs",
+        search: "report",
+        display: "compact",
+        ...(initialPage === 3 ? { page: "2" } : {}),
+      });
+    },
+  );
+
   it("восстанавливает каталог, поиск и страницу по прямой ссылке и при повторном открытии", async () => {
     const requests: URL[] = [];
     vi.stubGlobal(

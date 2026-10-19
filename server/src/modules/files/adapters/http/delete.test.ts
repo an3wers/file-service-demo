@@ -32,6 +32,38 @@ async function setup() {
 }
 
 describe("публичный сценарий удаления файла", () => {
+  it("сохраняет общее количество на опустевшей странице после удаления", async () => {
+    const { base } = await setup();
+    const form = new FormData();
+    form.append("file", new Blob(["second"]), "second.txt");
+    expect((await fetch(base, { method: "POST", body: form })).status).toBe(
+      201,
+    );
+    const page = await (await fetch(`${base}?page=2&limit=1`)).json();
+    expect(page.pagination).toEqual({
+      page: 2,
+      limit: 1,
+      total: 2,
+      totalPages: 2,
+    });
+    expect(
+      (await fetch(`${base}/${page.items[0].id}`, { method: "DELETE" })).status,
+    ).toBe(204);
+
+    const remaining = await fetch(`${base}?page=2&limit=1`);
+    expect(remaining.status).toBe(200);
+    expect(await remaining.json()).toEqual({
+      items: [],
+      pagination: { page: 2, limit: 1, total: 1, totalPages: 1 },
+    });
+    const missing = await fetch(`${base}?page=2&limit=1&search=missing`);
+    expect(missing.status).toBe(200);
+    expect(await missing.json()).toEqual({
+      items: [],
+      pagination: { page: 2, limit: 1, total: 0, totalPages: 0 },
+    });
+  });
+
   it("удаляет готовый файл и допускает безопасный повтор удаления", async () => {
     const { base, file, objectStore } = await setup();
     expect(

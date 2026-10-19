@@ -348,11 +348,9 @@ export function createMemoryFileRows(
       const offset = (params.page - 1) * params.limit;
       const items = matched.slice(offset, offset + params.limit).map(copy);
 
-      // В SQL итог передаётся вместе со страницей; если страница за концом списка,
-      // итога тоже нет. Здесь воспроизводится то же значение.
       return {
         items: items.map(toStoredFile),
-        total: items.length > 0 ? matched.length : 0,
+        total: matched.length,
       };
     },
 

@@ -3,7 +3,10 @@ import { afterAll, beforeAll, beforeEach } from "vitest";
 import { pool } from "../../../../db/pool.js";
 import { migrate } from "../../../../db/migrate.js";
 import { createSqlFileRows } from "./sql-file-rows.js";
-import { describeFileRowsErrors } from "../../testing/file-rows.contract.js";
+import {
+  describeFileRowsErrors,
+  describeFileRowsPagination,
+} from "../../testing/file-rows.contract.js";
 
 const schema = `file_rows_test_${randomUUID().replaceAll("-", "")}`;
 let created = false;
@@ -16,6 +19,9 @@ beforeAll(async () => {
 });
 beforeEach(async () => {
   await pool.query("truncate files, upload_operations, upload_terminations");
+  await pool.query(`insert into directories (path, parent, name)
+    values ('docs', '', 'docs'), ('docs/2026', 'docs', '2026'), ('other', '', 'other')
+    on conflict (path) do nothing`);
 });
 afterAll(async () => {
   if (created) await pool.query(`drop schema ${schema} cascade`);
@@ -23,3 +29,5 @@ afterAll(async () => {
 });
 
 describeFileRowsErrors("PostgreSQL", () => createSqlFileRows("test"));
+
+describeFileRowsPagination("PostgreSQL", () => createSqlFileRows("test"));

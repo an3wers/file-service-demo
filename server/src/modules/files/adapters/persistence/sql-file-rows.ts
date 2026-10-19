@@ -140,7 +140,6 @@ export async function listFiles(
   const limit = addParam(params.limit);
   const offset = addParam((params.page - 1) * params.limit);
 
-  // count(*) over() возвращает итог вместе со страницей, экономя отдельный запрос.
   const { rows } = await execute<FileRow & { total_count: number }>(
     `select *, count(*) over() as total_count
        from files
@@ -150,9 +149,18 @@ export async function listFiles(
     values,
   );
 
+  let total = rows[0]?.total_count ?? 0;
+  if (rows.length === 0 && params.page > 1) {
+    const result = await execute<{ total: number }>(
+      `select count(*) as total from files where ${conditions.join(" and ")}`,
+      values.slice(0, -2),
+    );
+    total = result.rows[0]!.total;
+  }
+
   return {
     items: rows.map(toStoredFile),
-    total: rows[0]?.total_count ?? 0,
+    total,
   };
 }
 

@@ -99,6 +99,12 @@ async function load(): Promise<void> {
       return;
     }
 
+    const lastPage = Math.max(1, filesResponse.pagination.totalPages);
+    if (page.value > lastPage) {
+      setPage(lastPage);
+      return;
+    }
+
     files.value = filesResponse.items;
     pagination.value = filesResponse.pagination;
     directories.value = directoriesResponse.items;
