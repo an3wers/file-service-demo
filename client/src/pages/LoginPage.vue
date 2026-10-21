@@ -140,6 +140,9 @@ async function submit(): Promise<void> {
               </Button>
             </FieldGroup>
           </form>
+          <a href="/register" class="mt-4 block text-center text-sm underline"
+            >Зарегистрироваться</a
+          >
         </CardContent>
       </Card>
     </main>

@@ -26,6 +26,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   vi.mocked(nodemailer.createTransport).mockReturnValue({
     sendMail,
+    close: vi.fn(),
   } as unknown as ReturnType<typeof nodemailer.createTransport>);
   sendMail.mockResolvedValue({
     messageId: "smtp-id",

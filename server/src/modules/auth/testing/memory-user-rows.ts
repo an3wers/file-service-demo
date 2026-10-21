@@ -17,7 +17,7 @@ export function createMemoryUserRows(): MemoryUserRows {
         return;
       }
 
-      byId.set(user.id, { ...user, tokenVersion: 0 });
+      byId.set(user.id, { ...user, tokenVersion: 0, state: "active" });
     },
 
     async findByLogin(login) {

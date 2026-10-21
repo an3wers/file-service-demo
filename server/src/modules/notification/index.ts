@@ -17,20 +17,23 @@ export function createNotification(
   settings: NotificationSettings,
 ): Notification {
   return {
-    async sendEmail(message) {
+    async sendEmail(message, options) {
       if (!messageSchema.safeParse(message).success)
         throw new NotificationError("INVALID_EMAIL_MESSAGE");
       if (!settings.enabled)
         throw new NotificationError("NOTIFICATION_DISABLED");
       let result;
       try {
-        result = await settings.transport.send({
-          to: message.to,
-          subject: message.subject,
-          text: message.text,
-          ...(message.html === undefined ? {} : { html: message.html }),
-          from: settings.from,
-        });
+        result = await settings.transport.send(
+          {
+            to: message.to,
+            subject: message.subject,
+            text: message.text,
+            ...(message.html === undefined ? {} : { html: message.html }),
+            from: settings.from,
+          },
+          options,
+        );
       } catch (cause) {
         const err = new NotificationError("EMAIL_SEND_FAILED", { cause });
         throw err;

@@ -3,4 +3,5 @@ export interface User {
   login: string;
   passwordHash: string;
   tokenVersion: number;
+  state: "active" | "inactive";
 }

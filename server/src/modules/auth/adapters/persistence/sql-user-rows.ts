@@ -7,6 +7,7 @@ interface UserRow {
   login: string;
   password_hash: string;
   token_version: number;
+  state: "active" | "inactive";
 }
 
 function toUser(row: UserRow): User {
@@ -15,6 +16,7 @@ function toUser(row: UserRow): User {
     login: row.login,
     passwordHash: row.password_hash,
     tokenVersion: row.token_version,
+    state: row.state,
   };
 }
 

@@ -1,5 +1,9 @@
-import type { AuthSession } from "@/api/generated";
-import { sendAuthRequest } from "./client";
+import type {
+  AuthSession,
+  RegistrationResult,
+  RegisterData,
+} from "@/api/generated";
+import { sendAuthRequest, sendRequest } from "./client";
 import { clearSession, startSession } from "./session";
 
 export async function login(login: string, password: string): Promise<void> {
@@ -15,4 +19,16 @@ export async function login(login: string, password: string): Promise<void> {
 export async function logout(): Promise<void> {
   clearSession();
   await sendAuthRequest<void>("/auth/logout", { method: "POST" });
+}
+
+export function register(
+  input: RegisterData["body"],
+  signal: AbortSignal,
+): Promise<RegistrationResult> {
+  return sendRequest<RegistrationResult>("/auth/register", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+    signal,
+  });
 }

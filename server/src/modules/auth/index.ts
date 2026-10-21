@@ -6,6 +6,10 @@ import { createJoseTokens } from "./adapters/tokens/jose-tokens.js";
 import { syncEnvironmentUser } from "./application/environment-user.js";
 import type { EnvironmentUserSync } from "./application/environment-user.js";
 import { createSessionsModule } from "./application/sessions.js";
+import { setTimeout as wait } from "node:timers/promises";
+import type { Notification } from "../notification/index.js";
+import { createRegistration } from "./application/registration.js";
+import { createSqlRegistrationStore } from "./adapters/persistence/sql-registration-store.js";
 import { systemClock } from "./domain/ports/clock.js";
 
 export type { EnvironmentUserSync } from "./application/environment-user.js";
@@ -27,7 +31,17 @@ export interface AuthHttpAssembly {
   requireAuth: RequestHandler;
 }
 
-export function createAuthHttp(settings: AuthSettings): AuthHttpAssembly {
+export interface RegistrationSettings {
+  publicUrl: string;
+  deadlineMs: number;
+  allowedOrigins: string[];
+  notification: Notification;
+}
+
+export function createAuthHttp(
+  settings: AuthSettings,
+  registrationSettings?: RegistrationSettings,
+): AuthHttpAssembly {
   const sessions = createSessionsModule({
     users: createSqlUserRows(),
     hasher: createScryptHasher(),
@@ -38,6 +52,20 @@ export function createAuthHttp(settings: AuthSettings): AuthHttpAssembly {
   return {
     authRouter: createAuthRouter(sessions, {
       cookieSecure: settings.cookieSecure,
+      ...(registrationSettings
+        ? {
+            allowedOrigins: registrationSettings.allowedOrigins,
+            registration: createRegistration({
+              ...registrationSettings,
+              store: createSqlRegistrationStore(),
+              hasher: createScryptHasher(),
+              clock: systemClock,
+              wait: async (ms) => {
+                await wait(ms);
+              },
+            }),
+          }
+        : {}),
     }),
     requireAuth: createRequireAuth(sessions),
   };

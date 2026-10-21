@@ -12,6 +12,12 @@ declare module "vue-router" {
 
 const routes: RouteRecordRaw[] = [
   {
+    path: "/register",
+    name: "register",
+    component: () => import("@/pages/RegisterPage.vue"),
+    meta: { guestOnly: true },
+  },
+  {
     path: "/login",
     name: "login",
     component: LoginPage,

@@ -34,15 +34,9 @@ export type DependencyCheck = {
     message?: string;
 };
 
-export type AuthSession = {
-    accessToken: string;
-    /**
-     * Сколько секунд живёт токен доступа
-     */
-    expiresIn: number;
-    user: {
-        login: string;
-    };
+export type RegistrationResult = {
+    message: string;
+    retryAfterSeconds: number;
 };
 
 export type ErrorResponse = {
@@ -51,6 +45,17 @@ export type ErrorResponse = {
         message: string;
         details?: unknown;
         requestId?: string | number;
+    };
+};
+
+export type AuthSession = {
+    accessToken: string;
+    /**
+     * Сколько секунд живёт токен доступа
+     */
+    expiresIn: number;
+    user: {
+        login: string;
     };
 };
 
@@ -236,6 +241,70 @@ export type GetReadinessResponses = {
 };
 
 export type GetReadinessResponse = GetReadinessResponses[keyof GetReadinessResponses];
+
+export type RegisterData = {
+    body: {
+        name: string;
+        email: string;
+        password: string;
+    };
+    headers: {
+        Origin: string;
+    };
+    path?: never;
+    query?: never;
+    url: '/api/auth/register';
+};
+
+export type RegisterErrors = {
+    /**
+     * BAD_REQUEST
+     */
+    400: ErrorResponse;
+    /**
+     * Нет токена доступа или он недействителен
+     */
+    401: ErrorResponse;
+    /**
+     * ORIGIN_NOT_ALLOWED
+     */
+    403: ErrorResponse;
+    /**
+     * PAYLOAD_TOO_LARGE
+     */
+    413: ErrorResponse;
+    /**
+     * UNSUPPORTED_MEDIA_TYPE
+     */
+    415: ErrorResponse;
+    /**
+     * Запрос не прошёл валидацию; details — результат z.flattenError()
+     */
+    422: ErrorResponse;
+    /**
+     * RATE_LIMITED: details.retryAfterSeconds
+     */
+    429: ErrorResponse;
+    /**
+     * Непредвиденная ошибка сервера
+     */
+    500: ErrorResponse;
+    /**
+     * Хранилище или база данных недоступны
+     */
+    503: ErrorResponse;
+};
+
+export type RegisterError = RegisterErrors[keyof RegisterErrors];
+
+export type RegisterResponses = {
+    /**
+     * Запрос обработан
+     */
+    202: RegistrationResult;
+};
+
+export type RegisterResponse = RegisterResponses[keyof RegisterResponses];
 
 export type LoginData = {
     body: {

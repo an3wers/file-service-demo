@@ -72,6 +72,7 @@ export interface AppAssemblyDependencies {
   healthRouter: AppDeps["healthRouter"];
   auth: Pick<AppDeps, "authRouter" | "requireAuth">;
   corsOrigin: string[];
+  trustedProxies?: string[];
   maxUploadSizeBytes: number;
   apiDocs?: object | undefined;
 }
@@ -92,7 +93,11 @@ function productionAppDependencies(): AppAssemblyDependencies {
       objectStore: files.objectStore,
       checkDatabase,
     }),
-    auth: createAuthHttp(config.auth),
+    auth: createAuthHttp(config.auth, {
+      ...config.registration,
+      notification: createNotification(),
+    }),
+    trustedProxies: config.trustedProxies,
     corsOrigin: config.corsOrigin,
     maxUploadSizeBytes: config.uploads.maxSizeBytes,
     apiDocs: config.apiDocsEnabled ? buildOpenApiDocument() : undefined,
@@ -110,6 +115,7 @@ export function buildApp(
     ...routers,
     ...deps.auth,
     corsOrigin: deps.corsOrigin,
+    trustedProxies: deps.trustedProxies,
     errorMappers: [mapFilesError, mapAuthError],
     apiDocs: deps.apiDocs,
     healthRouter: deps.healthRouter,

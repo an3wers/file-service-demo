@@ -34,6 +34,25 @@ const envSchema = z.object({
   CORS_ORIGIN: z.string().default("http://localhost:5173"),
   API_DOCS_ENABLED: booleanish.optional(),
 
+  AUTH_PUBLIC_URL: z.url().refine((value) => {
+    const url = new URL(value);
+    return (
+      url.protocol === "https:" &&
+      !url.username &&
+      !url.password &&
+      url.pathname === "/" &&
+      !url.search &&
+      !url.hash
+    );
+  }, "Expected a public HTTPS origin"),
+  AUTH_RESPONSE_DEADLINE_MS: z.coerce
+    .number()
+    .int()
+    .min(15000)
+    .max(15000)
+    .default(15000),
+  AUTH_ALLOWED_ORIGINS: z.string().default("http://localhost:5173"),
+  TRUSTED_PROXIES: z.string().default(""),
   NOTIFICATION_ENABLED: booleanish.default(false),
   SMTP_HOST: z.string().trim().min(1).optional(),
   SMTP_PORT: z.coerce.number().int().min(1).max(65535).optional(),
@@ -170,6 +189,16 @@ export const config = {
       }
     : { enabled: false as const },
 
+  trustedProxies: env.TRUSTED_PROXIES.split(",")
+    .map((value) => value.trim())
+    .filter(Boolean),
+  registration: {
+    publicUrl: env.AUTH_PUBLIC_URL,
+    deadlineMs: env.AUTH_RESPONSE_DEADLINE_MS,
+    allowedOrigins: env.AUTH_ALLOWED_ORIGINS.split(",")
+      .map((value) => value.trim())
+      .filter(Boolean),
+  },
   auth: {
     login: env.LOGIN_USER_APP,
     password: env.PASSWORD_USER_APP,

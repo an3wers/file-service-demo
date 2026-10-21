@@ -10,5 +10,8 @@ export interface EmailResult {
 }
 
 export interface Notification {
-  sendEmail(message: EmailMessage): Promise<EmailResult>;
+  sendEmail(
+    message: EmailMessage,
+    options?: { signal?: AbortSignal },
+  ): Promise<EmailResult>;
 }

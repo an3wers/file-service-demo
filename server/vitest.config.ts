@@ -12,6 +12,10 @@ import { defineConfig } from "vitest/config";
 const testEnv = {
   NODE_ENV: "test",
   NOTIFICATION_ENABLED: "false",
+  AUTH_PUBLIC_URL: "https://files.example.com",
+  AUTH_ALLOWED_ORIGINS: "http://localhost:5173",
+  AUTH_RESPONSE_DEADLINE_MS: "15000",
+  TRUSTED_PROXIES: "",
   LOG_LEVEL: "silent",
   PORT: "3000",
   LOGIN_USER_APP: "operator",

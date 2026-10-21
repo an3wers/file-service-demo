@@ -54,7 +54,7 @@ export function createSessionsModule({
       const user =
         login === allowedLogin ? await users.findByLogin(login) : null;
 
-      if (!user) {
+      if (!user || user.state !== "active") {
         await hasher.hash(password);
         throw new InvalidCredentialsError();
       }
@@ -75,6 +75,7 @@ export function createSessionsModule({
       if (
         !claims ||
         !user ||
+        user.state !== "active" ||
         user.login !== allowedLogin ||
         user.tokenVersion !== claims.version
       ) {
