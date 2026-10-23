@@ -69,18 +69,16 @@ async function start(
       password: " пароль😀 12345 ",
     },
     origin: string | null = "https://files.example.com",
+    path = "/api/auth/register",
   ) =>
-    fetch(
-      `http://127.0.0.1:${(server.address() as AddressInfo).port}/api/auth/register`,
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          ...(origin === null ? {} : { Origin: origin }),
-        },
-        body: JSON.stringify(body),
+    fetch(`http://127.0.0.1:${(server.address() as AddressInfo).port}${path}`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...(origin === null ? {} : { Origin: origin }),
       },
-    );
+      body: JSON.stringify(body),
+    });
   return {
     base: `http://127.0.0.1:${(server.address() as AddressInfo).port}`,
     advance: (ms: number) => {
@@ -505,4 +503,111 @@ it("медленное тело расходует остаток срока п�
   } finally {
     req.destroy();
   }
+});
+
+const REGISTER_PATHS = [
+  "/api/auth/register",
+  "/api/auth/register/",
+  "/api/auth/REGISTER",
+];
+
+const user = (index: number) => ({
+  name: "Имя",
+  email: `user${index}@example.com`,
+  password: "a".repeat(12),
+});
+
+it("принимает регистрацию на всех эквивалентных путях с общим сроком", async () => {
+  const h = await start();
+  for (const [index, path] of REGISTER_PATHS.entries()) {
+    const before = h.elapsed();
+    const response = await h.request(user(index), undefined, path);
+    expect(response.status).toBe(202);
+    expect(response.headers.get("cache-control")).toBe("no-store");
+    expect(h.elapsed() - before).toBe(15000);
+  }
+  expect(h.store.save).toHaveBeenCalledTimes(REGISTER_PATHS.length);
+  expect(h.sendEmail).toHaveBeenCalledTimes(REGISTER_PATHS.length);
+});
+
+it("чередование эквивалентных путей расходует одну IP-квоту", async () => {
+  const h = await start();
+  let ipCalls = 0;
+  vi.mocked(h.store.consume).mockImplementation(async (key) =>
+    key.startsWith("mail:ip:") && ++ipCalls > REGISTER_PATHS.length ? 30 : 0,
+  );
+  const statuses: number[] = [];
+  for (const [index, path] of [
+    ...REGISTER_PATHS,
+    ...REGISTER_PATHS,
+  ].entries()) {
+    const response = await h.request(user(index), undefined, path);
+    statuses.push(response.status);
+    if (response.status === 429) {
+      expect(response.headers.get("retry-after")).toBe("30");
+      expect(response.headers.get("cache-control")).toBe("no-store");
+      expect((await response.json()).error.details).toEqual({
+        retryAfterSeconds: 30,
+      });
+    }
+  }
+  expect(statuses).toEqual([
+    ...REGISTER_PATHS.map(() => 202),
+    ...REGISTER_PATHS.map(() => 429),
+  ]);
+  const ipKeys = vi
+    .mocked(h.store.consume)
+    .mock.calls.map(([key]) => key)
+    .filter((key) => key.startsWith("mail:ip:"));
+  expect(ipKeys).toHaveLength(REGISTER_PATHS.length * 2);
+  expect(new Set(ipKeys).size).toBe(1);
+  expect(h.store.save).toHaveBeenCalledTimes(REGISTER_PATHS.length);
+});
+
+it("на каждом эквивалентном пути проверяет Origin, тело и поля с учётом IP-квоты", async () => {
+  const h = await start();
+  const invalidBodies = [
+    ["{private-secret", "application/json", 400, "BAD_REQUEST"],
+    ["private-secret", "text/plain", 415, "UNSUPPORTED_MEDIA_TYPE"],
+    [
+      JSON.stringify({ password: "private-secret".repeat(3000) }),
+      "application/json",
+      413,
+      "PAYLOAD_TOO_LARGE",
+    ],
+    [
+      JSON.stringify({ name: "", email: "bad", password: "private-secret" }),
+      "application/json",
+      422,
+      "VALIDATION_ERROR",
+    ],
+  ] as const;
+  for (const path of REGISTER_PATHS) {
+    vi.mocked(h.store.consume).mockClear();
+    for (const origin of [null, "null", "https://other.example.com"]) {
+      const response = await h.request(user(0), origin, path);
+      expect(response.status).toBe(403);
+      expect(response.headers.get("cache-control")).toBe("no-store");
+      expect((await response.json()).error.code).toBe("ORIGIN_NOT_ALLOWED");
+    }
+    expect(h.store.consume).not.toHaveBeenCalled();
+    for (const [body, type, status, code] of invalidBodies) {
+      const response = await fetch(`${h.base}${path}`, {
+        method: "POST",
+        headers: { Origin: "https://files.example.com", "Content-Type": type },
+        body,
+      });
+      expect(response.status).toBe(status);
+      expect(response.headers.get("cache-control")).toBe("no-store");
+      const text = await response.text();
+      expect(text).not.toContain("private-secret");
+      expect(JSON.parse(text).error.code).toBe(code);
+    }
+    expect(
+      vi
+        .mocked(h.store.consume)
+        .mock.calls.filter(([key]) => key.startsWith("mail:ip:")),
+    ).toHaveLength(invalidBodies.length);
+  }
+  expect(h.store.save).not.toHaveBeenCalled();
 });
