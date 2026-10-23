@@ -381,3 +381,192 @@ it("ожидание COMMIT ограничено сроком и позднее 
     true,
   );
 });
+
+async function insertEvents(
+  key: string,
+  windowMs: number,
+  occurredAt: Date,
+  count = 1,
+) {
+  await pool.query(
+    "insert into auth_mail_events (key, window_ms, occurred_at) select $1, $2, $3 from generate_series(1, $4)",
+    [key, windowMs, occurredAt, count],
+  );
+}
+
+const eventCount = async () =>
+  Number(
+    (await pool.query("select count(*) from auth_mail_events")).rows[0]?.count,
+  );
+
+it("подсчёт исключает события на границе обоих окон без физического удаления", async () => {
+  const now = new Date();
+  await insertEvents("boundary", 60000, new Date(now.getTime() - 60000));
+  await insertEvents("boundary", 3600000, new Date(now.getTime() - 3600000), 5);
+  expect(
+    await createSqlRegistrationStore().consume(
+      "boundary",
+      [
+        { windowMs: 60000, maximum: 1 },
+        { windowMs: 3600000, maximum: 5 },
+      ],
+      now,
+      deadline(),
+    ),
+  ).toBe(0);
+  expect(await eventCount()).toBe(8);
+});
+
+it("уборка удаляет просроченные события неиспользуемых ключей и сохраняет действующие, пользователей и секреты", async () => {
+  const now = Date.now();
+  const store = createSqlRegistrationStore();
+  await store.save(record(), deadline());
+  await insertEvents("stale", 60000, new Date(now - 60000));
+  await insertEvents("stale", 3600000, new Date(now - 3600000));
+  await insertEvents("live", 60000, new Date(now - 59999));
+  await insertEvents("live", 3600000, new Date(now - 3599999));
+  await insertEvents("live", 3600000, new Date(now - 60000));
+  expect(await store.removeExpiredEvents(new Date(now))).toBe(2);
+  expect(
+    (
+      await pool.query(
+        "select key, window_ms from auth_mail_events order by window_ms, occurred_at",
+      )
+    ).rows,
+  ).toEqual([
+    { key: "live", window_ms: 60000 },
+    { key: "live", window_ms: 3600000 },
+    { key: "live", window_ms: 3600000 },
+  ]);
+  expect((await pool.query("select count(*) from users")).rows[0]?.count).toBe(
+    1,
+  );
+  expect(
+    (await pool.query("select count(*) from auth_secrets")).rows[0]?.count,
+  ).toBe(1);
+});
+
+it("один проход уборки удаляет не более 1000 событий, следующие продолжают", async () => {
+  const now = new Date();
+  await insertEvents("bulk", 60000, new Date(now.getTime() - 120000), 2500);
+  await insertEvents("bulk", 60000, now);
+  const store = createSqlRegistrationStore();
+  expect(await store.removeExpiredEvents(now)).toBe(1000);
+  expect(await eventCount()).toBe(1501);
+  expect(await store.removeExpiredEvents(now)).toBe(1000);
+  expect(await store.removeExpiredEvents(now)).toBe(500);
+  expect(await store.removeExpiredEvents(now)).toBe(0);
+  expect(await eventCount()).toBe(1);
+});
+
+it("конкурентные проходы уборки и регистрации не теряют действующие события и не обходят квоту", async () => {
+  const now = new Date();
+  await insertEvents(
+    "mail:ip:race",
+    3600000,
+    new Date(now.getTime() - 3600000),
+    3000,
+  );
+  const limits = [{ windowMs: 3600000, maximum: 20 }];
+  const results = await Promise.all([
+    ...Array.from({ length: 6 }, () =>
+      createSqlRegistrationStore().removeExpiredEvents(now),
+    ),
+    ...Array.from({ length: 40 }, () =>
+      createSqlRegistrationStore().consume(
+        "mail:ip:race",
+        limits,
+        now,
+        deadline(),
+      ),
+    ),
+  ]);
+  const removed = results.slice(0, 6).reduce((sum, value) => sum + value, 0);
+  const retries = results.slice(6);
+  expect(removed).toBeLessThanOrEqual(3000);
+  expect(retries.filter((retry) => retry === 0)).toHaveLength(20);
+  expect(retries.filter((retry) => retry === 3600)).toHaveLength(20);
+  expect(await eventCount()).toBe(3000 - removed + 20);
+  while ((await createSqlRegistrationStore().removeExpiredEvents(now)) > 0);
+  expect(await eventCount()).toBe(20);
+  expect(
+    await createSqlRegistrationStore().consume(
+      "mail:ip:race",
+      limits,
+      now,
+      deadline(),
+    ),
+  ).toBe(3600);
+});
+
+it("собранное HTTP-приложение соблюдает квоты без физической уборки и даёт 503 без SMTP при сбое хранилища квот", async () => {
+  const auth = createAuthHarness();
+  const store = createSqlRegistrationStore();
+  const consume = vi.fn(store.consume);
+  let offset = 0;
+  const sendEmail = vi.fn().mockResolvedValue({ messageId: "accepted" });
+  const sessions = createSessionsModule({
+    users: createSqlUserRows(),
+    hasher: auth.hasher,
+    tokens: auth.tokens,
+    login: "operator",
+  });
+  const app = createApp({
+    authRouter: createAuthRouter(sessions, {
+      cookieSecure: false,
+      registration: createRegistration({
+        store: { ...store, consume },
+        hasher: auth.hasher,
+        notification: { sendEmail },
+        publicUrl: "https://files.example.com",
+        deadlineMs: 500,
+        clock: { now: () => new Date(Date.now() + offset) },
+        wait: async (ms) => {
+          await wait(ms);
+        },
+      }),
+      allowedOrigins: ["https://files.example.com"],
+    }),
+    requireAuth: createRequireAuth(sessions),
+    healthRouter: Router(),
+    filesRouter: Router(),
+    directoriesRouter: Router(),
+    corsOrigin: [],
+    errorMappers: [mapAuthError],
+  });
+  const server = await new Promise<Server>((resolve) => {
+    const listening = app.listen(0, () => resolve(listening));
+  });
+  const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+  const register = () =>
+    fetch(`${base}/api/auth/register`, {
+      method: "POST",
+      headers: {
+        Origin: "https://files.example.com",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        name: "Имя",
+        email: "quota@example.com",
+        password: "password 123456",
+      }),
+    });
+  try {
+    expect((await register()).status).toBe(202);
+    const limited = await register();
+    expect(limited.status).toBe(429);
+    expect(Number(limited.headers.get("retry-after"))).toBeGreaterThan(58);
+    offset = 61000;
+    expect((await register()).status).toBe(202);
+    expect(await eventCount()).toBe(8);
+    expect(sendEmail).toHaveBeenCalledTimes(2);
+    consume.mockRejectedValue(new Error("database details"));
+    offset = 122000;
+    const unavailable = await register();
+    expect(unavailable.status).toBe(503);
+    expect((await unavailable.json()).error.code).toBe("SERVICE_UNAVAILABLE");
+    expect(sendEmail).toHaveBeenCalledTimes(2);
+  } finally {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  }
+});

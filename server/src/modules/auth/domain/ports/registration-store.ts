@@ -21,3 +21,7 @@ export interface RegistrationStore {
   ): Promise<number>;
   save(record: RegistrationRecord, deadline: Date): Promise<boolean>;
 }
+
+export interface MailEventCleanup {
+  removeExpiredEvents(now: Date): Promise<number>;
+}

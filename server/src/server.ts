@@ -2,7 +2,11 @@ import { buildApp, createUploadMaintenance } from "./composition.js";
 import { config } from "./config.js";
 import { checkDatabase, pool } from "./db/pool.js";
 import { logger } from "./logger.js";
-import { syncAuthUser } from "./modules/auth/index.js";
+import { startMaintenance } from "./maintenance.js";
+import {
+  createMailQuotaMaintenance,
+  syncAuthUser,
+} from "./modules/auth/index.js";
 
 // Проверяем базу при запуске, чтобы обнаружить сбой до первого рабочего запроса.
 try {
@@ -34,21 +38,19 @@ const server = app.listen(config.port, () => {
   logger.info(`API listening on http://localhost:${config.port}`);
 });
 
-const maintainUploads = createUploadMaintenance();
-let maintenance: Promise<void> | null = null;
-function runMaintenance(): void {
-  if (maintenance) return;
-  maintenance = maintainUploads()
-    .catch((error: unknown) =>
-      logger.error({ err: error }, "Не удалось завершить уборку загрузок"),
-    )
-    .finally(() => {
-      maintenance = null;
-    });
-}
-const maintenanceTimer = setInterval(runMaintenance, 15_000);
-maintenanceTimer.unref();
-runMaintenance();
+const stopMaintenance = startMaintenance(
+  [
+    {
+      run: createUploadMaintenance(),
+      failureMessage: "Не удалось завершить уборку загрузок",
+    },
+    {
+      run: createMailQuotaMaintenance(),
+      failureMessage: "Не удалось удалить просроченные события квот писем",
+    },
+  ],
+  (error, message) => logger.error({ err: error }, message),
+);
 
 let shuttingDown = false;
 
@@ -58,7 +60,7 @@ function shutdown(signal: string) {
   }
 
   shuttingDown = true;
-  clearInterval(maintenanceTimer);
+  const maintenance = stopMaintenance();
   logger.info(`${signal} received; shutting down gracefully`);
 
   server.close(async (error) => {

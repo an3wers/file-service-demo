@@ -1,8 +1,12 @@
 import type { PoolClient } from "pg";
 import { pool } from "../../../../db/pool.js";
-import type { RegistrationStore } from "../../domain/ports/registration-store.js";
+import type {
+  MailEventCleanup,
+  RegistrationStore,
+} from "../../domain/ports/registration-store.js";
 
-export function createSqlRegistrationStore(): RegistrationStore {
+export function createSqlRegistrationStore(): RegistrationStore &
+  MailEventCleanup {
   async function transaction<T>(
     deadline: Date,
     action: (client: PoolClient) => Promise<T>,
@@ -60,6 +64,17 @@ export function createSqlRegistrationStore(): RegistrationStore {
     }
   }
   return {
+    removeExpiredEvents: (now) =>
+      transaction(
+        new Date(Date.now() + 15000),
+        async (client) =>
+          (
+            await client.query(
+              "delete from auth_mail_events where ctid in (select ctid from auth_mail_events where occurred_at <= $1::timestamptz - window_ms * interval '1 millisecond' limit 1000 for update skip locked)",
+              [now],
+            )
+          ).rowCount ?? 0,
+      ),
     consume: (key, limits, now, deadline) =>
       transaction(deadline, async (client) => {
         await client.query(
@@ -68,13 +83,9 @@ export function createSqlRegistrationStore(): RegistrationStore {
         );
         let retryMs = 0;
         for (const limit of limits) {
-          await client.query(
-            "delete from auth_mail_events where key = $1 and window_ms = $2 and occurred_at <= $3",
-            [key, limit.windowMs, new Date(now.getTime() - limit.windowMs)],
-          );
           const { rows } = await client.query<{ occurred_at: Date }>(
-            "select occurred_at from auth_mail_events where key = $1 and window_ms = $2 order by occurred_at",
-            [key, limit.windowMs],
+            "select occurred_at from auth_mail_events where key = $1 and window_ms = $2 and occurred_at > $3 order by occurred_at",
+            [key, limit.windowMs, new Date(now.getTime() - limit.windowMs)],
           );
           if (rows.length >= limit.maximum) {
             retryMs = Math.max(

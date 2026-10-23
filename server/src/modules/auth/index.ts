@@ -71,6 +71,11 @@ export function createAuthHttp(
   };
 }
 
+export function createMailQuotaMaintenance(): () => Promise<number> {
+  const store = createSqlRegistrationStore();
+  return () => store.removeExpiredEvents(systemClock.now());
+}
+
 export function syncAuthUser(
   settings: Pick<AuthSettings, "login" | "password">,
 ): Promise<EnvironmentUserSync> {
