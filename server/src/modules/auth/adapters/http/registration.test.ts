@@ -1,4 +1,6 @@
+import { request as httpRequest } from "node:http";
 import type { Server } from "node:http";
+import { setTimeout as wait } from "node:timers/promises";
 import type { AddressInfo } from "node:net";
 import { Router } from "express";
 import { afterEach, expect, it, vi } from "vitest";
@@ -85,6 +87,7 @@ async function start(
       now += ms;
     },
     store,
+    hasher: auth.hasher,
     sendEmail,
     request,
     elapsed: () => now - Date.parse("2026-01-01T00:00:00Z"),
@@ -361,7 +364,136 @@ it("после исчерпания бюджета сохранением не �
     h.advance(15000);
     return true;
   });
-  expect((await h.request()).status).toBe(202);
+  const response = await h.request();
+  expect(response.status).toBe(503);
+  expect((await response.json()).error.code).toBe("SERVICE_UNAVAILABLE");
   expect(h.sendEmail).not.toHaveBeenCalled();
   expect(h.store.save).toHaveBeenCalledTimes(1);
+});
+
+it("последовательные проверки квот получают один срок и не запускают запись после него", async () => {
+  const h = await start();
+  vi.mocked(h.store.consume).mockImplementation(async () => {
+    h.advance(8000);
+    return 0;
+  });
+  const response = await h.request();
+  expect(response.status).toBe(503);
+  expect((await response.json()).error.code).toBe("SERVICE_UNAVAILABLE");
+  const deadlines = vi
+    .mocked(h.store.consume)
+    .mock.calls.map((call) => call[3]);
+  expect(deadlines).toEqual([
+    new Date("2026-01-01T00:00:15Z"),
+    new Date("2026-01-01T00:00:15Z"),
+  ]);
+  expect(h.store.save).not.toHaveBeenCalled();
+  expect(h.sendEmail).not.toHaveBeenCalled();
+});
+
+it.each(["IP", "email"])(
+  "истечение срока при проверке квоты %s даёт 503 и не продолжает позднюю обработку",
+  async (quota) => {
+    const h = await start({ realTime: true, deadlineMs: 100 });
+    let finish!: (retry: number) => void;
+    const pending = new Promise<number>((resolve) => {
+      finish = resolve;
+    });
+    if (quota === "email") vi.mocked(h.store.consume).mockResolvedValueOnce(30);
+    vi.mocked(h.store.consume).mockImplementationOnce(() => pending);
+    const started = performance.now();
+    const response = await h.request();
+    expect(response.status).toBe(503);
+    expect((await response.json()).error.code).toBe("SERVICE_UNAVAILABLE");
+    expect(performance.now() - started).toBeLessThan(500);
+    finish(0);
+    await wait(20);
+    expect(h.store.consume).toHaveBeenCalledTimes(quota === "IP" ? 1 : 2);
+    expect(h.store.save).not.toHaveBeenCalled();
+    expect(h.sendEmail).not.toHaveBeenCalled();
+  },
+);
+
+it("не создаёт пользователя после истечения срока хеширования", async () => {
+  const h = await start({ realTime: true, deadlineMs: 100 });
+  let finish!: (hash: string) => void;
+  vi.spyOn(h.hasher, "hash").mockImplementation(
+    () => new Promise<string>((resolve) => (finish = resolve)),
+  );
+  const started = performance.now();
+  const response = await h.request();
+  expect(response.status).toBe(503);
+  expect((await response.json()).error.code).toBe("SERVICE_UNAVAILABLE");
+  expect(performance.now() - started).toBeLessThan(500);
+  finish("scrypt$late");
+  await wait(20);
+  expect(h.store.save).not.toHaveBeenCalled();
+  expect(h.sendEmail).not.toHaveBeenCalled();
+});
+
+it("неизвестный результат записи даёт 503 и позднее подтверждение не запускает SMTP", async () => {
+  const h = await start({ realTime: true, deadlineMs: 100 });
+  let finish!: (send: boolean) => void;
+  vi.mocked(h.store.save).mockImplementation(
+    () => new Promise<boolean>((resolve) => (finish = resolve)),
+  );
+  const started = performance.now();
+  const response = await h.request();
+  expect(response.status).toBe(503);
+  expect((await response.json()).error.code).toBe("SERVICE_UNAVAILABLE");
+  expect(performance.now() - started).toBeLessThan(500);
+  finish(true);
+  await wait(20);
+  expect(h.store.save).toHaveBeenCalledTimes(1);
+  expect(h.sendEmail).not.toHaveBeenCalled();
+});
+
+it("медленное тело расходует остаток срока после IP-квоты и не создаёт позднего пользователя", async () => {
+  const h = await start({ realTime: true, deadlineMs: 200 });
+  vi.mocked(h.store.consume).mockImplementationOnce(async () => {
+    await wait(120);
+    return 0;
+  });
+  const body = JSON.stringify({
+    name: "Имя",
+    email: "user@example.com",
+    password: "valid password 123",
+  });
+  const started = performance.now();
+  const req = httpRequest(`${h.base}/api/auth/register`, {
+    method: "POST",
+    headers: {
+      Origin: "https://files.example.com",
+      "Content-Type": "application/json",
+      "Content-Length": Buffer.byteLength(body),
+    },
+  });
+  const response = new Promise<{ status: number; body: string }>(
+    (resolve, reject) => {
+      req.on("error", reject);
+      req.on("response", (res) => {
+        let text = "";
+        res.setEncoding("utf8");
+        res.on("data", (chunk) => (text += chunk));
+        res.on("end", () => resolve({ status: res.statusCode!, body: text }));
+      });
+    },
+  );
+  req.setTimeout(1000, () =>
+    req.destroy(new Error("Ответ не получен вовремя")),
+  );
+  try {
+    req.write(body.slice(0, -1));
+    const result = await response;
+    expect(result.status).toBe(503);
+    expect(JSON.parse(result.body).error.code).toBe("SERVICE_UNAVAILABLE");
+    expect(performance.now() - started).toBeLessThan(300);
+    req.end(body.slice(-1));
+    await wait(30);
+    expect(h.store.consume).toHaveBeenCalledTimes(1);
+    expect(h.store.save).not.toHaveBeenCalled();
+    expect(h.sendEmail).not.toHaveBeenCalled();
+  } finally {
+    req.destroy();
+  }
 });

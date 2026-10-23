@@ -7,27 +7,56 @@ export function createSqlRegistrationStore(): RegistrationStore {
     deadline: Date,
     action: (client: PoolClient) => Promise<T>,
   ): Promise<T> {
-    const client = await pool.connect();
-    try {
-      await client.query("begin");
-      const remaining = deadline.getTime() - Date.now();
-      if (remaining <= 0) throw new Error("Deadline exceeded");
-      await client.query("select set_config('statement_timeout', $1, true)", [
-        String(remaining),
-      ]);
-      await client.query("select set_config('lock_timeout', $1, true)", [
-        String(remaining),
-      ]);
-      const value = await action(client);
-      if (Date.now() >= deadline.getTime())
+    const remaining = deadline.getTime() - Date.now();
+    if (remaining <= 0) throw new Error("Deadline exceeded");
+    let client: PoolClient | undefined;
+    let expired = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timeout = new Promise<never>((_resolve, reject) => {
+      timer = setTimeout(() => {
+        expired = true;
+        client?.release(true);
+        client = undefined;
+        reject(new Error("Deadline exceeded"));
+      }, remaining);
+    });
+    async function run() {
+      const connection = await pool.connect();
+      if (expired || Date.now() >= deadline.getTime()) {
+        connection.release();
         throw new Error("Deadline exceeded");
-      await client.query("commit");
-      return value;
-    } catch (error) {
-      await client.query("rollback");
-      throw error;
+      }
+      client = connection;
+      try {
+        await connection.query("begin");
+        const remaining = deadline.getTime() - Date.now();
+        if (remaining <= 0) throw new Error("Deadline exceeded");
+        await connection.query(
+          "select set_config('statement_timeout', $1, true)",
+          [String(remaining)],
+        );
+        await connection.query("select set_config('lock_timeout', $1, true)", [
+          String(remaining),
+        ]);
+        const value = await action(connection);
+        if (Date.now() >= deadline.getTime())
+          throw new Error("Deadline exceeded");
+        await connection.query("commit");
+        if (Date.now() >= deadline.getTime())
+          throw new Error("Deadline exceeded");
+        return value;
+      } catch (error) {
+        if (!expired) await connection.query("rollback");
+        throw error;
+      } finally {
+        if (!expired) connection.release();
+        client = undefined;
+      }
+    }
+    try {
+      return await Promise.race([run(), timeout]);
     } finally {
-      client.release();
+      clearTimeout(timer);
     }
   }
   return {

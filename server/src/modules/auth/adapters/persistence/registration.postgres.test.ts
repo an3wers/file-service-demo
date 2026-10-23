@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
+import { setTimeout as wait } from "node:timers/promises";
 import { afterAll, beforeAll, beforeEach, expect, it } from "vitest";
 import { pool } from "../../../../db/pool.js";
 import { migrate } from "../../../../db/migrate.js";
@@ -184,7 +185,7 @@ it("минутный отказ расходует часовую квоту б�
   ).toBe(3540);
 });
 
-it("собранное HTTP-приложение не пускает неактивного пользователя и сохраняет запись при остановке до SMTP", async () => {
+it("собранное HTTP-приложение не пускает неактивного пользователя и сохраняет запись при неизвестном результате сохранения", async () => {
   const auth = createAuthHarness();
   const first = record();
   first.passwordHash = await auth.hasher.hash("original password");
@@ -196,23 +197,23 @@ it("собранное HTTP-приложение не пускает неакт�
     tokens: auth.tokens,
     login: first.id,
   });
-  let now = Date.now();
   const sendEmail = vi.fn();
   const registration = createRegistration({
     store: {
       ...store,
       save: async (...args) => {
-        await store.save(...args);
-        throw new Error("Остановка до SMTP");
+        const result = await store.save(...args);
+        await wait(300);
+        return result;
       },
     },
     hasher: auth.hasher,
     notification: { sendEmail },
     publicUrl: "https://files.example.com",
-    deadlineMs: 15000,
-    clock: { now: () => new Date(now) },
+    deadlineMs: 200,
+    clock: { now: () => new Date() },
     wait: async (ms) => {
-      now += ms;
+      await wait(ms);
     },
   });
   const app = createApp({
@@ -266,6 +267,12 @@ it("собранное HTTP-приложение не пускает неакт�
     expect(
       (await pool.query("select count(*) from auth_secrets")).rows[0]?.count,
     ).toBe(2);
+    expect(
+      (await pool.query("select count(*) from auth_mail_events")).rows[0]
+        ?.count,
+    ).toBe(3);
+    await wait(150);
+    expect(sendEmail).not.toHaveBeenCalled();
   } finally {
     await new Promise<void>((resolve) => server.close(() => resolve()));
   }
@@ -284,4 +291,92 @@ it("минутное окно округляет ожидание вверх и 
   expect(await consume(1)).toBe(60);
   expect(await consume(59999)).toBe(1);
   expect(await consume(60000)).toBe(0);
+});
+
+it("ожидание пула ограничено общим сроком и позднее соединение не сохраняет пользователя", async () => {
+  const held = await Promise.all(
+    Array.from({ length: pool.options.max! }, () => pool.connect()),
+  );
+  const release = wait(400).then(() => {
+    for (const client of held) client.release();
+  });
+  try {
+    const started = performance.now();
+    await expect(
+      createSqlRegistrationStore().save(record(), new Date(Date.now() + 100)),
+    ).rejects.toThrow();
+    expect(performance.now() - started).toBeLessThan(300);
+  } finally {
+    await release;
+  }
+  expect((await pool.query("select id from users")).rows).toEqual([]);
+  expect((await pool.query("select user_id from auth_secrets")).rows).toEqual(
+    [],
+  );
+  expect(pool.waitingCount).toBe(0);
+});
+
+it("последовательные SQL-блокировки не получают новый бюджет и не оставляют частичную запись", async () => {
+  const users = await pool.connect();
+  const secrets = await pool.connect();
+  await users.query("begin");
+  await users.query("lock table users in share mode");
+  await secrets.query("begin");
+  await secrets.query("lock table auth_secrets in share mode");
+  const unlockUsers = wait(250).then(() => users.query("commit"));
+  const unlockSecrets = wait(900).then(() => secrets.query("commit"));
+  try {
+    const started = performance.now();
+    await expect(
+      createSqlRegistrationStore().save(record(), new Date(Date.now() + 600)),
+    ).rejects.toThrow();
+    expect(performance.now() - started).toBeLessThan(800);
+  } finally {
+    await Promise.all([unlockUsers, unlockSecrets]);
+    users.release();
+    secrets.release();
+  }
+  expect((await pool.query("select id from users")).rows).toEqual([]);
+  expect((await pool.query("select user_id from auth_secrets")).rows).toEqual(
+    [],
+  );
+});
+
+it("ожидание COMMIT ограничено сроком и позднее сохранение не удаляется", async () => {
+  const saved = record();
+  await pool.query(`
+    create function delay_registration_commit() returns trigger language plpgsql as $$
+    begin
+      perform pg_sleep(1);
+      return new;
+    end
+    $$
+  `);
+  await pool.query(`
+    create constraint trigger delay_registration_commit
+    after insert on auth_secrets deferrable initially deferred
+    for each row execute function delay_registration_commit()
+  `);
+  try {
+    const started = performance.now();
+    await expect(
+      createSqlRegistrationStore().save(saved, new Date(Date.now() + 200)),
+    ).rejects.toThrow();
+    expect(performance.now() - started).toBeLessThan(600);
+    expect((await pool.query("select 1 as available")).rows).toEqual([
+      { available: 1 },
+    ]);
+  } finally {
+    await pool.query("drop trigger delay_registration_commit on auth_secrets");
+    await pool.query("drop function delay_registration_commit()");
+  }
+  expect((await pool.query("select id from users")).rows).toEqual([
+    { id: saved.id },
+  ]);
+  expect((await pool.query("select user_id from auth_secrets")).rows).toEqual([
+    { user_id: saved.id },
+  ]);
+  expect(await createSqlRegistrationStore().save(record(), deadline())).toBe(
+    true,
+  );
 });

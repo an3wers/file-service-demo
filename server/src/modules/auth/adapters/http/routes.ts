@@ -47,15 +47,20 @@ export function createAuthRouter(
         "Источник запроса не разрешён",
       );
     }
-    if (registration && req.path === "/register" && req.method === "POST") {
-      res.locals.registrationStarted = registration.now();
+    next();
+  });
+  const prepareRegistration: RequestHandler = async (req, res, next) => {
+    if (registration) {
+      res.locals.registrationDeadline = registration.deadline();
       res.locals.ipRetry = await registration.consumeIp(
         req.ip ?? req.socket.remoteAddress ?? "unknown",
+        res.locals.registrationDeadline,
       );
     }
     next();
-  });
-  router.use((req, _res, next) => {
+  };
+  const parseJson = express.json({ limit: "16kb", strict: false });
+  const parseBody: RequestHandler = async (req, res, next) => {
     if (
       (Number(req.headers["content-length"]) > 0 ||
         req.headers["transfer-encoding"] !== undefined) &&
@@ -67,15 +72,26 @@ export function createAuthRouter(
         "Ожидается application/json",
       );
     }
+    if (!registration || !res.locals.registrationDeadline)
+      return parseJson(req, res, next);
+    await registration.withinDeadline(
+      res.locals.registrationDeadline,
+      () =>
+        new Promise<void>((resolve, reject) => {
+          parseJson(req, res, (error) => (error ? reject(error) : resolve()));
+        }),
+    );
     next();
-  });
-  router.use(express.json({ limit: "16kb", strict: false }));
+  };
 
-  router.post("/register", async (req, res) => {
+  router.post("/register", prepareRegistration, parseBody, async (req, res) => {
     if (!registration) throw new RegistrationUnavailableError();
     const email = registrationEmailSchema.safeParse(req.body?.email);
     const emailAdmission = email.success
-      ? await registration.consumeEmail(email.data)
+      ? await registration.consumeEmail(
+          email.data,
+          res.locals.registrationDeadline,
+        )
       : undefined;
     const retry = Math.max(
       res.locals.ipRetry ?? 0,
@@ -88,7 +104,7 @@ export function createAuthRouter(
       .json(
         await registration.register(
           input,
-          res.locals.registrationStarted,
+          res.locals.registrationDeadline,
           emailAdmission!.requestedAt,
           typeof req.id === "string" || typeof req.id === "number"
             ? req.id
@@ -96,6 +112,7 @@ export function createAuthRouter(
         ),
       );
   });
+  router.use(parseBody);
 
   function respond(res: Response, session: Session): void {
     res.cookie(REFRESH_COOKIE, session.refreshToken, {
@@ -137,6 +154,10 @@ export function createAuthRouter(
   });
 
   const sanitizeError: ErrorRequestHandler = (error, _req, res, next) => {
+    if (error instanceof RegistrationUnavailableError)
+      return next(
+        new AppError(503, ERROR_CODES.SERVICE_UNAVAILABLE, error.message),
+      );
     const retry = Math.max(
       res.locals.ipRetry ?? 0,
       error instanceof MailRateLimitedError ? error.retryAfterSeconds : 0,
@@ -180,10 +201,6 @@ export function createAuthRouter(
           ERROR_CODES.UNSUPPORTED_MEDIA_TYPE,
           "Неподдерживаемый формат запроса",
         ),
-      );
-    if (error instanceof RegistrationUnavailableError)
-      return next(
-        new AppError(503, ERROR_CODES.SERVICE_UNAVAILABLE, error.message),
       );
     if (error instanceof AppError && error.statusCode < 500)
       return next(

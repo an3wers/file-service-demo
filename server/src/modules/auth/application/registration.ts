@@ -38,15 +38,39 @@ export function createRegistration({
 }: RegistrationDeps) {
   const digest = (value: string) =>
     createHash("sha256").update(value).digest("hex");
-  async function consume(key: string, limits: readonly MailLimit[]) {
+  async function withinDeadline<T>(
+    deadline: Date,
+    action: () => Promise<T>,
+  ): Promise<T> {
+    const remaining = deadline.getTime() - clock.now().getTime();
+    if (remaining <= 0) throw new RegistrationUnavailableError();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      const value = await Promise.race([
+        action(),
+        new Promise<never>((_resolve, reject) => {
+          timer = setTimeout(
+            () => reject(new RegistrationUnavailableError()),
+            remaining,
+          );
+        }),
+      ]);
+      if (clock.now() >= deadline) throw new RegistrationUnavailableError();
+      return value;
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+  async function consume(
+    key: string,
+    limits: readonly MailLimit[],
+    deadline: Date,
+  ) {
     let retry: number;
     const now = clock.now();
     try {
-      retry = await store.consume(
-        key,
-        limits,
-        now,
-        new Date(now.getTime() + deadlineMs),
+      retry = await withinDeadline(deadline, () =>
+        store.consume(key, limits, now, deadline),
       );
     } catch {
       throw new RegistrationUnavailableError();
@@ -54,39 +78,48 @@ export function createRegistration({
     return { retryAfterSeconds: retry, requestedAt: now };
   }
   return {
-    now: () => clock.now(),
-    consumeIp: async (ip: string) =>
+    deadline: () => new Date(clock.now().getTime() + deadlineMs),
+    withinDeadline,
+    consumeIp: async (ip: string, deadline: Date) =>
       (
-        await consume(`mail:ip:${digest(ip)}`, [
-          { windowMs: 3600000, maximum: 20 },
-        ])
+        await consume(
+          `mail:ip:${digest(ip)}`,
+          [{ windowMs: 3600000, maximum: 20 }],
+          deadline,
+        )
       ).retryAfterSeconds,
-    consumeEmail: (email: string) =>
-      consume(`mail:activation:${digest(email)}`, [
-        { windowMs: 60000, maximum: 1 },
-        { windowMs: 3600000, maximum: 5 },
-      ]),
+    consumeEmail: (email: string, deadline: Date) =>
+      consume(
+        `mail:activation:${digest(email)}`,
+        [
+          { windowMs: 60000, maximum: 1 },
+          { windowMs: 3600000, maximum: 5 },
+        ],
+        deadline,
+      ),
     async register(
       input: RegistrationInput,
-      started: Date,
+      deadline: Date,
       mailRequestedAt: Date,
       requestId?: string | number,
     ) {
-      const deadline = new Date(started.getTime() + deadlineMs);
       try {
-        const passwordHash = await hasher.hash(input.password);
-        if (clock.now() >= deadline) throw new RegistrationUnavailableError();
+        const passwordHash = await withinDeadline(deadline, () =>
+          hasher.hash(input.password),
+        );
         const token = randomBytes(32).toString("base64url");
-        const send = await store.save(
-          {
-            id: randomUUID(),
-            name: input.name,
-            email: input.email,
-            passwordHash,
-            tokenHash: digest(token),
-            expiresAt: new Date(clock.now().getTime() + 86400000),
-          },
-          deadline,
+        const send = await withinDeadline(deadline, () =>
+          store.save(
+            {
+              id: randomUUID(),
+              name: input.name,
+              email: input.email,
+              passwordHash,
+              tokenHash: digest(token),
+              expiresAt: new Date(clock.now().getTime() + 86400000),
+            },
+            deadline,
+          ),
         );
         const remaining = deadline.getTime() - clock.now().getTime();
         if (send && remaining > 0) {
