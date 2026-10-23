@@ -153,11 +153,13 @@ export function createAuthRouter(
     res.status(204).end();
   });
 
-  const sanitizeError: ErrorRequestHandler = (error, _req, res, next) => {
-    if (error instanceof RegistrationUnavailableError)
+  const sanitizeError: ErrorRequestHandler = (error, req, res, next) => {
+    if (error instanceof RegistrationUnavailableError) {
+      if (!req.complete) res.set("Connection", "close");
       return next(
         new AppError(503, ERROR_CODES.SERVICE_UNAVAILABLE, error.message),
       );
+    }
     const retry = Math.max(
       res.locals.ipRetry ?? 0,
       error instanceof MailRateLimitedError ? error.retryAfterSeconds : 0,

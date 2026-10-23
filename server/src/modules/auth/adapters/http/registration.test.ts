@@ -468,6 +468,9 @@ it("медленное тело расходует остаток срока п�
       "Content-Length": Buffer.byteLength(body),
     },
   });
+  const disconnected = new Promise<void>((resolve) =>
+    req.once("close", resolve),
+  );
   const response = new Promise<{ status: number; body: string }>(
     (resolve, reject) => {
       req.on("error", reject);
@@ -488,6 +491,12 @@ it("медленное тело расходует остаток срока п�
     expect(result.status).toBe(503);
     expect(JSON.parse(result.body).error.code).toBe("SERVICE_UNAVAILABLE");
     expect(performance.now() - started).toBeLessThan(300);
+    expect(
+      await Promise.race([
+        disconnected.then(() => "closed"),
+        wait(150).then(() => "open"),
+      ]),
+    ).toBe("closed");
     req.end(body.slice(-1));
     await wait(30);
     expect(h.store.consume).toHaveBeenCalledTimes(1);

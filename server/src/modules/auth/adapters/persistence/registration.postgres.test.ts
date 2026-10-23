@@ -314,6 +314,7 @@ it("ожидание пула ограничено общим сроком и п
     [],
   );
   expect(pool.waitingCount).toBe(0);
+  expect(pool.idleCount).toBe(pool.totalCount);
 });
 
 it("последовательные SQL-блокировки не получают новый бюджет и не оставляют частичную запись", async () => {
