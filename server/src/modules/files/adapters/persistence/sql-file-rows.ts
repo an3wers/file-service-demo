@@ -1,5 +1,6 @@
 import { FileNotFoundError } from "../../domain/errors.js";
 import { query, type Execute } from "../../../../db/pool.js";
+import { directoryMissingOn, settledFile } from "./shared-sql.js";
 import type {
   FileRows,
   ReadyValues,
@@ -269,7 +270,7 @@ export function createSqlFileRows(
         input.partCount ?? null,
         owner,
       ],
-    );
+    ).catch(directoryMissingOn("files_directory_fk", input.directory));
 
     if (!rows[0])
       throw new FileNotFoundError(`File ${input.id} was deleted or completed`);
@@ -310,6 +311,31 @@ export function createSqlFileRows(
         ],
       );
       return rows.length > 0;
+    },
+    async relocateFile(id, change) {
+      const { rows } = await execute<FileRow>(
+        `update files
+            set original_name = coalesce($2, original_name),
+                extension = coalesce($3, extension),
+                directory = coalesce($4, directory),
+                updated_at = now()
+          where id = $1 and status = 'ready' and deleted_at is null and ${owned(5)}
+            and ($4::text is null or exists (
+              select 1 from directories d
+               where d.owner_id is not distinct from files.owner_id and d.path = $4
+               for key share
+            ))
+            and not ${settledFile("files")}
+          returning *`,
+        [
+          id,
+          change.name?.originalName ?? null,
+          change.name?.extension ?? null,
+          change.directory ?? null,
+          owner,
+        ],
+      ).catch(directoryMissingOn("files_directory_fk", change.directory ?? ""));
+      return rows[0] ? toStoredFile(rows[0]) : null;
     },
     countActiveMultipart: () => countActiveMultipart(execute, owner),
     softDeleteFile: (id) => softDeleteFile(id, execute, owner),

@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { createMemoryHistory } from "vue-router";
 import type { AuthSession } from "@/api/generated";
 import type { AuthChannel, AuthMessage } from "./useAuth";
 
@@ -108,6 +109,28 @@ function createBrowser() {
     return { auth, client, shared, signOuts };
   }
 
+  async function openFilesTab() {
+    const id = (tabs += 1);
+    vi.resetModules();
+    const { createAuth } = await import("./useAuth");
+    const { useUpload } = await import("./useUpload");
+    const { useFileBrowser } = await import("./useFileBrowser");
+    const { createAppRouter } = await import("@/router");
+    const shared = await import("@/api/sharedAuth");
+    const auth = createAuth(channel(id));
+    const upload = useUpload();
+    const browser = useFileBrowser();
+    createAppRouter({
+      history: createMemoryHistory(),
+      auth,
+      upload,
+      browser,
+      notify: () => {},
+    });
+
+    return { auth, upload, browser, shared };
+  }
+
   async function next(url: string): Promise<PendingRequest> {
     await vi.waitFor(() =>
       expect(pending.map((request) => request.url)).toContain(url),
@@ -115,7 +138,7 @@ function createBrowser() {
     return pending.find((request) => request.url === url)!;
   }
 
-  return { jar, pending, openTab, next };
+  return { jar, pending, openTab, openFilesTab, next };
 }
 
 type Tab = Awaited<ReturnType<ReturnType<typeof createBrowser>["openTab"]>>;
@@ -329,5 +352,125 @@ describe("общий вход вкладок одного браузера", () 
     expect(b.auth.user.value).toBeNull();
     expect(a.signOuts).toEqual(["logout"]);
     expect(b.signOuts).toEqual(["elsewhere"]);
+  });
+});
+
+describe("личное состояние вкладок при смене пользователя", () => {
+  const expired = {
+    status: 401,
+    body: { error: { code: "SESSION_EXPIRED", message: "" } },
+    setCookie: null,
+  };
+  const picked = () =>
+    new File(["x"], "x-report.txt", { type: "text/plain", lastModified: 1 });
+
+  async function signedInAsX() {
+    const browser = createBrowser();
+    browser.jar.cookie = "refresh=x";
+    const a = await browser.openFilesTab();
+    const b = await browser.openFilesTab();
+
+    for (const tab of [a, b]) {
+      const boot = tab.auth.ensureSession();
+      (await browser.next("/api/auth/refresh")).deliver({
+        status: 200,
+        body: session(USER_X),
+        setCookie: "refresh=x",
+      });
+      await boot;
+    }
+    await settle();
+    for (const tab of [a, b]) {
+      tab.upload.addFiles([picked()]);
+      tab.browser.searchInput.value = "x-report";
+    }
+
+    return { browser, a, b };
+  }
+
+  async function expireInBothTabs(
+    browser: ReturnType<typeof createBrowser>,
+    a: Awaited<ReturnType<ReturnType<typeof createBrowser>["openFilesTab"]>>,
+  ) {
+    const renewal = a.auth.renew();
+    (await browser.next("/api/auth/refresh")).deliver(expired);
+    await renewal;
+    await settle();
+  }
+
+  async function signIn(
+    browser: ReturnType<typeof createBrowser>,
+    tab: Awaited<ReturnType<ReturnType<typeof createBrowser>["openFilesTab"]>>,
+    user: AuthSession["user"],
+  ) {
+    const generation = tab.shared.readSharedAuth().generation;
+    const login = tab.auth.verifyLogin("attempt", "123456", generation);
+    (await browser.next("/api/auth/login/verify")).deliver({
+      status: 200,
+      body: session(user),
+      setCookie: `refresh=${user.name}`,
+    });
+    await login;
+    (await browser.next("/api/auth/refresh")).deliver({
+      status: 200,
+      body: session(user),
+      setCookie: `refresh=${user.name}`,
+    });
+    await settle();
+  }
+
+  it("после истечения сессии X и входа Y в одной вкладке вторая вкладка не показывает файлы X", async () => {
+    const { browser, a, b } = await signedInAsX();
+
+    await expireInBothTabs(browser, a);
+
+    expect(a.auth.user.value).toBeNull();
+    expect(b.auth.user.value).toBeNull();
+    expect(b.upload.rows.value).toHaveLength(1);
+
+    await signIn(browser, a, USER_Y);
+
+    expect(a.auth.user.value).toEqual(USER_Y);
+    expect(b.auth.user.value).toEqual(USER_Y);
+    for (const tab of [a, b]) {
+      expect(tab.upload.rows.value).toEqual([]);
+      expect(tab.browser.searchInput.value).toBe("");
+    }
+    expect(localStorage.getItem("file-service.uploads.v1") ?? "").not.toContain(
+      "x-report",
+    );
+  });
+
+  it("повторный вход X после истечения сохраняет выбранные файлы X во всех вкладках", async () => {
+    const { browser, a, b } = await signedInAsX();
+
+    await expireInBothTabs(browser, a);
+    await signIn(browser, a, USER_X);
+
+    expect(b.auth.user.value).toEqual(USER_X);
+    for (const tab of [a, b]) {
+      expect(tab.upload.rows.value.map((row) => row.file.name)).toEqual([
+        "x-report.txt",
+      ]);
+      expect(tab.browser.searchInput.value).toBe("x-report");
+    }
+  });
+
+  it("временная ошибка продления не очищает выбранные файлы и поиск", async () => {
+    const { browser, a, b } = await signedInAsX();
+
+    const renewal = a.auth.renew();
+    (await browser.next("/api/auth/refresh")).deliver({
+      status: 503,
+      body: { error: { code: "DATABASE_UNAVAILABLE", message: "" } },
+    });
+    await renewal;
+    await settle();
+
+    for (const tab of [a, b]) {
+      expect(tab.auth.user.value).toEqual(USER_X);
+      expect(tab.upload.rows.value).toHaveLength(1);
+      expect(tab.browser.searchInput.value).toBe("x-report");
+    }
   });
 });

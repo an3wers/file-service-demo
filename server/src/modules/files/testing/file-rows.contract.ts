@@ -92,6 +92,69 @@ export function describeFileRowsErrors(
   });
 }
 
+export function describeFileRowsRelocation(
+  name: string,
+  create: () => FileRows,
+): void {
+  describe(`размещение строк метаданных: ${name}`, () => {
+    const placement = {
+      name: { originalName: "Итоги.md", extension: "md" },
+      directory: "docs",
+    };
+
+    it("меняет имя и каталог готового файла, сохраняя идентификатор и ключ", async () => {
+      const rows = create();
+      const input = reservation({ status: "ready" });
+      await rows.insertFile(input);
+
+      const moved = await rows.relocateFile(input.id, placement);
+
+      expect(moved).toMatchObject({
+        id: input.id,
+        key: input.objectKey,
+        kind: "ready",
+        originalName: "Итоги.md",
+        extension: "md",
+        directory: "docs",
+      });
+      expect(await rows.findFileById(input.id)).toEqual(moved);
+    });
+
+    it("меняет только переданные части размещения", async () => {
+      const rows = create();
+      const input = reservation({ status: "ready" });
+      await rows.insertFile(input);
+
+      await rows.relocateFile(input.id, { directory: "docs" });
+      const renamed = await rows.relocateFile(input.id, {
+        name: { originalName: "notes", extension: "" },
+      });
+
+      expect(renamed).toMatchObject({
+        originalName: "notes",
+        extension: "",
+        directory: "docs",
+      });
+    });
+
+    it("не меняет незавершённый и удалённый файл", async () => {
+      const rows = create();
+      const pending = reservation();
+      const deleted = reservation({ status: "ready" });
+      await rows.insertFile(pending);
+      await rows.insertFile(deleted);
+      await rows.softDeleteFile(deleted.id);
+
+      expect(await rows.relocateFile(pending.id, placement)).toBeNull();
+      expect(await rows.relocateFile(deleted.id, placement)).toBeNull();
+      expect(await rows.findFileById(pending.id)).toMatchObject({
+        originalName: "report.bin",
+        directory: "",
+      });
+    });
+  });
+}
+
 export function describeFileRowsPagination(
   name: string,
   create: () => FileRows,
@@ -175,6 +238,11 @@ export function describeFileRowsOwnership(
         }),
       ).toBeNull();
       await mine.markFileFailed(other.id);
+      expect(
+        await mine.relocateFile(other.id, {
+          name: { originalName: "taken.bin", extension: "bin" },
+        }),
+      ).toBeNull();
       expect(await mine.softDeleteFile(other.id)).toBeNull();
       expect(await mine.countActiveMultipart()).toBe(1);
       expect((await mine.listFiles(listAll)).items.map((f) => f.id)).toEqual([

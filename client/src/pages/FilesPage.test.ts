@@ -151,7 +151,7 @@ describe("создание каталога на странице файлов",
     );
     await flushPromises();
     expect(screen.getByText("Каталог загрузки")).toBeTruthy();
-    expect(screen.queryByRole("textbox", { name: "Директория" })).toBeNull();
+    expect(screen.queryByRole("textbox", { name: "Каталог" })).toBeNull();
     await fireEvent.click(screen.getByRole("button", { name: "Выбрать файл" }));
     await flushPromises();
     await fireEvent.click(screen.getByRole("button", { name: /^Загрузить$/ }));
@@ -221,7 +221,7 @@ describe("создание каталога на странице файлов",
     );
     await flushPromises();
     expect(screen.getByRole("alert").textContent).toContain(
-      "Директория уже существует",
+      "Каталог уже существует",
     );
     await fireEvent.update(screen.getByLabelText("Имя каталога"), "reports");
     await flushPromises();

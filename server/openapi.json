@@ -901,7 +901,7 @@
         "summary": "Пароль и отправка кода входа",
         "operationId": "login",
         "security": [],
-        "description": "Создаёт независимую попытку на 15 минут и код на пять минут без сессии и cookie. Одна SMTP-попытка; accepted не гарантирует доставку, unconfirmed сохраняет возможность ввода. Первый шаг: 10 запросов за 15 минут по email, 50 с IP. Письма: одно в минуту и пять в час по email и назначению, 20 в час с IP совместно с другими письмами доступа.",
+        "description": "Создаёт независимую попытку на 15 минут и код на пять минут без сессии и cookie. Одна SMTP-попытка; accepted не гарантирует доставку, unconfirmed сохраняет возможность ввода. Первый шаг: 10 запросов за 15 минут по email, 50 с IP; корректный email учитывается и при ошибках остальных полей, 429 сообщает наибольшее ожидание. Письма: одно в минуту и пять в час по email и назначению, 20 в час с IP совместно с другими письмами доступа.",
         "parameters": [
           {
             "in": "header",
@@ -2081,7 +2081,7 @@
             }
           },
           "404": {
-            "description": "Директория не найдена",
+            "description": "Каталог не найден",
             "content": {
               "application/json": {
                 "schema": {
@@ -2256,7 +2256,7 @@
             }
           },
           "404": {
-            "description": "Директория не найдена",
+            "description": "Каталог не найден",
             "content": {
               "application/json": {
                 "schema": {
@@ -2377,7 +2377,7 @@
             }
           },
           "404": {
-            "description": "Директория не найдена",
+            "description": "Каталог не найден",
             "content": {
               "application/json": {
                 "schema": {
@@ -2767,6 +2767,118 @@
           }
         }
       },
+      "patch": {
+        "tags": [
+          "files"
+        ],
+        "summary": "Переименовать или переместить готовый файл",
+        "description": "Меняет только переданные имя и каталог. Идентификатор, объектный ключ и содержимое сохраняются. Целевой каталог ищется в личном пространстве; пустая строка — личный корень.",
+        "operationId": "updateFile",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+            },
+            "required": true
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateFileBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Файл изменён",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FileDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Недопустимое имя или каталог",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Нет токена доступа или он недействителен",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Файла или каталога нет",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Файл ещё не готов или удаляется",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Запрос не прошёл валидацию; details — результат z.flattenError()",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Непредвиденная ошибка сервера",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Хранилище или база данных недоступны",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      },
       "delete": {
         "tags": [
           "files"
@@ -3099,7 +3211,7 @@
             }
           },
           "404": {
-            "description": "Директория не найдена",
+            "description": "Каталог не найден",
             "content": {
               "application/json": {
                 "schema": {
@@ -3109,7 +3221,7 @@
             }
           },
           "409": {
-            "description": "Директория уже существует",
+            "description": "Каталог уже существует",
             "content": {
               "application/json": {
                 "schema": {
@@ -3198,7 +3310,212 @@
             }
           },
           "404": {
-            "description": "Директория не найдена",
+            "description": "Каталог не найден",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Запрос не прошёл валидацию; details — результат z.flattenError()",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Непредвиденная ошибка сервера",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Хранилище или база данных недоступны",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "directories"
+        ],
+        "summary": "Удалить пустой каталог",
+        "description": "Рекурсивного удаления нет: каталог с подкаталогами, файлами или незавершёнными загрузками не удаляется. Личный корень удалить нельзя.",
+        "operationId": "deleteDirectory",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "path",
+            "schema": {
+              "type": "string",
+              "maxLength": 1024
+            },
+            "required": true
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Каталог удалён"
+          },
+          "400": {
+            "description": "Недопустимый каталог или личный корень",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Нет токена доступа или он недействителен",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Каталог не найден",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Каталог не пуст",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Запрос не прошёл валидацию; details — результат z.flattenError()",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Непредвиденная ошибка сервера",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Хранилище или база данных недоступны",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "directories"
+        ],
+        "summary": "Переименовать или переместить каталог",
+        "description": "Меняет имя и/или родителя каталога вместе со всеми подкаталогами и файлами. Идентификаторы, объектные ключи и содержимое файлов сохраняются. Личный корень изменить нельзя; каталог нельзя перенести в самого себя или в своего потомка.",
+        "operationId": "updateDirectory",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "path",
+            "schema": {
+              "type": "string",
+              "maxLength": 1024
+            },
+            "required": true
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateDirectoryBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Каталог изменён",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DirectoryDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Недопустимое имя, каталог, личный корень или перенос в потомка",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Нет токена доступа или он недействителен",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Каталог или новый родитель не найден",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Путь уже занят или в каталоге идут незавершённые загрузки",
             "content": {
               "application/json": {
                 "schema": {
@@ -3267,6 +3584,19 @@
           "desc"
         ]
       },
+      "UpdateFileBody": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "maxLength": 512
+          },
+          "directory": {
+            "type": "string",
+            "maxLength": 1024
+          }
+        }
+      },
       "CreateDirectoryBody": {
         "type": "object",
         "properties": {
@@ -3282,6 +3612,19 @@
         "required": [
           "name"
         ]
+      },
+      "UpdateDirectoryBody": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "maxLength": 512
+          },
+          "parent": {
+            "type": "string",
+            "maxLength": 1024
+          }
+        }
       },
       "LivenessResponse": {
         "type": "object",

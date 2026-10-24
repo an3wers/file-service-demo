@@ -10,9 +10,19 @@ export type SortField = 'created_at' | 'original_name' | 'size_bytes';
 
 export type SortOrder = 'asc' | 'desc';
 
+export type UpdateFileBody = {
+    name?: string;
+    directory?: string;
+};
+
 export type CreateDirectoryBody = {
     parent?: string;
     name: string;
+};
+
+export type UpdateDirectoryBody = {
+    name?: string;
+    parent?: string;
 };
 
 export type LivenessResponse = {
@@ -1085,7 +1095,7 @@ export type ListFilesErrors = {
      */
     401: ErrorResponse;
     /**
-     * Директория не найдена
+     * Каталог не найден
      */
     404: ErrorResponse;
     /**
@@ -1134,7 +1144,7 @@ export type UploadFileErrors = {
      */
     401: ErrorResponse;
     /**
-     * Директория не найдена
+     * Каталог не найден
      */
     404: ErrorResponse;
     /**
@@ -1193,7 +1203,7 @@ export type PresignUploadErrors = {
      */
     401: ErrorResponse;
     /**
-     * Директория не найдена
+     * Каталог не найден
      */
     404: ErrorResponse;
     /**
@@ -1421,6 +1431,57 @@ export type GetFileResponses = {
 
 export type GetFileResponse = GetFileResponses[keyof GetFileResponses];
 
+export type UpdateFileData = {
+    body: UpdateFileBody;
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/files/{id}';
+};
+
+export type UpdateFileErrors = {
+    /**
+     * Недопустимое имя или каталог
+     */
+    400: ErrorResponse;
+    /**
+     * Нет токена доступа или он недействителен
+     */
+    401: ErrorResponse;
+    /**
+     * Файла или каталога нет
+     */
+    404: ErrorResponse;
+    /**
+     * Файл ещё не готов или удаляется
+     */
+    409: ErrorResponse;
+    /**
+     * Запрос не прошёл валидацию; details — результат z.flattenError()
+     */
+    422: ErrorResponse;
+    /**
+     * Непредвиденная ошибка сервера
+     */
+    500: ErrorResponse;
+    /**
+     * Хранилище или база данных недоступны
+     */
+    503: ErrorResponse;
+};
+
+export type UpdateFileError = UpdateFileErrors[keyof UpdateFileErrors];
+
+export type UpdateFileResponses = {
+    /**
+     * Файл изменён
+     */
+    200: FileDto;
+};
+
+export type UpdateFileResponse = UpdateFileResponses[keyof UpdateFileResponses];
+
 export type CompleteUploadData = {
     body?: never;
     path: {
@@ -1518,6 +1579,57 @@ export type GetDownloadUrlResponses = {
 
 export type GetDownloadUrlResponse = GetDownloadUrlResponses[keyof GetDownloadUrlResponses];
 
+export type DeleteDirectoryData = {
+    body?: never;
+    path?: never;
+    query: {
+        path: string;
+    };
+    url: '/api/directories';
+};
+
+export type DeleteDirectoryErrors = {
+    /**
+     * Недопустимый каталог или личный корень
+     */
+    400: ErrorResponse;
+    /**
+     * Нет токена доступа или он недействителен
+     */
+    401: ErrorResponse;
+    /**
+     * Каталог не найден
+     */
+    404: ErrorResponse;
+    /**
+     * Каталог не пуст
+     */
+    409: ErrorResponse;
+    /**
+     * Запрос не прошёл валидацию; details — результат z.flattenError()
+     */
+    422: ErrorResponse;
+    /**
+     * Непредвиденная ошибка сервера
+     */
+    500: ErrorResponse;
+    /**
+     * Хранилище или база данных недоступны
+     */
+    503: ErrorResponse;
+};
+
+export type DeleteDirectoryError = DeleteDirectoryErrors[keyof DeleteDirectoryErrors];
+
+export type DeleteDirectoryResponses = {
+    /**
+     * Каталог удалён
+     */
+    204: void;
+};
+
+export type DeleteDirectoryResponse = DeleteDirectoryResponses[keyof DeleteDirectoryResponses];
+
 export type ListDirectoriesData = {
     body?: never;
     path?: never;
@@ -1537,7 +1649,7 @@ export type ListDirectoriesErrors = {
      */
     401: ErrorResponse;
     /**
-     * Директория не найдена
+     * Каталог не найден
      */
     404: ErrorResponse;
     /**
@@ -1565,6 +1677,57 @@ export type ListDirectoriesResponses = {
 
 export type ListDirectoriesResponse = ListDirectoriesResponses[keyof ListDirectoriesResponses];
 
+export type UpdateDirectoryData = {
+    body: UpdateDirectoryBody;
+    path?: never;
+    query: {
+        path: string;
+    };
+    url: '/api/directories';
+};
+
+export type UpdateDirectoryErrors = {
+    /**
+     * Недопустимое имя, каталог, личный корень или перенос в потомка
+     */
+    400: ErrorResponse;
+    /**
+     * Нет токена доступа или он недействителен
+     */
+    401: ErrorResponse;
+    /**
+     * Каталог или новый родитель не найден
+     */
+    404: ErrorResponse;
+    /**
+     * Путь уже занят или в каталоге идут незавершённые загрузки
+     */
+    409: ErrorResponse;
+    /**
+     * Запрос не прошёл валидацию; details — результат z.flattenError()
+     */
+    422: ErrorResponse;
+    /**
+     * Непредвиденная ошибка сервера
+     */
+    500: ErrorResponse;
+    /**
+     * Хранилище или база данных недоступны
+     */
+    503: ErrorResponse;
+};
+
+export type UpdateDirectoryError = UpdateDirectoryErrors[keyof UpdateDirectoryErrors];
+
+export type UpdateDirectoryResponses = {
+    /**
+     * Каталог изменён
+     */
+    200: DirectoryDto;
+};
+
+export type UpdateDirectoryResponse = UpdateDirectoryResponses[keyof UpdateDirectoryResponses];
+
 export type CreateDirectoryData = {
     body: CreateDirectoryBody;
     path?: never;
@@ -1582,11 +1745,11 @@ export type CreateDirectoryErrors = {
      */
     401: ErrorResponse;
     /**
-     * Директория не найдена
+     * Каталог не найден
      */
     404: ErrorResponse;
     /**
-     * Директория уже существует
+     * Каталог уже существует
      */
     409: ErrorResponse;
     /**

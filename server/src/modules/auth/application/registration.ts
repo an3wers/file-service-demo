@@ -1,6 +1,6 @@
-import { logger } from "../../../logger.js";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import type { Notification } from "../../notification/index.js";
+import { logMailAttempt, type MailLog } from "./mail-log.js";
 import type { Clock } from "../domain/ports/clock.js";
 import type { PasswordHasher } from "../domain/ports/password-hasher.js";
 import type {
@@ -103,7 +103,7 @@ export function createRegistration({
     message: { to: string; subject: string; text: string },
     deadline: Date,
     purpose: string,
-    requestId?: string | number,
+    log: MailLog,
   ) {
     const remaining = deadline.getTime() - clock.now().getTime();
     if (remaining <= 0) return;
@@ -126,15 +126,11 @@ export function createRegistration({
       ]).catch(() => undefined);
     } finally {
       clearTimeout(timer);
-      logger.info(
-        {
-          purpose,
-          outcome,
-          durationMs: clock.now().getTime() - smtpStarted,
-          requestId,
-        },
-        "Auth mail attempt",
-      );
+      logMailAttempt(log, {
+        purpose,
+        outcome,
+        durationMs: clock.now().getTime() - smtpStarted,
+      });
     }
   }
   async function sendLink(
@@ -143,7 +139,7 @@ export function createRegistration({
     save: (tokenHash: string, expiresAt: Date) => Promise<boolean>,
     deadline: Date,
     mailRequestedAt: Date,
-    requestId?: string | number,
+    log: MailLog,
   ) {
     const link = LINKS[purpose];
     try {
@@ -158,7 +154,7 @@ export function createRegistration({
           { to: email, subject: link.subject, text: link.text(url.href) },
           deadline,
           purpose,
-          requestId,
+          log,
         );
       }
     } catch {
@@ -216,7 +212,7 @@ export function createRegistration({
       email: string,
       deadline: Date,
       mailRequestedAt: Date,
-      requestId?: string | number,
+      log: MailLog,
     ) =>
       sendLink(
         "activation",
@@ -225,13 +221,13 @@ export function createRegistration({
           store.requestActivation(email, tokenHash, expiresAt, deadline),
         deadline,
         mailRequestedAt,
-        requestId,
+        log,
       ),
     requestPasswordReset: (
       email: string,
       deadline: Date,
       mailRequestedAt: Date,
-      requestId?: string | number,
+      log: MailLog,
     ) =>
       sendLink(
         "password-reset",
@@ -240,13 +236,13 @@ export function createRegistration({
           store.requestPasswordReset(email, tokenHash, expiresAt, deadline),
         deadline,
         mailRequestedAt,
-        requestId,
+        log,
       ),
     async confirmPasswordReset(
       token: string,
       password: string,
       deadline: Date,
-      requestId?: string | number,
+      log: MailLog,
     ) {
       let email: string | null;
       try {
@@ -268,7 +264,7 @@ export function createRegistration({
         },
         new Date(clock.now().getTime() + deadlineMs),
         "password-changed",
-        requestId,
+        log,
       );
       return { message: "Пароль изменён. Теперь можно войти" as const };
     },
@@ -288,7 +284,7 @@ export function createRegistration({
       input: RegistrationInput,
       deadline: Date,
       mailRequestedAt: Date,
-      requestId?: string | number,
+      log: MailLog,
     ) {
       try {
         const passwordHash = await withinDeadline(deadline, () =>
@@ -311,7 +307,7 @@ export function createRegistration({
             ),
           deadline,
           mailRequestedAt,
-          requestId,
+          log,
         );
       } catch {
         throw new RegistrationUnavailableError();

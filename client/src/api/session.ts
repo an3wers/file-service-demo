@@ -10,6 +10,7 @@ let expiresAt = 0;
 let user: SessionUser | null = null;
 let renewal: Promise<void> | null = null;
 let epoch = 0;
+let owner = readPersonalOwner();
 let controller = new AbortController();
 let expiredHandler: (() => void) | null = null;
 let changedHandler: (() => void) | null = null;
@@ -26,11 +27,10 @@ export function startSession(session: AuthSession): void {
   accessToken = session.accessToken;
   expiresAt = Date.now() + session.expiresIn * 1000;
   user = session.user;
-  const owner = readPersonalOwner();
-  if (owner !== user.id) {
-    writePersonalOwner(user.id);
-    if (owner !== null) switchedHandler?.();
-  }
+  const previous = owner;
+  owner = user.id;
+  writePersonalOwner(user.id);
+  if (previous !== null && previous !== user.id) switchedHandler?.();
   notify();
 }
 

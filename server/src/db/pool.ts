@@ -52,6 +52,42 @@ export async function query<T extends pg.QueryResultRow>(
   }
 }
 
+export type Transaction = <T>(
+  run: (execute: Execute) => Promise<T>,
+) => Promise<T>;
+
+export function transactionOn(execute: Execute): Transaction {
+  return async (run) => {
+    await execute("begin");
+    try {
+      const value = await run(execute);
+      await execute("commit");
+      return value;
+    } catch (error) {
+      await execute("rollback").catch(() => undefined);
+      throw error;
+    }
+  };
+}
+
+export const transaction: Transaction = async (run) => {
+  const client = await pool.connect().catch((error: unknown) => {
+    throw databaseError(error);
+  });
+  const execute: Execute = async (text, values = []) => {
+    try {
+      return await client.query(text, values);
+    } catch (error) {
+      throw databaseError(error);
+    }
+  };
+  try {
+    return await transactionOn(execute)(run);
+  } finally {
+    client.release();
+  }
+};
+
 export async function checkDatabase(): Promise<void> {
   await pool.query("select 1");
 }

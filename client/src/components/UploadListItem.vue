@@ -51,8 +51,8 @@ function selectFile(event: Event): void {
       <span
         data-file-name
         class="min-w-0 truncate text-sm"
-        :title="row.file.name"
-        >{{ row.file.name }}</span
+        :title="row.result.value?.name ?? row.file.name"
+        >{{ row.result.value?.name ?? row.file.name }}</span
       >
       <span class="text-sm text-muted-foreground">{{
         formatBytes(row.file.size)
@@ -62,7 +62,7 @@ function selectFile(event: Event): void {
       v-if="row.status.value !== 'selected'"
       class="text-xs text-muted-foreground"
     >
-      {{ row.targetDirectory || "Корень" }} ·
+      {{ (row.result.value?.directory ?? row.targetDirectory) || "Корень" }} ·
       {{
         (row.operation.value?.mode ?? row.uploadMode) === "server"
           ? "Через сервер"

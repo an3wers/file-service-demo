@@ -6,6 +6,6 @@ export async function requireDirectory(
   path: string,
 ): Promise<void> {
   if (!(await directories.exists(path))) {
-    throw new DirectoryNotFoundError("Директория не найдена", { path });
+    throw new DirectoryNotFoundError("Каталог не найден", { path });
   }
 }

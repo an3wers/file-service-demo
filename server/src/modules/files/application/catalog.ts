@@ -4,14 +4,24 @@ import { requireDirectory } from "../domain/directories.js";
 import type { DirectoriesForCatalog } from "../domain/ports/directories.js";
 import { randomUUID } from "node:crypto";
 import type { UploadOperations } from "../domain/ports/upload-operations.js";
-import { normalizeDirectory, normalizeDirectoryName } from "../domain/keys.js";
+import {
+  fileExtension,
+  normalizeDirectory,
+  normalizeDirectoryName,
+  normalizeFileName,
+} from "../domain/keys.js";
 import type { Clock } from "../domain/ports/clock.js";
 import {
   DirectoryAlreadyExistsError,
+  DirectoryBusyError,
+  DirectoryNotEmptyError,
+  DirectoryNotFoundError,
+  InvalidDirectoryError,
   FileNotFoundError,
   FileNotReadyError,
 } from "../domain/errors.js";
 import type {
+  FilePlacement,
   FileRowsForFiles,
   ListFilesParams,
 } from "../domain/ports/file-rows.js";
@@ -59,6 +69,16 @@ export interface ListFilesInput {
   order: "asc" | "desc";
 }
 
+export interface UpdateFileInput {
+  name?: string | undefined;
+  directory?: string | undefined;
+}
+
+export interface MoveDirectoryInput {
+  name?: string | undefined;
+  parent?: string | undefined;
+}
+
 export interface ListFilesResult {
   items: StoredFile[];
   total: number;
@@ -76,10 +96,22 @@ export interface CatalogModule {
   getFileCard(id: string, withUrl: boolean): Promise<FileCardResult>;
   listFiles(input: ListFilesInput): Promise<ListFilesResult>;
   deleteFile(id: string): Promise<void>;
+  updateFile(id: string, input: UpdateFileInput): Promise<StoredFile>;
+  deleteDirectory(rawPath: string): Promise<void>;
+  moveDirectory(
+    rawPath: string,
+    input: MoveDirectoryInput,
+  ): Promise<DirectoryDto>;
   listDirectories(rawParent: string | undefined): Promise<{
     parent: string;
     items: DirectoryDto[];
   }>;
+}
+
+function fileNotReady(file: StoredFile) {
+  return new FileNotReadyError(
+    `File ${file.id} is in status "${statusOf(file)}" and cannot be changed`,
+  );
 }
 
 function fileNotFound(id: string) {
@@ -215,17 +247,113 @@ export function createCatalogModule({
       if (result.busy) throw new FileNotReadyError("Удаление ещё выполняется");
     },
 
+    async updateFile(id, input) {
+      const originalName =
+        input.name === undefined ? undefined : normalizeFileName(input.name);
+      const directory =
+        input.directory === undefined
+          ? undefined
+          : normalizeDirectory(input.directory);
+      const file = await requireFile(id);
+      if (file.kind !== "ready") throw fileNotReady(file);
+      const placement: FilePlacement = {
+        ...(originalName === undefined
+          ? {}
+          : {
+              name: { originalName, extension: fileExtension(originalName) },
+            }),
+        ...(directory === undefined ? {} : { directory }),
+      };
+      if (directory !== undefined)
+        await requireDirectory(directories, directory);
+      const updated = await fileRows.relocateFile(id, placement);
+      if (updated) return updated;
+      const current = await requireFile(id);
+      if (directory !== undefined)
+        await requireDirectory(directories, directory);
+      throw fileNotReady(current);
+    },
+
     async createDirectory(input) {
       const parent = normalizeDirectory(input.parent);
       const name = normalizeDirectoryName(input.name);
       const path = normalizeDirectory(parent ? `${parent}/${name}` : name);
       await requireDirectory(directories, parent);
       if (!(await directories.create(parent, name))) {
-        throw new DirectoryAlreadyExistsError("Директория уже существует", {
+        throw new DirectoryAlreadyExistsError("Каталог уже существует", {
           path,
         });
       }
       return { name, path, fileCount: 0 };
+    },
+
+    async deleteDirectory(rawPath) {
+      const path = normalizeDirectory(rawPath);
+      if (!path)
+        throw new InvalidDirectoryError("Личный корень удалить нельзя", {
+          path,
+        });
+      const result = await directories.remove(path);
+      if (result === "missing")
+        throw new DirectoryNotFoundError("Каталог не найден", { path });
+      if (result === "occupied")
+        throw new DirectoryNotEmptyError(
+          "Каталог не пуст: в нём есть подкаталоги, файлы или незавершённые загрузки",
+          { path },
+        );
+    },
+
+    async moveDirectory(rawPath, input) {
+      const path = normalizeDirectory(rawPath);
+      if (!path)
+        throw new InvalidDirectoryError(
+          "Личный корень нельзя переименовать или переместить",
+          { path },
+        );
+      const slash = path.lastIndexOf("/");
+      const parent =
+        input.parent === undefined
+          ? path.slice(0, Math.max(slash, 0))
+          : normalizeDirectory(input.parent);
+      const name =
+        input.name === undefined
+          ? path.slice(slash + 1)
+          : normalizeDirectoryName(input.name);
+      const target = normalizeDirectory(parent ? `${parent}/${name}` : name);
+      if (parent === path || parent.startsWith(`${path}/`))
+        throw new InvalidDirectoryError(
+          "Каталог нельзя переместить в самого себя или в свой подкаталог",
+          { path, parent },
+        );
+      if (target !== path) {
+        const result = await directories.move(path, parent, name);
+        if (result === "missing")
+          throw new DirectoryNotFoundError("Каталог не найден", { path });
+        if (result === "target-missing")
+          throw new DirectoryNotFoundError("Каталог не найден", {
+            path: parent,
+          });
+        if (result === "exists")
+          throw new DirectoryAlreadyExistsError("Каталог уже существует", {
+            path: target,
+          });
+        if (result === "too-long")
+          throw new InvalidDirectoryError(
+            "Путь вложенного каталога станет слишком длинным",
+            { path: target },
+          );
+        if (result === "busy")
+          throw new DirectoryBusyError(
+            "В каталоге идут незавершённые загрузки или он изменяется",
+            { path },
+          );
+      }
+      const moved = (await directories.listChildren(parent)).find(
+        (item) => item.path === target,
+      );
+      if (!moved)
+        throw new DirectoryNotFoundError("Каталог не найден", { path });
+      return moved;
     },
 
     async listDirectories(rawParent) {

@@ -2,6 +2,7 @@ import type { ZodOpenApiPathsObject } from "zod-openapi";
 import { apiErrors } from "../../../../http-contract.js";
 import {
   createDirectorySchema,
+  directoryPathQuerySchema,
   directoriesQuerySchema,
   downloadUrlQuerySchema,
   fileCardQuerySchema,
@@ -11,6 +12,8 @@ import {
   presignUploadSchema,
   uploadFormSchema,
   resolveUploadSchema,
+  updateDirectorySchema,
+  updateFileSchema,
 } from "./schemas.js";
 import {
   uploadOperationResponseSchema,
@@ -108,7 +111,7 @@ export const filesPaths: ZodOpenApiPathsObject = {
       responses: {
         201: { description: "Файл сохранён", content: json(fileDtoSchema) },
         ...apiErrors({
-          404: "Директория не найдена",
+          404: "Каталог не найден",
           400: "Нет поля file, лишние поля формы, недопустимое имя или каталог",
           413: "Файл больше лимита загрузки через сервер",
           409: "Операция обрабатывается или параметры повтора отличаются",
@@ -127,7 +130,7 @@ export const filesPaths: ZodOpenApiPathsObject = {
         },
         ...apiErrors({
           400: "Недопустимый каталог",
-          404: "Директория не найдена",
+          404: "Каталог не найден",
         }),
       },
     },
@@ -150,7 +153,7 @@ export const filesPaths: ZodOpenApiPathsObject = {
         },
         ...apiErrors({
           400: "Недопустимое имя или каталог",
-          404: "Директория не найдена",
+          404: "Каталог не найден",
           413: "Файл больше потолка размера объекта",
           429: "Слишком много незавершённых составных загрузок",
           409: "Операция обрабатывается или параметры повтора отличаются",
@@ -212,6 +215,24 @@ export const filesPaths: ZodOpenApiPathsObject = {
           content: json(fileDtoSchema),
         },
         ...apiErrors({ 404: FILE_NOT_FOUND }),
+      },
+    },
+    patch: {
+      tags: ["files"],
+      summary: "Переименовать или переместить готовый файл",
+      description:
+        "Меняет только переданные имя и каталог. Идентификатор, объектный ключ и содержимое " +
+        "сохраняются. Целевой каталог ищется в личном пространстве; пустая строка — личный корень.",
+      operationId: "updateFile",
+      requestParams: { path: idParamsSchema },
+      requestBody: { required: true, content: json(updateFileSchema) },
+      responses: {
+        200: { description: "Файл изменён", content: json(fileDtoSchema) },
+        ...apiErrors({
+          400: "Недопустимое имя или каталог",
+          404: "Файла или каталога нет",
+          409: "Файл ещё не готов или удаляется",
+        }),
       },
     },
     delete: {
@@ -277,8 +298,8 @@ export const directoriesPaths: ZodOpenApiPathsObject = {
         },
         ...apiErrors({
           400: "Недопустимое имя или каталог",
-          404: "Директория не найдена",
-          409: "Директория уже существует",
+          404: "Каталог не найден",
+          409: "Каталог уже существует",
         }),
       },
     },
@@ -294,7 +315,46 @@ export const directoriesPaths: ZodOpenApiPathsObject = {
         },
         ...apiErrors({
           400: "Недопустимый каталог",
-          404: "Директория не найдена",
+          404: "Каталог не найден",
+        }),
+      },
+    },
+    delete: {
+      tags: ["directories"],
+      summary: "Удалить пустой каталог",
+      description:
+        "Рекурсивного удаления нет: каталог с подкаталогами, файлами или незавершёнными " +
+        "загрузками не удаляется. Личный корень удалить нельзя.",
+      operationId: "deleteDirectory",
+      requestParams: { query: directoryPathQuerySchema },
+      responses: {
+        204: { description: "Каталог удалён" },
+        ...apiErrors({
+          400: "Недопустимый каталог или личный корень",
+          404: "Каталог не найден",
+          409: "Каталог не пуст",
+        }),
+      },
+    },
+    patch: {
+      tags: ["directories"],
+      summary: "Переименовать или переместить каталог",
+      description:
+        "Меняет имя и/или родителя каталога вместе со всеми подкаталогами и файлами. " +
+        "Идентификаторы, объектные ключи и содержимое файлов сохраняются. Личный корень " +
+        "изменить нельзя; каталог нельзя перенести в самого себя или в своего потомка.",
+      operationId: "updateDirectory",
+      requestParams: { query: directoryPathQuerySchema },
+      requestBody: { required: true, content: json(updateDirectorySchema) },
+      responses: {
+        200: {
+          description: "Каталог изменён",
+          content: json(directoryDtoSchema),
+        },
+        ...apiErrors({
+          400: "Недопустимое имя, каталог, личный корень или перенос в потомка",
+          404: "Каталог или новый родитель не найден",
+          409: "Путь уже занят или в каталоге идут незавершённые загрузки",
         }),
       },
     },

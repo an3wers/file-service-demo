@@ -12,6 +12,7 @@ import {
 } from "../../../../middleware/validate.js";
 import {
   createDirectorySchema,
+  directoryPathQuerySchema,
   directoriesQuerySchema,
   downloadUrlQuerySchema,
   fileCardQuerySchema,
@@ -21,8 +22,11 @@ import {
   presignUploadSchema,
   uploadBodySchema,
   resolveUploadSchema,
+  updateDirectorySchema,
+  updateFileSchema,
 } from "./schemas.js";
 import type {
+  DirectoryPathQuery,
   DirectoriesQuery,
   DownloadUrlQuery,
   FileCardQuery,
@@ -297,6 +301,24 @@ export function createFilesRouter({
     },
   );
 
+  filesRouter.patch(
+    "/:id",
+    validateParams(idParamsSchema),
+    validateBody(updateFileSchema),
+    async (req, res) => {
+      const { id } = validatedParams<IdParams>(res);
+
+      res.json(
+        toFileDto(
+          await catalogOf(res).updateFile(id, {
+            name: req.body.name,
+            directory: req.body.directory,
+          }),
+        ),
+      );
+    },
+  );
+
   // Удаление файла — 204: после него возвращать нечего, а признак успеха несёт
   // сам код ответа.
   filesRouter.delete(
@@ -339,6 +361,33 @@ export function createDirectoriesRouter(scenarios: FilesScenarios): Router {
         await catalogOf(res).createDirectory({
           parent: req.body.parent,
           name: req.body.name,
+        }),
+      );
+    },
+  );
+
+  directoriesRouter.delete(
+    "/",
+    validateQuery(directoryPathQuerySchema),
+    async (_req, res) => {
+      const { path } = validatedQuery<DirectoryPathQuery>(res);
+
+      await catalogOf(res).deleteDirectory(path);
+      res.status(204).end();
+    },
+  );
+
+  directoriesRouter.patch(
+    "/",
+    validateQuery(directoryPathQuerySchema),
+    validateBody(updateDirectorySchema),
+    async (req, res) => {
+      const { path } = validatedQuery<DirectoryPathQuery>(res);
+
+      res.json(
+        await catalogOf(res).moveDirectory(path, {
+          name: req.body.name,
+          parent: req.body.parent,
         }),
       );
     },

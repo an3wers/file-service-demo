@@ -1,7 +1,7 @@
 import type { AddressInfo } from "node:net";
 import type { Server } from "node:http";
 import { Router } from "express";
-import { afterEach, expect, it } from "vitest";
+import { afterEach, expect, it, vi } from "vitest";
 import { createApp } from "../../../../app.js";
 import {
   EMAIL,
@@ -11,6 +11,17 @@ import {
 import type { SessionsModule } from "../../application/sessions.js";
 import { createAuthRouter, createRequireAuth } from "./routes.js";
 import { mapAuthError } from "./error-map.js";
+
+const logs = vi.hoisted(() => [] as Record<string, unknown>[]);
+vi.mock("../../../../logger.js", async () => {
+  const { pino } = await import("pino");
+  return {
+    logger: pino(
+      { level: "info" },
+      { write: (line: string) => logs.push(JSON.parse(line)) },
+    ),
+  };
+});
 
 const servers: Server[] = [];
 afterEach(async () => {
@@ -541,4 +552,242 @@ it("при IP- и email-лимите повтора Retry-After равен на�
   expect(limited.status).toBe(429);
   expect(limited.headers.get("retry-after")).toBe("60");
   expect((await errorOf(limited)).details).toEqual({ retryAfterSeconds: 60 });
+});
+
+const mailEvents = () => logs.filter((l) => l.msg === "Auth mail attempt");
+const requestIdOf = (url: string) =>
+  logs
+    .filter((l) => l.msg === "request completed")
+    .map((l) => l.req as { id: unknown; url: string })
+    .filter((req) => req.url === url)
+    .at(-1)?.id;
+
+it("первоначальная отправка и повтор кода оставляют событие с назначением, исходом, длительностью и запросом без секретов", async () => {
+  const h = await start();
+  logs.length = 0;
+  const response = await h.login();
+  const { attemptToken } = await response.json();
+  const firstCode = h.auth.code();
+  const [first] = mailEvents();
+  expect(first).toEqual(
+    expect.objectContaining({
+      purpose: "login-code",
+      outcome: "accepted",
+      durationMs: expect.any(Number),
+      requestId: requestIdOf("/api/auth/login"),
+    }),
+  );
+  expect(first!.requestId).toBeDefined();
+  h.auth.clock.advance(1 / 60);
+  h.auth.sendEmail.mockRejectedValueOnce(
+    new Error(`SMTP 550 ${EMAIL} rejected`),
+  );
+  const rejected = await h.resend(attemptToken);
+  expect((await rejected.json()).deliveryStatus).toBe("unconfirmed");
+  const second = mailEvents()[1];
+  expect(second).toEqual(
+    expect.objectContaining({
+      purpose: "login-code",
+      outcome: "unconfirmed",
+      durationMs: expect.any(Number),
+      requestId: requestIdOf("/api/auth/login/resend"),
+    }),
+  );
+  expect(second!.requestId).not.toBe(first!.requestId);
+  expect(mailEvents()).toHaveLength(2);
+  expect(h.auth.sendEmail).toHaveBeenCalledTimes(2);
+  const journal = JSON.stringify(logs);
+  for (const secret of [
+    EMAIL,
+    PASSWORD,
+    attemptToken,
+    firstCode,
+    h.auth.code(),
+    "SMTP 550",
+    "Код входа",
+  ])
+    expect(journal).not.toContain(secret);
+});
+
+it("таймаут и неизвестный исход SMTP при входе и повторе оставляют одно событие unconfirmed на попытку", async () => {
+  const slow = await start({ sessions: (a) => a.withStore(a.store, 50) });
+  logs.length = 0;
+  slow.auth.sendEmail.mockImplementationOnce(() => new Promise(() => {}));
+  const attempt = await (await slow.login()).json();
+  expect(attempt.deliveryStatus).toBe("unconfirmed");
+  slow.auth.clock.advance(1 / 60);
+  slow.auth.sendEmail.mockImplementationOnce(
+    (_message, options: { signal: AbortSignal }) =>
+      new Promise((_resolve, reject) =>
+        options.signal.addEventListener("abort", () =>
+          reject(new Error(`aborted ${EMAIL}`)),
+        ),
+      ),
+  );
+  const resent = await slow.resend(attempt.attemptToken);
+  expect((await resent.json()).deliveryStatus).toBe("unconfirmed");
+  expect(mailEvents()).toEqual([
+    expect.objectContaining({
+      purpose: "login-code",
+      outcome: "unconfirmed",
+      durationMs: expect.any(Number),
+      requestId: requestIdOf("/api/auth/login"),
+    }),
+    expect.objectContaining({
+      purpose: "login-code",
+      outcome: "unconfirmed",
+      durationMs: expect.any(Number),
+      requestId: requestIdOf("/api/auth/login/resend"),
+    }),
+  ]);
+  expect(slow.auth.sendEmail).toHaveBeenCalledTimes(2);
+  expect((await slow.verify(attempt.attemptToken)).status).toBe(200);
+  const journal = JSON.stringify(logs);
+  expect(journal).not.toContain(EMAIL);
+  expect(journal).not.toContain(attempt.attemptToken);
+});
+
+it("отказ записи попытки не начинает SMTP и не оставляет событие отправки", async () => {
+  const broken = await start({
+    sessions: (a) =>
+      a.withStore({
+        ...a.store,
+        saveAttempt: async () => {
+          throw new Error("SQL private secret");
+        },
+      }),
+  });
+  logs.length = 0;
+  expect((await broken.login()).status).toBe(503);
+  expect(mailEvents()).toEqual([]);
+  expect(JSON.stringify(logs)).not.toContain(EMAIL);
+});
+
+it("десять входов с корректным email и пустым паролем расходуют квоту email и дают 429", async () => {
+  const h = await start();
+  for (let i = 0; i < 10; i++) {
+    const email = i % 2 ? `  ${EMAIL.toUpperCase()} ` : EMAIL;
+    expect((await h.post("login", { email, password: "" })).status).toBe(422);
+  }
+  const limited = await h.login(EMAIL, "wrong");
+  expect(limited.status).toBe(429);
+  expect(limited.headers.get("retry-after")).toBe("900");
+  expect((await errorOf(limited)).details).toEqual({ retryAfterSeconds: 900 });
+  const body = await h.post("login", { email: EMAIL, password: "secret-pass" });
+  expect(body.status).toBe(429);
+  expect(await body.text()).not.toContain("secret-pass");
+  expect(h.auth.sendEmail).not.toHaveBeenCalled();
+  expect((await h.login("other@example.com", "")).status).toBe(422);
+});
+
+it("варианты написания email находят того же пользователя и расходуют одну квоту входа", async () => {
+  const h = await start();
+  const variants = [
+    ` ${EMAIL.toUpperCase()} `,
+    EMAIL,
+    `\t${EMAIL[0]!.toUpperCase()}${EMAIL.slice(1)}`,
+  ];
+  expect((await h.login(variants[0])).status).toBe(200);
+  for (let i = 1; i < 10; i++)
+    expect((await h.login(variants[i % 3], "wrong")).status).toBe(401);
+  const limited = await h.login(variants[2]);
+  expect(limited.status).toBe(429);
+  expect(limited.headers.get("retry-after")).toBe("900");
+  expect(h.auth.sendEmail).toHaveBeenCalledTimes(1);
+});
+
+it("при IP- и email-лимите входа ответ берёт наибольшее ожидание, а отказ по IP учитывается в квоте email", async () => {
+  const h = await start();
+  for (let i = 0; i < 45; i++)
+    expect((await h.post("login", {})).status).toBe(422);
+  h.auth.clock.advance(10 / 60);
+  for (let i = 0; i < 5; i++)
+    expect((await h.login(EMAIL, "")).status).toBe(422);
+  for (let i = 0; i < 5; i++) {
+    const limited = await h.login(EMAIL, "");
+    expect(limited.status).toBe(429);
+    expect(limited.headers.get("retry-after")).toBe("300");
+  }
+  const both = await h.login();
+  expect(both.status).toBe(429);
+  expect(both.headers.get("retry-after")).toBe("900");
+  expect((await errorOf(both)).details).toEqual({ retryAfterSeconds: 900 });
+  h.auth.clock.advance(5 / 60);
+  expect((await h.post("login", {})).status).toBe(422);
+  const email = await h.login();
+  expect(email.status).toBe(429);
+  expect(email.headers.get("retry-after")).toBe("600");
+  expect(h.auth.sendEmail).not.toHaveBeenCalled();
+});
+
+it("отказ входа по минутной email-квоте писем учитывается в общей IP-квоте писем", async () => {
+  const h = await start();
+  expect((await h.login()).status).toBe(200);
+  const limited = await h.login();
+  expect(limited.status).toBe(429);
+  expect(limited.headers.get("retry-after")).toBe("60");
+  for (let i = 0; i < 18; i++)
+    expect((await h.resend("unknown")).status).toBe(410);
+  const ip = await h.resend("unknown");
+  expect(ip.status).toBe(429);
+  expect(ip.headers.get("retry-after")).toBe("3600");
+  expect(h.auth.sendEmail).toHaveBeenCalledTimes(1);
+});
+
+it("отказ входа по минутной квоте назначения учитывается в часовой квоте и не сдвигает минутное окно", async () => {
+  const h = await start();
+  expect((await h.login()).status).toBe(200);
+  h.auth.clock.advance(30 / 3600);
+  const limited = await h.login();
+  expect(limited.headers.get("retry-after")).toBe("30");
+  h.auth.clock.advance(30 / 3600);
+  for (let i = 0; i < 3; i++) {
+    if (i) h.auth.clock.advance(1 / 60);
+    expect((await h.login()).status).toBe(200);
+  }
+  h.auth.clock.advance(1 / 60);
+  const hourly = await h.login();
+  expect(hourly.status).toBe(429);
+  expect(hourly.headers.get("retry-after")).toBe("3360");
+  expect((await errorOf(hourly)).details).toEqual({ retryAfterSeconds: 3360 });
+  expect(h.auth.sendEmail).toHaveBeenCalledTimes(4);
+});
+
+it("отказ входа по IP-квоте писем учитывается в квоте назначения без попытки и письма", async () => {
+  const h = await start();
+  for (let i = 0; i < 20; i++)
+    expect((await h.resend("unknown")).status).toBe(410);
+  h.auth.clock.advance(3599 / 3600);
+  const ip = await h.login();
+  expect(ip.status).toBe(429);
+  expect(ip.headers.get("retry-after")).toBe("1");
+  const both = await h.login();
+  expect(both.headers.get("retry-after")).toBe("60");
+  expect((await errorOf(both)).details).toEqual({ retryAfterSeconds: 60 });
+  h.auth.clock.advance(1 / 3600);
+  const email = await h.login();
+  expect(email.status).toBe(429);
+  expect(email.headers.get("retry-after")).toBe("59");
+  expect(h.auth.sendEmail).not.toHaveBeenCalled();
+});
+
+it("отказ повтора по IP-квоте писем учитывается в квоте назначения и сохраняет код", async () => {
+  const h = await start();
+  for (let i = 0; i < 18; i++)
+    expect((await h.resend("unknown")).status).toBe(410);
+  h.auth.clock.advance(58 / 60);
+  const { attemptToken } = await (await h.login()).json();
+  const code = h.auth.code();
+  h.auth.clock.advance(1 / 60);
+  expect((await h.resend("unknown")).status).toBe(410);
+  h.auth.clock.advance(59 / 3600);
+  const ip = await h.resend(attemptToken);
+  expect(ip.status).toBe(429);
+  expect(ip.headers.get("retry-after")).toBe("1");
+  h.auth.clock.advance(1 / 3600);
+  const email = await h.resend(attemptToken);
+  expect(email.status).toBe(429);
+  expect(email.headers.get("retry-after")).toBe("59");
+  expect(h.auth.sendEmail).toHaveBeenCalledTimes(1);
+  expect((await h.verify(attemptToken, code)).status).toBe(200);
 });

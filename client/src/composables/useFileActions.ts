@@ -1,6 +1,7 @@
 import { toast } from "vue-sonner";
-import type { FileDto } from "@/types/api";
-import { deleteFile, getDownloadUrl } from "@/api/files";
+import type { DirectoryDto, FileDto } from "@/types/api";
+import { updateDirectory } from "@/api/directories";
+import { deleteFile, getDownloadUrl, updateFile } from "@/api/files";
 import { isApiError } from "@/api/client";
 import { errorMessage, isRetryable, requestReference } from "@/lib/errors";
 import { useUpload } from "./useUpload";
@@ -88,6 +89,54 @@ function remove(file: FileDto): Promise<void> {
   return request;
 }
 
+async function rename(file: FileDto, name: string): Promise<FileDto> {
+  const updated = await updateFile(file.id, { name });
+  useUpload().updateFile(updated);
+  toast.success(`Файл «${file.name}» переименован в «${updated.name}»`);
+  useFileBrowser().refresh();
+  return updated;
+}
+
+async function move(file: FileDto, directory: string): Promise<FileDto> {
+  const updated = await updateFile(file.id, { directory });
+  useUpload().updateFile(updated);
+  toast.success(
+    `Файл «${updated.name}» перемещён в «${updated.directory || "Корень"}»`,
+  );
+  useFileBrowser().refresh();
+  return updated;
+}
+
+async function renameDirectory(
+  directory: Pick<DirectoryDto, "name" | "path">,
+  name: string,
+): Promise<DirectoryDto> {
+  const updated = await updateDirectory(directory.path, { name });
+  toast.success(`Каталог «${directory.name}» переименован в «${updated.name}»`);
+  useFileBrowser().refresh();
+  return updated;
+}
+
+async function moveDirectory(
+  directory: Pick<DirectoryDto, "name" | "path">,
+  parent: string,
+): Promise<DirectoryDto> {
+  const updated = await updateDirectory(directory.path, { parent });
+  toast.success(
+    `Каталог «${updated.name}» перемещён в «${parent || "Корень"}»`,
+  );
+  useFileBrowser().refresh();
+  return updated;
+}
+
 export function useFileActions() {
-  return { download, downloadByUrl, remove };
+  return {
+    download,
+    downloadByUrl,
+    remove,
+    rename,
+    move,
+    renameDirectory,
+    moveDirectory,
+  };
 }
