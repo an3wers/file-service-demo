@@ -13,6 +13,7 @@ import {
 } from "./createUploadOperation";
 import { useFileBrowser } from "./useFileBrowser";
 import { getSessionUser, onSessionChange } from "@/api/session";
+import { holdSession } from "@/api/client";
 import {
   cancelUploadOperation,
   failUploadOperation,
@@ -425,6 +426,7 @@ async function run(row: UploadRow): Promise<void> {
   const operation = row.operation.value!;
   row.state.value = "active";
   active.add(row);
+  const release = holdSession();
   try {
     const retrying = row.retryPending;
     row.retryPending = false;
@@ -444,6 +446,7 @@ async function run(row: UploadRow): Promise<void> {
       complete(row, "failed", row.message.value);
     } else beginRecovery(row);
   } finally {
+    release();
     if (started === generation) {
       active.delete(row);
       if (row.pending.value) void recover(row);

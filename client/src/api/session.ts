@@ -58,7 +58,11 @@ export function getSessionUser(): SessionUser | null {
 }
 
 export function isRenewalDue(): boolean {
-  return accessToken !== null && expiresAt - Date.now() < RENEW_AHEAD_MS;
+  return accessToken !== null && renewalDelay() === 0;
+}
+
+export function renewalDelay(): number {
+  return Math.max(0, expiresAt - Date.now() - RENEW_AHEAD_MS);
 }
 
 export function shareRenewal(

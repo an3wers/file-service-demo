@@ -1,10 +1,19 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { flushPromises } from "@vue/test-utils";
 import { ApiError } from "@/api/client";
-import { clearSession, startSession } from "@/api/session";
+import {
+  clearSession,
+  getAccessToken,
+  onSessionExpired,
+  startSession,
+} from "@/api/session";
 import {
   cancelUploadOperation,
+  completeUpload,
   failUploadOperation,
+  presignUpload,
+  putPart,
+  putToPresignedUrl,
   resolveUploadOperation,
   uploadViaServer,
 } from "@/api/files";
@@ -424,4 +433,119 @@ it("ожидает pending и 503 дольше минуты без переда�
   expect(
     new Set(vi.mocked(uploadViaServer).mock.calls.map((args) => args[3])).size,
   ).toBe(1);
+});
+
+describe.each([
+  { name: "обычная", mode: "server" as const, strategy: null },
+  { name: "прямая", mode: "presigned" as const, strategy: "single" as const },
+  {
+    name: "составная",
+    mode: "presigned" as const,
+    strategy: "multipart" as const,
+  },
+])("$name загрузка дольше жизни токена", ({ mode, strategy }) => {
+  const operator = {
+    id: "00000000-0000-4000-8000-000000000001",
+    name: "operator",
+    email: "operator@example.com",
+  };
+  const expired = vi.fn();
+  const fetchMock = vi.fn(
+    async () =>
+      new Response(
+        JSON.stringify({
+          accessToken: "renewed",
+          expiresIn: 900,
+          user: operator,
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      ),
+  );
+  const finish: (() => void)[] = [];
+
+  function hang(...args: unknown[]): Promise<never> {
+    const { signal } = args.find(
+      (arg: unknown) =>
+        typeof arg === "object" && arg !== null && "signal" in arg,
+    ) as { signal: AbortSignal };
+    return new Promise((resolve, reject) => {
+      finish.push(() => resolve(ready as never));
+      signal.addEventListener("abort", () =>
+        reject(new DOMException("Отменено", "AbortError")),
+      );
+    });
+  }
+
+  beforeEach(() => {
+    finish.length = 0;
+    fetchMock.mockClear();
+    vi.stubGlobal("fetch", fetchMock);
+    onSessionExpired(expired);
+    startSession({ accessToken: "short", expiresIn: 900, user: operator });
+    upload.setMode(mode);
+    vi.mocked(completeUpload).mockResolvedValue(ready);
+    if (strategy === null) vi.mocked(uploadViaServer).mockImplementation(hang);
+    vi.mocked(putToPresignedUrl).mockImplementation(hang);
+    vi.mocked(putPart).mockImplementation(hang);
+    vi.mocked(presignUpload).mockImplementation(async (body) =>
+      strategy === "multipart"
+        ? {
+            strategy,
+            id: body.filename,
+            key: body.filename,
+            directory: "",
+            uploadId: "upload-1",
+            size: 5,
+            partSize: 5,
+            partCount: 1,
+            maxConcurrency: 1,
+            expiresAt: "2026-08-30T13:00:00.000Z",
+            parts: [{ partNumber: 1, offset: 0, size: 5, url: "u" }],
+          }
+        : {
+            strategy: "single",
+            id: body.filename,
+            key: body.filename,
+            directory: "",
+            uploadUrl: "u",
+            expiresAt: "2026-08-30T13:00:00.000Z",
+            requiredHeaders: {},
+          },
+    );
+  });
+
+  afterEach(() => {
+    onSessionExpired(null);
+    upload.setMode("server");
+    vi.unstubAllGlobals();
+  });
+
+  it("параллельные передачи держат сессию без формы входа, а после последней продление прекращается", async () => {
+    upload.addFiles([
+      file(),
+      new File(["world"], "notes.txt", {
+        type: "text/plain",
+        lastModified: 2000,
+      }),
+    ]);
+    upload.submit("");
+    await flushPromises();
+    expect(finish).toHaveLength(2);
+
+    await vi.advanceTimersByTimeAsync(40 * 60_000);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(getAccessToken()).toBe("renewed");
+
+    finish[0]!();
+    await flushPromises();
+    await vi.advanceTimersByTimeAsync(15 * 60_000);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(upload.rows.value[0]!.status.value).toBe("succeeded");
+
+    upload.cancelRow(upload.rows.value[1]!);
+    await flushPromises();
+    await vi.advanceTimersByTimeAsync(60 * 60_000);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(expired).not.toHaveBeenCalled();
+  });
 });

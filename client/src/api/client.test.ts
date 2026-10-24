@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AuthSession } from "@/api/generated";
-import { apiRequest, apiUpload } from "./client";
+import { apiRequest, apiUpload, holdSession } from "./client";
 import {
   clearSession,
   getAccessToken,
@@ -301,5 +301,105 @@ describe("отправка файла через XHR", () => {
     });
     expect(sent).toHaveLength(1);
     expect(expired).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("поддержание сессии активной передачей", () => {
+  function refreshes(fetchMock: ReturnType<typeof vi.fn>): number {
+    return fetchMock.mock.calls.filter(([url]) => url === "/api/auth/refresh")
+      .length;
+  }
+
+  const releases: (() => void)[] = [];
+  const hold = (): void => void releases.push(holdSession());
+
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => {
+    releases.splice(0).forEach((release) => release());
+    vi.useRealTimers();
+  });
+
+  it("продлевает сессию заранее, пока идёт передача без обращений к API", async () => {
+    startSession(session("old"));
+    let issued = 0;
+    const fetchMock = vi.fn(async () => json(200, session(`new-${++issued}`)));
+    vi.stubGlobal("fetch", fetchMock);
+
+    hold();
+    await vi.advanceTimersByTimeAsync(45 * 60_000);
+
+    expect(refreshes(fetchMock)).toBe(3);
+    expect(getAccessToken()).toBe("new-3");
+    expect(expired).not.toHaveBeenCalled();
+  });
+
+  it("прекращает продление после завершения последней передачи", async () => {
+    startSession(session("old"));
+    const fetchMock = vi.fn(async () => json(200, session("new")));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const first = holdSession();
+    const second = holdSession();
+    first();
+    await vi.advanceTimersByTimeAsync(15 * 60_000);
+    expect(refreshes(fetchMock)).toBe(1);
+
+    second();
+    second();
+    await vi.advanceTimersByTimeAsync(60 * 60_000);
+    expect(refreshes(fetchMock)).toBe(1);
+  });
+
+  it("не продлевает сессию простаивающей страницы", async () => {
+    startSession(session("old"));
+    const fetchMock = vi.fn(async () => json(200, session("new")));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await vi.advanceTimersByTimeAsync(60 * 60_000);
+
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("после временного сбоя продления не завершает сессию и повторяет попытку", async () => {
+    startSession(session("old"));
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(failure(503, "UNAVAILABLE"))
+      .mockResolvedValue(json(200, session("new")));
+    vi.stubGlobal("fetch", fetchMock);
+
+    hold();
+    await vi.advanceTimersByTimeAsync(15 * 60_000);
+
+    expect(refreshes(fetchMock)).toBe(2);
+    expect(getAccessToken()).toBe("new");
+    expect(expired).not.toHaveBeenCalled();
+  });
+
+  it("после отзыва сессии прекращает продление", async () => {
+    startSession(session("old"));
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(failure(401, "SESSION_EXPIRED"));
+    vi.stubGlobal("fetch", fetchMock);
+
+    hold();
+    await vi.advanceTimersByTimeAsync(60 * 60_000);
+
+    expect(refreshes(fetchMock)).toBe(1);
+    expect(expired).toHaveBeenCalledTimes(1);
+    expect(getAccessToken()).toBeNull();
+  });
+
+  it("после выхода не продлевает сессию прежнего пользователя", async () => {
+    startSession(session("old"));
+    const fetchMock = vi.fn(async () => json(200, session("new")));
+    vi.stubGlobal("fetch", fetchMock);
+
+    hold();
+    clearSession();
+    await vi.advanceTimersByTimeAsync(60 * 60_000);
+
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });

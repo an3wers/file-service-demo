@@ -5,6 +5,7 @@ import {
   getAccessToken,
   getSessionUser,
   isRenewalDue,
+  renewalDelay,
   sessionSignal,
   shareRenewal,
   sharedSessionChanged,
@@ -246,6 +247,35 @@ export function renewSession(): Promise<void> {
       }
     },
   );
+}
+
+const KEEPALIVE_RETRY_MS = 10_000;
+let holds = 0;
+let keepalive: ReturnType<typeof setTimeout> | undefined;
+
+function scheduleKeepalive(delay = renewalDelay()): void {
+  clearTimeout(keepalive);
+  keepalive = undefined;
+  if (holds === 0 || getAccessToken() === null) return;
+  keepalive = setTimeout(() => {
+    if (!isRenewalDue()) return scheduleKeepalive();
+    renewSession().then(
+      () => scheduleKeepalive(),
+      () => scheduleKeepalive(KEEPALIVE_RETRY_MS),
+    );
+  }, delay);
+}
+
+export function holdSession(): () => void {
+  let held = true;
+  holds += 1;
+  scheduleKeepalive();
+  return () => {
+    if (!held) return;
+    held = false;
+    holds -= 1;
+    scheduleKeepalive();
+  };
 }
 
 async function withSession<T>(
