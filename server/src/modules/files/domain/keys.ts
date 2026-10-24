@@ -112,3 +112,10 @@ export function normalizeDirectoryName(input: string): string {
   }
   return normalizeDirectory(name);
 }
+
+export function normalizeFileName(input: string): string {
+  if (input.includes("/") || input.includes("\\")) {
+    throw new InvalidFileNameError("File name must not contain a path");
+  }
+  return sanitizeFileName(input);
+}

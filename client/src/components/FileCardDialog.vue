@@ -24,6 +24,8 @@ const s3Host = import.meta.env.VITE_S3_HOST;
 const emit = defineEmits<{
   "update:open": [value: boolean];
   download: [file: FileDto];
+  rename: [file: FileDto];
+  move: [file: FileDto];
   remove: [file: FileDto];
 }>();
 
@@ -172,6 +174,20 @@ function download(): void {
           @click="download"
         >
           Скачать
+        </Button>
+        <Button
+          variant="outline"
+          :disabled="!fresh || fresh.status !== 'ready'"
+          @click="fresh && emit('rename', fresh)"
+        >
+          Переименовать
+        </Button>
+        <Button
+          variant="outline"
+          :disabled="!fresh || fresh.status !== 'ready'"
+          @click="fresh && emit('move', fresh)"
+        >
+          Переместить
         </Button>
         <Button
           variant="destructive"

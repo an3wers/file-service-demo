@@ -80,6 +80,16 @@ export const createDirectorySchema = z
   })
   .meta({ id: "CreateDirectoryBody" });
 
+export const updateFileSchema = z
+  .object({
+    name: z.string().max(512).optional(),
+    directory: z.string().max(1024).optional(),
+  })
+  .refine((body) => body.name !== undefined || body.directory !== undefined, {
+    message: "Укажите новое имя или каталог",
+  })
+  .meta({ id: "UpdateFileBody" });
+
 export const resolveUploadSchema = z
   .object({
     stoppedUploadId: z.string().min(1).max(1024).optional(),

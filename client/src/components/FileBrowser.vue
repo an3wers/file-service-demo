@@ -38,6 +38,8 @@ import DirectoryBreadcrumbs from "./DirectoryBreadcrumbs.vue";
 import FileCardDialog from "./FileCardDialog.vue";
 import FileTable from "./FileTable.vue";
 import CreateDirectoryDialog from "./CreateDirectoryDialog.vue";
+import MoveDialog from "./MoveDialog.vue";
+import RenameDialog from "./RenameDialog.vue";
 import UploadPanel from "./UploadPanel.vue";
 import { useFileActions } from "@/composables/useFileActions";
 import { useFileBrowser } from "@/composables/useFileBrowser";
@@ -54,6 +56,10 @@ const selectedFile = ref<FileDto | null>(null);
 const cardOpen = ref(false);
 const fileToDelete = ref<FileDto | null>(null);
 const deleteOpen = ref(false);
+const fileToRename = ref<FileDto | null>(null);
+const renameOpen = ref(false);
+const fileToMove = ref<FileDto | null>(null);
+const moveOpen = ref(false);
 const uploadOpen = ref(false);
 const createOpen = ref(false);
 
@@ -74,6 +80,28 @@ function askDelete(file: FileDto): void {
   cardOpen.value = false;
   fileToDelete.value = file;
   deleteOpen.value = true;
+}
+
+function askRename(file: FileDto): void {
+  cardOpen.value = false;
+  fileToRename.value = file;
+  renameOpen.value = true;
+}
+
+function askMove(file: FileDto): void {
+  cardOpen.value = false;
+  fileToMove.value = file;
+  moveOpen.value = true;
+}
+
+async function renameSelected(name: string): Promise<void> {
+  if (fileToRename.value)
+    fileToRename.value = await actions.rename(fileToRename.value, name);
+}
+
+async function moveSelected(directory: string): Promise<void> {
+  if (fileToMove.value)
+    fileToMove.value = await actions.move(fileToMove.value, directory);
 }
 
 function onDeleted(file: FileDto): void {
@@ -151,6 +179,8 @@ function onDeleted(file: FileDto): void {
       <FileTable
         @open="openCard"
         @download="actions.download"
+        @rename="askRename"
+        @move="askMove"
         @remove="askDelete"
       />
 
@@ -194,7 +224,27 @@ function onDeleted(file: FileDto): void {
     v-model:open="cardOpen"
     :file="selectedFile"
     @download="actions.download"
+    @rename="askRename"
+    @move="askMove"
     @remove="askDelete"
+  />
+
+  <RenameDialog
+    v-model:open="renameOpen"
+    title="Переименование файла"
+    :description="`Файл «${fileToRename?.name ?? ''}»`"
+    :initial="fileToRename?.name ?? ''"
+    failure="Не удалось переименовать файл"
+    :submit="renameSelected"
+  />
+
+  <MoveDialog
+    v-model:open="moveOpen"
+    title="Перемещение файла"
+    :description="`Выберите каталог для файла «${fileToMove?.name ?? ''}»`"
+    :current="fileToMove?.directory ?? ''"
+    failure="Не удалось переместить файл"
+    :submit="moveSelected"
   />
 
   <DeleteFileDialog

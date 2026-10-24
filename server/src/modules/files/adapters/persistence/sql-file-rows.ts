@@ -311,6 +311,34 @@ export function createSqlFileRows(
       );
       return rows.length > 0;
     },
+    async relocateFile(id, change) {
+      const { rows } = await execute<FileRow>(
+        `update files
+            set original_name = coalesce($2, original_name),
+                extension = coalesce($3, extension),
+                directory = coalesce($4, directory),
+                updated_at = now()
+          where id = $1 and status = 'ready' and deleted_at is null and ${owned(5)}
+            and ($4::text is null or exists (
+              select 1 from directories d
+               where d.owner_id is not distinct from files.owner_id and d.path = $4
+               for key share
+            ))
+            and not exists (
+              select 1 from upload_operations o join upload_terminations t on t.operation_id = o.id
+              where o.file_id = files.id
+            )
+          returning *`,
+        [
+          id,
+          change.name?.originalName ?? null,
+          change.name?.extension ?? null,
+          change.directory ?? null,
+          owner,
+        ],
+      );
+      return rows[0] ? toStoredFile(rows[0]) : null;
+    },
     countActiveMultipart: () => countActiveMultipart(execute, owner),
     softDeleteFile: (id) => softDeleteFile(id, execute, owner),
     listFiles: (params) => listFiles(params, execute, owner),

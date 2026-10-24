@@ -10,6 +10,11 @@ export type SortField = 'created_at' | 'original_name' | 'size_bytes';
 
 export type SortOrder = 'asc' | 'desc';
 
+export type UpdateFileBody = {
+    name?: string;
+    directory?: string;
+};
+
 export type CreateDirectoryBody = {
     parent?: string;
     name: string;
@@ -1420,6 +1425,57 @@ export type GetFileResponses = {
 };
 
 export type GetFileResponse = GetFileResponses[keyof GetFileResponses];
+
+export type UpdateFileData = {
+    body: UpdateFileBody;
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/files/{id}';
+};
+
+export type UpdateFileErrors = {
+    /**
+     * Недопустимое имя или каталог
+     */
+    400: ErrorResponse;
+    /**
+     * Нет токена доступа или он недействителен
+     */
+    401: ErrorResponse;
+    /**
+     * Файла или каталога нет
+     */
+    404: ErrorResponse;
+    /**
+     * Файл ещё не готов или удаляется
+     */
+    409: ErrorResponse;
+    /**
+     * Запрос не прошёл валидацию; details — результат z.flattenError()
+     */
+    422: ErrorResponse;
+    /**
+     * Непредвиденная ошибка сервера
+     */
+    500: ErrorResponse;
+    /**
+     * Хранилище или база данных недоступны
+     */
+    503: ErrorResponse;
+};
+
+export type UpdateFileError = UpdateFileErrors[keyof UpdateFileErrors];
+
+export type UpdateFileResponses = {
+    /**
+     * Файл изменён
+     */
+    200: FileDto;
+};
+
+export type UpdateFileResponse = UpdateFileResponses[keyof UpdateFileResponses];
 
 export type CompleteUploadData = {
     body?: never;
