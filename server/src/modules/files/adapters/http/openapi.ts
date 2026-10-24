@@ -2,7 +2,7 @@ import type { ZodOpenApiPathsObject } from "zod-openapi";
 import { apiErrors } from "../../../../http-contract.js";
 import {
   createDirectorySchema,
-  deleteDirectoryQuerySchema,
+  directoryPathQuerySchema,
   directoriesQuerySchema,
   downloadUrlQuerySchema,
   fileCardQuerySchema,
@@ -12,6 +12,7 @@ import {
   presignUploadSchema,
   uploadFormSchema,
   resolveUploadSchema,
+  updateDirectorySchema,
   updateFileSchema,
 } from "./schemas.js";
 import {
@@ -325,13 +326,35 @@ export const directoriesPaths: ZodOpenApiPathsObject = {
         "Рекурсивного удаления нет: каталог с подкаталогами, файлами или незавершёнными " +
         "загрузками не удаляется. Личный корень удалить нельзя.",
       operationId: "deleteDirectory",
-      requestParams: { query: deleteDirectoryQuerySchema },
+      requestParams: { query: directoryPathQuerySchema },
       responses: {
         204: { description: "Каталог удалён" },
         ...apiErrors({
           400: "Недопустимый каталог или личный корень",
           404: "Директория не найдена",
           409: "Каталог не пуст",
+        }),
+      },
+    },
+    patch: {
+      tags: ["directories"],
+      summary: "Переименовать или переместить каталог",
+      description:
+        "Меняет имя и/или родителя каталога вместе со всеми подкаталогами и файлами. " +
+        "Идентификаторы, объектные ключи и содержимое файлов сохраняются. Личный корень " +
+        "изменить нельзя; каталог нельзя перенести в самого себя или в своего потомка.",
+      operationId: "updateDirectory",
+      requestParams: { query: directoryPathQuerySchema },
+      requestBody: { required: true, content: json(updateDirectorySchema) },
+      responses: {
+        200: {
+          description: "Каталог изменён",
+          content: json(directoryDtoSchema),
+        },
+        ...apiErrors({
+          400: "Недопустимое имя, каталог, личный корень или перенос в потомка",
+          404: "Каталог или новый родитель не найден",
+          409: "Путь уже занят или в каталоге идут незавершённые загрузки",
         }),
       },
     },

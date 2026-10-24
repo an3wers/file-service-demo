@@ -27,6 +27,7 @@ const props = defineProps<{
   title: string;
   description: string;
   current: string;
+  exclude?: string;
   failure: string;
   submit: (directory: string) => Promise<void>;
 }>();
@@ -37,6 +38,19 @@ const loading = ref(false);
 const saving = ref(false);
 const error = ref<string | null>(null);
 let request = 0;
+
+function excluded(path: string): boolean {
+  const own = props.exclude;
+  return own !== undefined && (path === own || path.startsWith(`${own}/`));
+}
+
+const blocked = computed(
+  () =>
+    saving.value ||
+    loading.value ||
+    target.value === props.current ||
+    excluded(target.value),
+);
 
 const crumbs = computed(() => {
   const segments = target.value.split("/").filter(Boolean);
@@ -75,7 +89,7 @@ watch(
 );
 
 async function send(): Promise<void> {
-  if (saving.value || loading.value || target.value === props.current) return;
+  if (blocked.value) return;
   saving.value = true;
   error.value = null;
   try {
@@ -130,7 +144,7 @@ function updateOpen(open: boolean): void {
             :key="child.path"
             variant="ghost"
             class="justify-start"
-            :disabled="saving"
+            :disabled="saving || excluded(child.path)"
             @click="browse(child.path)"
           >
             <FolderIcon data-icon="inline-start" aria-hidden="true" />
@@ -151,10 +165,7 @@ function updateOpen(open: boolean): void {
             Отмена
           </Button>
         </DialogClose>
-        <Button
-          :disabled="saving || loading || target === current"
-          @click="send"
-        >
+        <Button :disabled="blocked" @click="send">
           {{ saving ? "Перемещение…" : "Переместить сюда" }}
         </Button>
       </DialogFooter>

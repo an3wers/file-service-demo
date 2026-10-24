@@ -42,6 +42,8 @@ const emit = defineEmits<{
   rename: [file: FileDto];
   move: [file: FileDto];
   remove: [file: FileDto];
+  renameDirectory: [directory: DirectoryDto];
+  moveDirectory: [directory: DirectoryDto];
   removeDirectory: [directory: DirectoryDto];
 }>();
 
@@ -179,6 +181,22 @@ const skeletonRows = [0, 1, 2, 3, 4];
               <TableCell class="px-4 text-muted-foreground"> — </TableCell>
               <TableCell class="px-4 text-right">
                 <span class="flex justify-end gap-1">
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    aria-label="Переименовать каталог"
+                    @click.stop="emit('renameDirectory', catalog)"
+                  >
+                    <PencilIcon />
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    aria-label="Переместить каталог"
+                    @click.stop="emit('moveDirectory', catalog)"
+                  >
+                    <FolderInputIcon />
+                  </Button>
                   <Button
                     variant="ghost"
                     size="icon"

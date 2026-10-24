@@ -13,6 +13,7 @@ import {
 import type { Clock } from "../domain/ports/clock.js";
 import {
   DirectoryAlreadyExistsError,
+  DirectoryBusyError,
   DirectoryNotEmptyError,
   DirectoryNotFoundError,
   InvalidDirectoryError,
@@ -92,6 +93,10 @@ export interface CatalogModule {
   deleteFile(id: string): Promise<void>;
   updateFile(id: string, input: UpdateFileInput): Promise<StoredFile>;
   deleteDirectory(rawPath: string): Promise<void>;
+  moveDirectory(
+    rawPath: string,
+    input: { name?: string | undefined; parent?: string | undefined },
+  ): Promise<DirectoryDto>;
   listDirectories(rawParent: string | undefined): Promise<{
     parent: string;
     items: DirectoryDto[];
@@ -291,6 +296,59 @@ export function createCatalogModule({
           "Каталог не пуст: в нём есть подкаталоги, файлы или незавершённые загрузки",
           { path },
         );
+    },
+
+    async moveDirectory(rawPath, input) {
+      const path = normalizeDirectory(rawPath);
+      if (!path)
+        throw new InvalidDirectoryError(
+          "Личный корень нельзя переименовать или переместить",
+          { path },
+        );
+      const slash = path.lastIndexOf("/");
+      const parent =
+        input.parent === undefined
+          ? path.slice(0, Math.max(slash, 0))
+          : normalizeDirectory(input.parent);
+      const name =
+        input.name === undefined
+          ? path.slice(slash + 1)
+          : normalizeDirectoryName(input.name);
+      const target = normalizeDirectory(parent ? `${parent}/${name}` : name);
+      if (parent === path || parent.startsWith(`${path}/`))
+        throw new InvalidDirectoryError(
+          "Каталог нельзя переместить в самого себя или в свой подкаталог",
+          { path, parent },
+        );
+      if (target !== path) {
+        const result = await directories.move(path, parent, name);
+        if (result === "missing")
+          throw new DirectoryNotFoundError("Директория не найдена", { path });
+        if (result === "target-missing")
+          throw new DirectoryNotFoundError("Директория не найдена", {
+            path: parent,
+          });
+        if (result === "exists")
+          throw new DirectoryAlreadyExistsError("Директория уже существует", {
+            path: target,
+          });
+        if (result === "too-long")
+          throw new InvalidDirectoryError(
+            "Путь вложенного каталога станет слишком длинным",
+            { path: target },
+          );
+        if (result === "busy")
+          throw new DirectoryBusyError(
+            "В каталоге идут незавершённые загрузки или он изменяется",
+            { path },
+          );
+      }
+      const moved = (await directories.listChildren(parent)).find(
+        (item) => item.path === target,
+      );
+      if (!moved)
+        throw new DirectoryNotFoundError("Директория не найдена", { path });
+      return moved;
     },
 
     async listDirectories(rawParent) {

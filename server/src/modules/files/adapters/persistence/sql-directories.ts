@@ -2,6 +2,7 @@ import { pool, query, type Execute } from "../../../../db/pool.js";
 import { databaseError, violatedForeignKey } from "../../../../db/errors.js";
 import { DirectoryNotFoundError } from "../../domain/errors.js";
 import type { DirectoriesForCatalog } from "../../domain/ports/directories.js";
+import { MAX_DIRECTORY_BYTES } from "../../domain/keys.js";
 
 const SETTLED_FILE = `exists (
   select 1 from upload_operations o
@@ -78,6 +79,96 @@ export function createSqlDirectories(
       } catch (error) {
         await client.query("rollback").catch(() => undefined);
         if (violatedForeignKey(error)) return "occupied";
+        throw databaseError(error);
+      } finally {
+        client.release();
+      }
+    },
+    async move(path, parent, name) {
+      const target = parent ? `${parent}/${name}` : name;
+      const client = await pool.connect().catch((error: unknown) => {
+        throw databaseError(error);
+      });
+      try {
+        await client.query("begin");
+        const { rows: subtree } = await client.query<{ path: string }>(
+          `select path from directories
+            where owner_id is not distinct from $1
+              and (path = $2 or starts_with(path, $2 || '/'))
+            order by path for update`,
+          [owner, path],
+        );
+        const outcome = await (async () => {
+          if (!subtree.some((row) => row.path === path)) return "missing";
+          const { rowCount: parentFound } = await client.query(
+            "select 1 from directories where owner_id is not distinct from $1 and path = $2 for key share",
+            [owner, parent],
+          );
+          if (!parentFound) return "target-missing";
+          const { rowCount: taken } = await client.query(
+            "select 1 from directories where owner_id is not distinct from $1 and path = $2",
+            [owner, target],
+          );
+          if (taken) return "exists";
+          if (
+            subtree.some(
+              (row) =>
+                Buffer.byteLength(target + row.path.slice(path.length)) >
+                MAX_DIRECTORY_BYTES,
+            )
+          )
+            return "too-long";
+          const { rows } = await client.query<{ busy: boolean }>(
+            `select exists (
+               select 1 from files f
+                where f.live_owner_id = $1
+                  and (f.live_directory = $2 or starts_with(f.live_directory, $2 || '/'))
+                  and f.status <> 'ready' and not ${SETTLED_FILE}
+             ) as busy`,
+            [owner, path],
+          );
+          if (rows[0]!.busy) return "busy";
+          return null;
+        })();
+        if (outcome) {
+          await client.query("rollback");
+          return outcome;
+        }
+        const remap = (column: string) =>
+          `$3 || substr(${column}, char_length($2) + 1)`;
+        const subtreeOf = (column: string) =>
+          `(${column} = $2 or starts_with(${column}, $2 || '/'))`;
+        await client.query(
+          `insert into directories (owner_id, path, parent, name)
+           select owner_id, ${remap("path")},
+                  case when path = $2 then $4 else ${remap("parent")} end,
+                  case when path = $2 then $5 else name end
+             from directories
+            where owner_id is not distinct from $1 and ${subtreeOf("path")}`,
+          [owner, path, target, parent, name],
+        );
+        await client.query(
+          `update files set directory = ${remap("directory")}, updated_at = now()
+            where owner_id is not distinct from $1 and ${subtreeOf("directory")}`,
+          [owner, path, target],
+        );
+        await client.query(
+          `update upload_operations set directory = ${remap("directory")}
+            where owner_id is not distinct from $1 and ${subtreeOf("directory")}`,
+          [owner, path, target],
+        );
+        await client.query(
+          `delete from directories
+            where owner_id is not distinct from $1 and ${subtreeOf("path")}`,
+          [owner, path],
+        );
+        await client.query("commit");
+        return "moved";
+      } catch (error) {
+        await client.query("rollback").catch(() => undefined);
+        const code = (error as { code?: unknown } | null)?.code;
+        if (code === "23505") return "exists";
+        if (code === "23503" || code === "40P01") return "busy";
         throw databaseError(error);
       } finally {
         client.release();

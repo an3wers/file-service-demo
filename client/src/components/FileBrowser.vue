@@ -65,6 +65,10 @@ const uploadOpen = ref(false);
 const createOpen = ref(false);
 const directoryToDelete = ref<Pick<DirectoryDto, "name" | "path"> | null>(null);
 const deleteDirectoryOpen = ref(false);
+const directoryToRename = ref<DirectoryDto | null>(null);
+const renameDirectoryOpen = ref(false);
+const directoryToMove = ref<DirectoryDto | null>(null);
+const moveDirectoryOpen = ref(false);
 
 const limitValue = computed({
   get: () => String(browser.limit.value),
@@ -105,6 +109,36 @@ async function renameSelected(name: string): Promise<void> {
 async function moveSelected(directory: string): Promise<void> {
   if (fileToMove.value)
     fileToMove.value = await actions.move(fileToMove.value, directory);
+}
+
+function askRenameDirectory(directory: DirectoryDto): void {
+  directoryToRename.value = directory;
+  renameDirectoryOpen.value = true;
+}
+
+function askMoveDirectory(directory: DirectoryDto): void {
+  directoryToMove.value = directory;
+  moveDirectoryOpen.value = true;
+}
+
+async function renameSelectedDirectory(name: string): Promise<void> {
+  if (directoryToRename.value)
+    directoryToRename.value = await actions.renameDirectory(
+      directoryToRename.value,
+      name,
+    );
+}
+
+async function moveSelectedDirectory(parent: string): Promise<void> {
+  if (directoryToMove.value)
+    directoryToMove.value = await actions.moveDirectory(
+      directoryToMove.value,
+      parent,
+    );
+}
+
+function parentOf(path: string): string {
+  return path.slice(0, Math.max(0, path.lastIndexOf("/")));
 }
 
 function askDeleteDirectory(directory: Pick<DirectoryDto, "name" | "path">) {
@@ -206,6 +240,8 @@ function onDeleted(file: FileDto): void {
         @move="askMove"
         @remove="askDelete"
         @remove-directory="askDeleteDirectory"
+        @rename-directory="askRenameDirectory"
+        @move-directory="askMoveDirectory"
       />
 
       <Pagination
@@ -273,6 +309,25 @@ function onDeleted(file: FileDto): void {
     :current="fileToMove?.directory ?? ''"
     failure="Не удалось переместить файл"
     :submit="moveSelected"
+  />
+
+  <RenameDialog
+    v-model:open="renameDirectoryOpen"
+    title="Переименование каталога"
+    :description="`Каталог «${directoryToRename?.name ?? ''}»`"
+    :initial="directoryToRename?.name ?? ''"
+    failure="Не удалось переименовать каталог"
+    :submit="renameSelectedDirectory"
+  />
+
+  <MoveDialog
+    v-model:open="moveDirectoryOpen"
+    title="Перемещение каталога"
+    :description="`Выберите новый родительский каталог для «${directoryToMove?.name ?? ''}»`"
+    :current="parentOf(directoryToMove?.path ?? '')"
+    :exclude="directoryToMove?.path"
+    failure="Не удалось переместить каталог"
+    :submit="moveSelectedDirectory"
   />
 
   <DeleteFileDialog
