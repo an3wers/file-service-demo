@@ -9,7 +9,13 @@ const migrationsDir = join(
   "migrations",
 );
 
-export async function migrate(): Promise<void> {
+export async function migrationFiles(): Promise<string[]> {
+  return (await readdir(migrationsDir))
+    .filter((name) => name.endsWith(".sql"))
+    .sort();
+}
+
+export async function migrate(last?: string): Promise<void> {
   const client = await pool.connect();
 
   try {
@@ -25,9 +31,9 @@ export async function migrate(): Promise<void> {
     );
     const applied = new Set(rows.map((row) => row.name));
 
-    const files = (await readdir(migrationsDir))
-      .filter((name) => name.endsWith(".sql"))
-      .sort();
+    const files = (await migrationFiles()).filter(
+      (name) => last === undefined || name <= last,
+    );
 
     for (const name of files) {
       if (applied.has(name)) {

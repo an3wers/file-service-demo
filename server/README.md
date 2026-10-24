@@ -32,6 +32,8 @@ npm run dev:server
 | `npm run db:migrate`                                      | применяет `src/db/migrations/*.sql`, история в `schema_migrations`                                       |
 | `npm run notification:test -- --to recipient@example.com` | отправляет тестовое письмо через настроенный SMTP                                                        |
 | `npm run db:cleanup`                                      | разбирает presigned-загрузки, которые так и не подтвердили                                               |
+| `npm run transition -- verify`                            | проверяет чистое состояние БД и бакета перед открытием, см. [docs/transition.md](../docs/transition.md)  |
+| `npm run transition -- clean --confirm <DATABASE_NAME>`   | однократно удаляет старое состояние; отказывает при зарегистрированных пользователях                     |
 | `npm run s3:cors`                                         | применяет CORS-правила бакета для `CORS_ORIGIN`                                                          |
 | `npm run openapi`                                         | пересобирает `openapi.json` из Zod-схем; корневой `npm run api:generate` также обновляет клиентские типы |
 
