@@ -28,6 +28,11 @@ export interface ListFilesParams {
   order: "asc" | "desc";
 }
 
+export interface FilePlacement {
+  name?: { originalName: string; extension: string };
+  directory?: string;
+}
+
 /** Данные завершённой загрузки, необходимые для подтверждения. */
 export interface ReadyValues {
   sizeBytes: number | null;
@@ -52,6 +57,8 @@ export interface FileRowsForFiles {
    * от успешного подтверждения.
    */
   markFileReady(id: string, values: ReadyValues): Promise<StoredFile | null>;
+
+  relocateFile(id: string, change: FilePlacement): Promise<StoredFile | null>;
 
   /** `null`, если строка уже удалена; повторное удаление не считается ошибкой. */
   softDeleteFile(id: string): Promise<StoredFile | null>;

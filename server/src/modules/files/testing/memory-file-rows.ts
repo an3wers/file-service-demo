@@ -279,6 +279,20 @@ export function createMemoryFileRows(
           ).length;
         },
 
+        async relocateFile(id, change) {
+          failures.check("relocateFile");
+          const row = get(id);
+          if (!row || !live(row) || row.status !== "ready" || terminated(id))
+            return null;
+          if (change.name) {
+            row.original_name = change.name.originalName;
+            row.extension = change.name.extension;
+          }
+          if (change.directory !== undefined) row.directory = change.directory;
+          row.updated_at = clock.now();
+          return toStoredFile(copy(row));
+        },
+
         async softDeleteFile(id: string): Promise<StoredFile | null> {
           failures.check("softDeleteFile");
 

@@ -21,6 +21,7 @@ import {
   presignUploadSchema,
   uploadBodySchema,
   resolveUploadSchema,
+  updateFileSchema,
 } from "./schemas.js";
 import type {
   DirectoriesQuery,
@@ -293,6 +294,24 @@ export function createFilesRouter({
 
       res.json(
         await catalogOf(res).getDownloadUrl(id, { disposition, expiresIn }),
+      );
+    },
+  );
+
+  filesRouter.patch(
+    "/:id",
+    validateParams(idParamsSchema),
+    validateBody(updateFileSchema),
+    async (req, res) => {
+      const { id } = validatedParams<IdParams>(res);
+
+      res.json(
+        toFileDto(
+          await catalogOf(res).updateFile(id, {
+            name: req.body.name,
+            directory: req.body.directory,
+          }),
+        ),
       );
     },
   );

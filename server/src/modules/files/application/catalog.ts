@@ -4,7 +4,12 @@ import { requireDirectory } from "../domain/directories.js";
 import type { DirectoriesForCatalog } from "../domain/ports/directories.js";
 import { randomUUID } from "node:crypto";
 import type { UploadOperations } from "../domain/ports/upload-operations.js";
-import { normalizeDirectory, normalizeDirectoryName } from "../domain/keys.js";
+import {
+  fileExtension,
+  normalizeDirectory,
+  normalizeDirectoryName,
+  normalizeFileName,
+} from "../domain/keys.js";
 import type { Clock } from "../domain/ports/clock.js";
 import {
   DirectoryAlreadyExistsError,
@@ -12,6 +17,7 @@ import {
   FileNotReadyError,
 } from "../domain/errors.js";
 import type {
+  FilePlacement,
   FileRowsForFiles,
   ListFilesParams,
 } from "../domain/ports/file-rows.js";
@@ -59,6 +65,11 @@ export interface ListFilesInput {
   order: "asc" | "desc";
 }
 
+export interface UpdateFileInput {
+  name?: string | undefined;
+  directory?: string | undefined;
+}
+
 export interface ListFilesResult {
   items: StoredFile[];
   total: number;
@@ -76,10 +87,17 @@ export interface CatalogModule {
   getFileCard(id: string, withUrl: boolean): Promise<FileCardResult>;
   listFiles(input: ListFilesInput): Promise<ListFilesResult>;
   deleteFile(id: string): Promise<void>;
+  updateFile(id: string, input: UpdateFileInput): Promise<StoredFile>;
   listDirectories(rawParent: string | undefined): Promise<{
     parent: string;
     items: DirectoryDto[];
   }>;
+}
+
+function fileNotReady(file: StoredFile) {
+  return new FileNotReadyError(
+    `File ${file.id} is in status "${statusOf(file)}" and cannot be changed`,
+  );
 }
 
 function fileNotFound(id: string) {
@@ -213,6 +231,33 @@ export function createCatalogModule({
         confirmation.cleanup,
       );
       if (result.busy) throw new FileNotReadyError("Удаление ещё выполняется");
+    },
+
+    async updateFile(id, input) {
+      const originalName =
+        input.name === undefined ? undefined : normalizeFileName(input.name);
+      const directory =
+        input.directory === undefined
+          ? undefined
+          : normalizeDirectory(input.directory);
+      const file = await requireFile(id);
+      if (file.kind !== "ready") throw fileNotReady(file);
+      const placement: FilePlacement = {
+        ...(originalName === undefined
+          ? {}
+          : {
+              name: { originalName, extension: fileExtension(originalName) },
+            }),
+        ...(directory === undefined ? {} : { directory }),
+      };
+      if (directory !== undefined)
+        await requireDirectory(directories, directory);
+      const updated = await fileRows.relocateFile(id, placement);
+      if (updated) return updated;
+      const current = await requireFile(id);
+      if (directory !== undefined)
+        await requireDirectory(directories, directory);
+      throw fileNotReady(current);
     },
 
     async createDirectory(input) {
