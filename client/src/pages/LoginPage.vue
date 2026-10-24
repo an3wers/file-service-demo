@@ -418,6 +418,11 @@ async function submit(): Promise<void> {
           <a href="/register" class="mt-4 block text-center text-sm underline"
             >Зарегистрироваться</a
           >
+          <a
+            href="/password-reset"
+            class="mt-2 block text-center text-sm underline"
+            >Забыли пароль?</a
+          >
         </CardContent>
       </Card>
     </main>

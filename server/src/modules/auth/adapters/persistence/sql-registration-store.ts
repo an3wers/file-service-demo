@@ -48,6 +48,53 @@ export function createSqlRegistrationStore(
         ]);
         return true;
       }),
+    requestPasswordReset: (email, tokenHash, expiresAt, deadline) =>
+      transaction(deadline, async (client) => {
+        const { rows } = await client.query<{ id: string }>(
+          "select id from users where email = $1 for update",
+          [email],
+        );
+        if (!rows[0]) return false;
+        await client.query(
+          "insert into auth_secrets (user_id, purpose, token_hash, expires_at) values ($1, 'password-reset', $2, $3) on conflict (user_id, purpose) do update set token_hash = excluded.token_hash, expires_at = excluded.expires_at",
+          [rows[0].id, tokenHash, expiresAt],
+        );
+        return true;
+      }),
+    confirmPasswordReset: (tokenHash, passwordHash, deadline) =>
+      transaction(deadline, async (client) => {
+        const { rows } = await client.query<{ user_id: string }>(
+          "select user_id from auth_secrets where token_hash = $1 and purpose = 'password-reset'",
+          [tokenHash],
+        );
+        const secret = rows[0];
+        if (!secret) return null;
+        await client.query("select id from users where id = $1 for update", [
+          secret.user_id,
+        ]);
+        const now = clock.now();
+        const consumed = await client.query(
+          "delete from auth_secrets where user_id = $1 and purpose = 'password-reset' and token_hash = $2 and expires_at > $3",
+          [secret.user_id, tokenHash, now],
+        );
+        if (!consumed.rowCount) return null;
+        const user = await client.query<{ email: string }>(
+          "update users set password_hash = $2, state = 'active', token_version = token_version + 1 where id = $1 returning email",
+          [secret.user_id, passwordHash],
+        );
+        await client.query("delete from auth_secrets where user_id = $1", [
+          secret.user_id,
+        ]);
+        await client.query(
+          "update login_attempts set consumed_at = $2 where user_id = $1 and consumed_at is null",
+          [secret.user_id, now],
+        );
+        await client.query(
+          "update auth_sessions set revoked_at = $2 where user_id = $1 and revoked_at is null",
+          [secret.user_id, now],
+        );
+        return user.rows[0]!.email;
+      }),
     removeExpiredEvents: (now) =>
       transaction(
         new Date(Date.now() + 15000),

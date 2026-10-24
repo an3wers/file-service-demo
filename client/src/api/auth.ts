@@ -6,6 +6,8 @@ import type {
   RegisterData,
   RequestActivationData,
   ActivationResult,
+  ConfirmPasswordResetData,
+  PasswordResetResult,
 } from "@/api/generated";
 import { sendAuthRequest, sendRequest } from "./client";
 import { clearSession, startSession } from "./session";
@@ -78,6 +80,30 @@ export function requestActivation(
   signal: AbortSignal,
 ): Promise<RegistrationResult> {
   return sendRequest<RegistrationResult>("/auth/activation/request", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+    signal,
+  });
+}
+
+export function requestPasswordReset(
+  input: RequestActivationData["body"],
+  signal: AbortSignal,
+): Promise<RegistrationResult> {
+  return sendRequest<RegistrationResult>("/auth/password-reset/request", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+    signal,
+  });
+}
+
+export function confirmPasswordReset(
+  input: ConfirmPasswordResetData["body"],
+  signal: AbortSignal,
+): Promise<PasswordResetResult> {
+  return sendRequest<PasswordResetResult>("/auth/password-reset/confirm", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(input),

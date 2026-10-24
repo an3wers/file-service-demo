@@ -17,6 +17,8 @@ const MESSAGES: Record<string, string> = {
   SESSION_CHANGED: "Вход изменился в другой вкладке",
   ACTIVATION_LINK_INVALID:
     "Ссылка недействительна. Запросите новое письмо активации",
+  PASSWORD_RESET_LINK_INVALID:
+    "Ссылка недействительна. Запросите новое письмо восстановления",
   ROUTE_NOT_FOUND: "Метод API не найден — клиент и сервер разошлись по версиям",
   VALIDATION_ERROR: "Некорректные параметры запроса",
   INTERNAL_SERVER_ERROR: "Внутренняя ошибка сервера",

@@ -7,6 +7,7 @@ declare module "vue-router" {
   interface RouteMeta {
     requiresAuth?: boolean;
     guestOnly?: boolean;
+    link?: boolean;
   }
 }
 
@@ -15,6 +16,13 @@ const routes: RouteRecordRaw[] = [
     path: "/activation",
     name: "activation",
     component: () => import("@/pages/ActivationPage.vue"),
+    meta: { link: true },
+  },
+  {
+    path: "/password-reset",
+    name: "password-reset",
+    component: () => import("@/pages/PasswordResetPage.vue"),
+    meta: { link: true },
   },
   {
     path: "/register",
@@ -60,22 +68,22 @@ export function createAppRouter({
   const router = createRouter({ history, routes });
 
   router.beforeEach(async (to) => {
-    if (to.name === "activation" && to.hash) {
+    if (to.meta.link && to.hash) {
+      const page = String(to.name);
       const token = new URLSearchParams(to.hash.slice(1)).get("token");
       router.options.history.replace(
         router.resolve({ path: to.path, query: to.query, hash: "" }).fullPath,
       );
       try {
-        sessionStorage.removeItem("file-service-activation-token");
-        sessionStorage.removeItem("file-service-activation-form");
-        if (token)
-          sessionStorage.setItem("file-service-activation-token", token);
+        sessionStorage.removeItem(`file-service-${page}-token`);
+        sessionStorage.removeItem(`file-service-${page}-form`);
+        if (token) sessionStorage.setItem(`file-service-${page}-token`, token);
       } catch {
         return { path: to.path, query: to.query, hash: "", replace: true };
       }
       return { path: to.path, query: to.query, hash: "", replace: true };
     }
-    if (to.name === "activation") return true;
+    if (to.meta.link) return true;
     await auth.ensureSession();
 
     if (auth.status.value === "failed") {
@@ -107,7 +115,7 @@ export function createAppRouter({
       notify(notice);
     }
 
-    if (router.currentRoute.value.name !== "activation")
+    if (!router.currentRoute.value.meta.link)
       void router.push({ name: "login" });
   });
 

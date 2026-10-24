@@ -36,6 +36,19 @@ export const activationRequestSchema = z.object({
   email: registrationEmailSchema,
 });
 export const activationConfirmSchema = z.object({ token: z.string() });
+export const passwordResetConfirmSchema = z
+  .object({
+    token: z.string(),
+    password: codePoints(12, 128),
+    passwordConfirmation: z.string(),
+  })
+  .refine((body) => body.password === body.passwordConfirmation, {
+    path: ["passwordConfirmation"],
+    message: "Пароли не совпадают",
+  });
+export const passwordResetResponseSchema = z
+  .object({ message: z.literal("Пароль изменён. Теперь можно войти") })
+  .meta({ id: "PasswordResetResult" });
 export const activationResponseSchema = z
   .object({ message: z.literal("Email подтверждён. Теперь можно войти") })
   .meta({ id: "ActivationResult" });

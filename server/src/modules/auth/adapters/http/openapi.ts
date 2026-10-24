@@ -14,6 +14,8 @@ import {
   activationRequestSchema,
   activationConfirmSchema,
   activationResponseSchema,
+  passwordResetConfirmSchema,
+  passwordResetResponseSchema,
 } from "./schemas.js";
 
 const json = <T>(schema: T) => ({ "application/json": { schema } });
@@ -83,6 +85,70 @@ export const authPaths: ZodOpenApiPathsObject = {
           403: "ORIGIN_NOT_ALLOWED",
           413: "PAYLOAD_TOO_LARGE",
           415: "UNSUPPORTED_MEDIA_TYPE",
+          503: "SERVICE_UNAVAILABLE",
+        }),
+        429: {
+          ...errorResponse("RATE_LIMITED: details.retryAfterSeconds"),
+          headers: z.object({ "Retry-After": z.string() }),
+        },
+      },
+    },
+  },
+  "/password-reset/request": {
+    post: {
+      tags: ["auth"],
+      summary: "Письмо восстановления пароля",
+      operationId: "requestPasswordReset",
+      security: [],
+      description:
+        "Нейтральный ответ через общий бюджет 15 секунд для активного, неактивного и неизвестного email. Новая ссылка на 30 минут заменяет прежнюю до SMTP. Одно письмо в минуту и пять в час по email и назначению, 20 писем доступа в час с IP. Сам запрос не отзывает доступ.",
+      requestParams: { header: z.object({ Origin: z.string() }) },
+      requestBody: { required: true, content: json(activationRequestSchema) },
+      responses: {
+        202: {
+          description: "Запрос обработан",
+          headers: z.object({ "Cache-Control": z.literal("no-store") }),
+          content: json(registrationResponseSchema),
+        },
+        ...apiErrors({
+          400: "BAD_REQUEST",
+          403: "ORIGIN_NOT_ALLOWED",
+          413: "PAYLOAD_TOO_LARGE",
+          415: "UNSUPPORTED_MEDIA_TYPE",
+          503: "SERVICE_UNAVAILABLE",
+        }),
+        429: {
+          ...errorResponse("RATE_LIMITED: details.retryAfterSeconds"),
+          headers: z.object({ "Retry-After": z.string() }),
+        },
+      },
+    },
+  },
+  "/password-reset/confirm": {
+    post: {
+      tags: ["auth"],
+      summary: "Новый пароль по ссылке восстановления",
+      operationId: "confirmPasswordReset",
+      security: [],
+      description:
+        "Атомарно сохраняет пароль, активирует неактивного пользователя, погашает ссылки активации и восстановления, отменяет незавершённые попытки входа и отзывает сессии. Без входа и cookie. Затем одна SMTP-попытка уведомления, её сбой не отменяет изменение. Ошибки полей не расходуют ссылку. Не более 20 запросов за 15 минут с IP, включая ошибочные тела.",
+      requestParams: { header: z.object({ Origin: z.string() }) },
+      requestBody: {
+        required: true,
+        content: json(passwordResetConfirmSchema),
+      },
+      responses: {
+        200: {
+          description: "Пароль изменён",
+          headers: z.object({ "Cache-Control": z.literal("no-store") }),
+          content: json(passwordResetResponseSchema),
+        },
+        ...apiErrors({
+          400: "PASSWORD_RESET_LINK_INVALID или BAD_REQUEST",
+          403: "ORIGIN_NOT_ALLOWED",
+          413: "PAYLOAD_TOO_LARGE",
+          415: "UNSUPPORTED_MEDIA_TYPE",
+          422: "VALIDATION_ERROR",
           503: "SERVICE_UNAVAILABLE",
         }),
         429: {

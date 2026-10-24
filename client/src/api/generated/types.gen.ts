@@ -52,6 +52,10 @@ export type ActivationResult = {
     message: 'Email подтверждён. Теперь можно войти';
 };
 
+export type PasswordResetResult = {
+    message: 'Пароль изменён. Теперь можно войти';
+};
+
 export type LoginAttempt = {
     attemptToken: string;
     attemptExpiresAt: string;
@@ -386,6 +390,132 @@ export type ConfirmActivationResponses = {
 };
 
 export type ConfirmActivationResponse = ConfirmActivationResponses[keyof ConfirmActivationResponses];
+
+export type RequestPasswordResetData = {
+    body: {
+        email: string;
+    };
+    headers: {
+        Origin: string;
+    };
+    path?: never;
+    query?: never;
+    url: '/api/auth/password-reset/request';
+};
+
+export type RequestPasswordResetErrors = {
+    /**
+     * BAD_REQUEST
+     */
+    400: ErrorResponse;
+    /**
+     * Нет токена доступа или он недействителен
+     */
+    401: ErrorResponse;
+    /**
+     * ORIGIN_NOT_ALLOWED
+     */
+    403: ErrorResponse;
+    /**
+     * PAYLOAD_TOO_LARGE
+     */
+    413: ErrorResponse;
+    /**
+     * UNSUPPORTED_MEDIA_TYPE
+     */
+    415: ErrorResponse;
+    /**
+     * Запрос не прошёл валидацию; details — результат z.flattenError()
+     */
+    422: ErrorResponse;
+    /**
+     * RATE_LIMITED: details.retryAfterSeconds
+     */
+    429: ErrorResponse;
+    /**
+     * Непредвиденная ошибка сервера
+     */
+    500: ErrorResponse;
+    /**
+     * Хранилище или база данных недоступны
+     */
+    503: ErrorResponse;
+};
+
+export type RequestPasswordResetError = RequestPasswordResetErrors[keyof RequestPasswordResetErrors];
+
+export type RequestPasswordResetResponses = {
+    /**
+     * Запрос обработан
+     */
+    202: RegistrationResult;
+};
+
+export type RequestPasswordResetResponse = RequestPasswordResetResponses[keyof RequestPasswordResetResponses];
+
+export type ConfirmPasswordResetData = {
+    body: {
+        token: string;
+        password: string;
+        passwordConfirmation: string;
+    };
+    headers: {
+        Origin: string;
+    };
+    path?: never;
+    query?: never;
+    url: '/api/auth/password-reset/confirm';
+};
+
+export type ConfirmPasswordResetErrors = {
+    /**
+     * PASSWORD_RESET_LINK_INVALID или BAD_REQUEST
+     */
+    400: ErrorResponse;
+    /**
+     * Нет токена доступа или он недействителен
+     */
+    401: ErrorResponse;
+    /**
+     * ORIGIN_NOT_ALLOWED
+     */
+    403: ErrorResponse;
+    /**
+     * PAYLOAD_TOO_LARGE
+     */
+    413: ErrorResponse;
+    /**
+     * UNSUPPORTED_MEDIA_TYPE
+     */
+    415: ErrorResponse;
+    /**
+     * VALIDATION_ERROR
+     */
+    422: ErrorResponse;
+    /**
+     * RATE_LIMITED: details.retryAfterSeconds
+     */
+    429: ErrorResponse;
+    /**
+     * Непредвиденная ошибка сервера
+     */
+    500: ErrorResponse;
+    /**
+     * Хранилище или база данных недоступны
+     */
+    503: ErrorResponse;
+};
+
+export type ConfirmPasswordResetError = ConfirmPasswordResetErrors[keyof ConfirmPasswordResetErrors];
+
+export type ConfirmPasswordResetResponses = {
+    /**
+     * Пароль изменён
+     */
+    200: PasswordResetResult;
+};
+
+export type ConfirmPasswordResetResponse = ConfirmPasswordResetResponses[keyof ConfirmPasswordResetResponses];
 
 export type RegisterData = {
     body: {

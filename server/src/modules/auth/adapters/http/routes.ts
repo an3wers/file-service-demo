@@ -7,6 +7,7 @@ import {
   MailRateLimitedError,
   RegistrationUnavailableError,
   ActivationLinkInvalidError,
+  PasswordResetLinkInvalidError,
 } from "../../domain/registration-errors.js";
 import type { Session, SessionsModule } from "../../application/sessions.js";
 import { SessionExpiredError } from "../../domain/errors.js";
@@ -20,6 +21,7 @@ import {
   registrationEmailSchema,
   activationRequestSchema,
   activationConfirmSchema,
+  passwordResetConfirmSchema,
 } from "./schemas.js";
 import type { ActivationResponse, SessionResponse } from "./schemas.js";
 
@@ -93,7 +95,7 @@ export function createAuthRouter(
   };
 
   const requestMail =
-    (activation: boolean): RequestHandler =>
+    (kind: "register" | "activation" | "password-reset"): RequestHandler =>
     async (req, res) => {
       if (!registration) throw new RegistrationUnavailableError();
       const email = registrationEmailSchema.safeParse(req.body?.email);
@@ -101,6 +103,7 @@ export function createAuthRouter(
         ? await registration.consumeEmail(
             email.data,
             res.locals.registrationDeadline,
+            kind === "password-reset" ? kind : "activation",
           )
         : undefined;
       const retry = Math.max(
@@ -113,41 +116,80 @@ export function createAuthRouter(
         typeof req.id === "string" || typeof req.id === "number"
           ? req.id
           : undefined;
-      const result = activation
-        ? await registration.requestActivation(
-            activationRequestSchema.parse(req.body).email,
-            deadline,
-            emailAdmission!.requestedAt,
-            requestId,
-          )
-        : await registration.register(
-            registrationBodySchema.parse(req.body),
-            deadline,
-            emailAdmission!.requestedAt,
-            requestId,
-          );
+      const result =
+        kind === "register"
+          ? await registration.register(
+              registrationBodySchema.parse(req.body),
+              deadline,
+              emailAdmission!.requestedAt,
+              requestId,
+            )
+          : await registration[
+              kind === "activation"
+                ? "requestActivation"
+                : "requestPasswordReset"
+            ](
+              activationRequestSchema.parse(req.body).email,
+              deadline,
+              emailAdmission!.requestedAt,
+              requestId,
+            );
       res.status(202).json(result);
     };
-  router.post("/register", prepareRegistration, parseBody, requestMail(false));
+  router.post(
+    "/register",
+    prepareRegistration,
+    parseBody,
+    requestMail("register"),
+  );
   router.post(
     "/activation/request",
     prepareRegistration,
     parseBody,
-    requestMail(true),
+    requestMail("activation"),
   );
   router.post(
-    "/activation/confirm",
+    "/password-reset/request",
+    prepareRegistration,
+    parseBody,
+    requestMail("password-reset"),
+  );
+  const prepareConfirmation =
+    (purpose: "activation" | "password-reset"): RequestHandler =>
     async (req, res, next) => {
       if (!registration) throw new RegistrationUnavailableError();
       res.locals.registrationDeadline = registration.deadline();
       res.locals.ipRetry = await registration.consumeConfirmationIp(
         req.ip ?? req.socket.remoteAddress ?? "unknown",
         res.locals.registrationDeadline,
+        purpose,
       );
       if (res.locals.ipRetry > 0)
         throw new MailRateLimitedError(res.locals.ipRetry);
       next();
+    };
+  router.post(
+    "/password-reset/confirm",
+    prepareConfirmation("password-reset"),
+    parseBody,
+    async (req, res) => {
+      if (!registration) throw new RegistrationUnavailableError();
+      const { token, password } = passwordResetConfirmSchema.parse(req.body);
+      res.json(
+        await registration.confirmPasswordReset(
+          token,
+          password,
+          res.locals.registrationDeadline,
+          typeof req.id === "string" || typeof req.id === "number"
+            ? req.id
+            : undefined,
+        ),
+      );
     },
+  );
+  router.post(
+    "/activation/confirm",
+    prepareConfirmation("activation"),
     parseBody,
     async (req, res) => {
       if (!registration) throw new RegistrationUnavailableError();
@@ -280,6 +322,14 @@ export function createAuthRouter(
     if (error instanceof ActivationLinkInvalidError)
       return next(
         new AppError(400, ERROR_CODES.ACTIVATION_LINK_INVALID, error.message),
+      );
+    if (error instanceof PasswordResetLinkInvalidError)
+      return next(
+        new AppError(
+          400,
+          ERROR_CODES.PASSWORD_RESET_LINK_INVALID,
+          error.message,
+        ),
       );
     if (error instanceof RegistrationUnavailableError) {
       if (!req.complete) res.set("Connection", "close");

@@ -27,6 +27,17 @@ export interface RegistrationStore {
     deadline: Date,
   ): Promise<boolean>;
   confirmActivation(tokenHash: string, deadline: Date): Promise<boolean>;
+  requestPasswordReset(
+    email: string,
+    tokenHash: string,
+    expiresAt: Date,
+    deadline: Date,
+  ): Promise<boolean>;
+  confirmPasswordReset(
+    tokenHash: string,
+    passwordHash: string,
+    deadline: Date,
+  ): Promise<string | null>;
 }
 
 export interface MailEventCleanup {

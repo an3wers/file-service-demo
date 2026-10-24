@@ -31,6 +31,8 @@ async function start(
     save: vi.fn().mockResolvedValue(true),
     requestActivation: vi.fn().mockResolvedValue(true),
     confirmActivation: vi.fn().mockResolvedValue(true),
+    requestPasswordReset: vi.fn().mockResolvedValue(true),
+    confirmPasswordReset: vi.fn().mockResolvedValue(null),
   };
   const sendEmail = vi.fn().mockResolvedValue({ messageId: "accepted" });
   const auth = createAuthHarness();

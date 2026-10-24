@@ -5,11 +5,12 @@
     <meta name="referrer" content="no-referrer" />
     <script>
       (() => {
-        const activation = /^\/activation\/?$/i.test(location.pathname);
-        const fragment = activation && !!location.hash;
+        const page = /^\/(activation|password-reset)\/?$/i
+          .exec(location.pathname)?.[1]
+          ?.toLowerCase();
+        const fragment = !!page && !!location.hash;
         const token =
-          activation &&
-          new URLSearchParams(location.hash.slice(1)).get("token");
+          fragment && new URLSearchParams(location.hash.slice(1)).get("token");
         if (fragment)
           history.replaceState(
             history.state,
@@ -17,16 +18,16 @@
             location.pathname + location.search,
           );
         try {
-          if (
-            !activation ||
-            fragment ||
-            performance.getEntriesByType("navigation")[0]?.type !== "reload"
-          ) {
-            sessionStorage.removeItem("file-service-activation-token");
-            sessionStorage.removeItem("file-service-activation-form");
+          const reload =
+            performance.getEntriesByType("navigation")[0]?.type === "reload";
+          for (const name of ["activation", "password-reset"]) {
+            if (name !== page || fragment || !reload) {
+              sessionStorage.removeItem(`file-service-${name}-token`);
+              sessionStorage.removeItem(`file-service-${name}-form`);
+            }
           }
           if (token)
-            sessionStorage.setItem("file-service-activation-token", token);
+            sessionStorage.setItem(`file-service-${page}-token`, token);
         } catch {}
       })();
     </script>
