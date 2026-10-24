@@ -703,3 +703,75 @@ it("при IP- и email-лимите входа ответ берёт наибо
   expect(email.headers.get("retry-after")).toBe("600");
   expect(h.auth.sendEmail).not.toHaveBeenCalled();
 });
+
+it("отказ входа по минутной email-квоте писем учитывается в общей IP-квоте писем", async () => {
+  const h = await start();
+  expect((await h.login()).status).toBe(200);
+  const limited = await h.login();
+  expect(limited.status).toBe(429);
+  expect(limited.headers.get("retry-after")).toBe("60");
+  for (let i = 0; i < 18; i++)
+    expect((await h.resend("unknown")).status).toBe(410);
+  const ip = await h.resend("unknown");
+  expect(ip.status).toBe(429);
+  expect(ip.headers.get("retry-after")).toBe("3600");
+  expect(h.auth.sendEmail).toHaveBeenCalledTimes(1);
+});
+
+it("отказ входа по минутной квоте назначения учитывается в часовой квоте и не сдвигает минутное окно", async () => {
+  const h = await start();
+  expect((await h.login()).status).toBe(200);
+  h.auth.clock.advance(30 / 3600);
+  const limited = await h.login();
+  expect(limited.headers.get("retry-after")).toBe("30");
+  h.auth.clock.advance(30 / 3600);
+  for (let i = 0; i < 3; i++) {
+    if (i) h.auth.clock.advance(1 / 60);
+    expect((await h.login()).status).toBe(200);
+  }
+  h.auth.clock.advance(1 / 60);
+  const hourly = await h.login();
+  expect(hourly.status).toBe(429);
+  expect(hourly.headers.get("retry-after")).toBe("3360");
+  expect((await errorOf(hourly)).details).toEqual({ retryAfterSeconds: 3360 });
+  expect(h.auth.sendEmail).toHaveBeenCalledTimes(4);
+});
+
+it("отказ входа по IP-квоте писем учитывается в квоте назначения без попытки и письма", async () => {
+  const h = await start();
+  for (let i = 0; i < 20; i++)
+    expect((await h.resend("unknown")).status).toBe(410);
+  h.auth.clock.advance(3599 / 3600);
+  const ip = await h.login();
+  expect(ip.status).toBe(429);
+  expect(ip.headers.get("retry-after")).toBe("1");
+  const both = await h.login();
+  expect(both.headers.get("retry-after")).toBe("60");
+  expect((await errorOf(both)).details).toEqual({ retryAfterSeconds: 60 });
+  h.auth.clock.advance(1 / 3600);
+  const email = await h.login();
+  expect(email.status).toBe(429);
+  expect(email.headers.get("retry-after")).toBe("59");
+  expect(h.auth.sendEmail).not.toHaveBeenCalled();
+});
+
+it("отказ повтора по IP-квоте писем учитывается в квоте назначения и сохраняет код", async () => {
+  const h = await start();
+  for (let i = 0; i < 18; i++)
+    expect((await h.resend("unknown")).status).toBe(410);
+  h.auth.clock.advance(58 / 60);
+  const { attemptToken } = await (await h.login()).json();
+  const code = h.auth.code();
+  h.auth.clock.advance(1 / 60);
+  expect((await h.resend("unknown")).status).toBe(410);
+  h.auth.clock.advance(59 / 3600);
+  const ip = await h.resend(attemptToken);
+  expect(ip.status).toBe(429);
+  expect(ip.headers.get("retry-after")).toBe("1");
+  h.auth.clock.advance(1 / 3600);
+  const email = await h.resend(attemptToken);
+  expect(email.status).toBe(429);
+  expect(email.headers.get("retry-after")).toBe("59");
+  expect(h.auth.sendEmail).toHaveBeenCalledTimes(1);
+  expect((await h.verify(attemptToken, code)).status).toBe(200);
+});

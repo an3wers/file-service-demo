@@ -55,18 +55,11 @@ export function createMemorySessionStore(clock: Clock) {
         user.passwordHash !== attempt.passwordHash
       )
         throw new Error("User changed");
-      const previous = new Map(
-        [...events].map(([key, values]) => [key, [...values]]),
-      );
       const retry = Math.max(
         consume(keys.email, LOGIN_MAIL_LIMITS),
         consume(keys.ip, [{ windowMs: 3600000, maximum: 20 }]),
       );
-      if (retry) {
-        events.clear();
-        for (const [key, values] of previous) events.set(key, values);
-        return retry;
-      }
+      if (retry) return retry;
       attempts.set(attempt.tokenHash, {
         ...attempt,
         failures: 0,
@@ -87,15 +80,11 @@ export function createMemorySessionStore(clock: Clock) {
         attempt.version !== user.tokenVersion
       )
         return { status: "unavailable" };
-      const key = mailKey(user.email);
-      const previous = events.get(`${key}:60000`);
-      const hourly = events.get(`${key}:3600000`);
-      const retry = Math.max(ipRetrySeconds, consume(key, LOGIN_MAIL_LIMITS));
-      if (retry) {
-        events.set(`${key}:60000`, previous ?? []);
-        events.set(`${key}:3600000`, hourly ?? []);
-        return { status: "limited", retryAfterSeconds: retry };
-      }
+      const retry = Math.max(
+        ipRetrySeconds,
+        consume(mailKey(user.email), LOGIN_MAIL_LIMITS),
+      );
+      if (retry) return { status: "limited", retryAfterSeconds: retry };
       attempt.codeHash = code.codeHash;
       attempt.codeExpiresAt =
         code.codeExpiresAt < attempt.expiresAt

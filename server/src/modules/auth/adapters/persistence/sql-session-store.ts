@@ -55,7 +55,6 @@ export function createSqlSessionStore(
           user.passwordHash !== attempt.passwordHash
         )
           throw new Error("User changed");
-        await client.query("savepoint mail_admission");
         const emailRetry = await consumeAuthLimit(
           client,
           mailKeys.email,
@@ -69,10 +68,7 @@ export function createSqlSessionStore(
           () => clock.now(),
         );
         const retry = Math.max(emailRetry, ipRetry);
-        if (retry) {
-          await client.query("rollback to savepoint mail_admission");
-          return retry;
-        }
+        if (retry) return retry;
         if (clock.now() >= attempt.codeExpiresAt)
           throw new Error("Deadline exceeded");
         await client.query(
@@ -124,10 +120,11 @@ export function createSqlSessionStore(
             () => clock.now(),
           ),
         );
-        if (retry || attempt.expires_at <= clock.now())
-          await client.query("rollback to savepoint mail_admission");
         if (retry) return { status: "limited", retryAfterSeconds: retry };
-        if (attempt.expires_at <= clock.now()) return { status: "unavailable" };
+        if (attempt.expires_at <= clock.now()) {
+          await client.query("rollback to savepoint mail_admission");
+          return { status: "unavailable" };
+        }
         const updated = await client.query<{
           expires_at: Date;
           code_expires_at: Date;
