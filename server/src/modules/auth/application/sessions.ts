@@ -84,10 +84,10 @@ export function createSessionsModule({
       clearTimeout(timer);
     }
   }
+  const retryAfter = (key: string, maximum: number, until: Date) =>
+    available(() => store.consume(key, [{ windowMs: 900000, maximum }], until));
   async function consume(key: string, maximum: number, until: Date) {
-    const retry = await available(() =>
-      store.consume(key, [{ windowMs: 900000, maximum }], until),
-    );
+    const retry = await retryAfter(key, maximum, until);
     if (retry) throw new MailRateLimitedError(retry);
   }
   const mailIpKey = (ip: string) =>
@@ -161,7 +161,9 @@ export function createSessionsModule({
     withinDeadline,
     now: () => clock.now(),
     consumeLoginIp: (ip: string, until: Date) =>
-      consume(`login:ip:${secretDigest("ip", ip)}`, 50, until),
+      retryAfter(`login:ip:${secretDigest("ip", ip)}`, 50, until),
+    consumeLoginEmail: (email: string, until: Date) =>
+      retryAfter(`login:email:${secretDigest("email", email)}`, 10, until),
     consumeVerifyIp: (ip: string, until: Date) =>
       consume(`login:verify:ip:${secretDigest("ip", ip)}`, 100, until),
     consumeMailIp: (ip: string, until: Date) =>
@@ -179,7 +181,6 @@ export function createSessionsModule({
       until: Date,
       requestId?: string | number,
     ) {
-      await consume(`login:email:${secretDigest("email", email)}`, 10, until);
       const user = await available(() => store.findByEmail(email, until));
       const correct = user
         ? await available(() => hasher.verify(password, user.passwordHash))

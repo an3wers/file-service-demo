@@ -662,3 +662,44 @@ it("отказ записи попытки не начинает SMTP и не о
   expect(mailEvents()).toEqual([]);
   expect(JSON.stringify(logs)).not.toContain(EMAIL);
 });
+
+it("десять входов с корректным email и пустым паролем расходуют квоту email и дают 429", async () => {
+  const h = await start();
+  for (let i = 0; i < 10; i++) {
+    const email = i % 2 ? `  ${EMAIL.toUpperCase()} ` : EMAIL;
+    expect((await h.post("login", { email, password: "" })).status).toBe(422);
+  }
+  const limited = await h.login(EMAIL, "wrong");
+  expect(limited.status).toBe(429);
+  expect(limited.headers.get("retry-after")).toBe("900");
+  expect((await errorOf(limited)).details).toEqual({ retryAfterSeconds: 900 });
+  const body = await h.post("login", { email: EMAIL, password: "secret-pass" });
+  expect(body.status).toBe(429);
+  expect(await body.text()).not.toContain("secret-pass");
+  expect(h.auth.sendEmail).not.toHaveBeenCalled();
+  expect((await h.login("other@example.com", "")).status).toBe(422);
+});
+
+it("при IP- и email-лимите входа ответ берёт наибольшее ожидание, а отказ по IP учитывается в квоте email", async () => {
+  const h = await start();
+  for (let i = 0; i < 45; i++)
+    expect((await h.post("login", {})).status).toBe(422);
+  h.auth.clock.advance(10 / 60);
+  for (let i = 0; i < 5; i++)
+    expect((await h.login(EMAIL, "")).status).toBe(422);
+  for (let i = 0; i < 5; i++) {
+    const limited = await h.login(EMAIL, "");
+    expect(limited.status).toBe(429);
+    expect(limited.headers.get("retry-after")).toBe("300");
+  }
+  const both = await h.login();
+  expect(both.status).toBe(429);
+  expect(both.headers.get("retry-after")).toBe("900");
+  expect((await errorOf(both)).details).toEqual({ retryAfterSeconds: 900 });
+  h.auth.clock.advance(5 / 60);
+  expect((await h.post("login", {})).status).toBe(422);
+  const email = await h.login();
+  expect(email.status).toBe(429);
+  expect(email.headers.get("retry-after")).toBe("600");
+  expect(h.auth.sendEmail).not.toHaveBeenCalled();
+});
