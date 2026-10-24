@@ -195,7 +195,7 @@ export const authPaths: ZodOpenApiPathsObject = {
       operationId: "login",
       security: [],
       description:
-        "Создаёт независимую попытку на 15 минут и код на пять минут без сессии и cookie. Одна SMTP-попытка; accepted не гарантирует доставку, unconfirmed сохраняет возможность ввода. Первый шаг: 10 запросов за 15 минут по email, 50 с IP. Письма: одно в минуту и пять в час по email и назначению, 20 в час с IP совместно с другими письмами доступа.",
+        "Создаёт независимую попытку на 15 минут и код на пять минут без сессии и cookie. Одна SMTP-попытка; accepted не гарантирует доставку, unconfirmed сохраняет возможность ввода. Первый шаг: 10 запросов за 15 минут по email, 50 с IP; корректный email учитывается и при ошибках остальных полей, 429 сообщает наибольшее ожидание. Письма: одно в минуту и пять в час по email и назначению, 20 в час с IP совместно с другими письмами доступа.",
       requestParams: { header: z.object({ Origin: z.string() }) },
       requestBody: { required: true, content: json(loginBodySchema) },
       responses: {

@@ -523,3 +523,54 @@ it("отклонённый по лимиту повтор не меняет ко
   h.clock.advance(1 / 60);
   expect((await h.resend(attemptToken)).status).toBe(200);
 });
+
+it("конкурентные входы с пустым паролем между экземплярами делят квоту email до точной границы окна", async () => {
+  const h = await start();
+  await h.activate();
+  const other = await start(h.clock);
+  const responses = await Promise.all(
+    Array.from({ length: 12 }, (_, index) =>
+      (index % 2 ? h : other).post("login", {
+        email: index % 3 ? ` ${EMAIL.toUpperCase()}` : EMAIL,
+        password: "",
+      }),
+    ),
+  );
+  expect(responses.filter((response) => response.status === 422)).toHaveLength(
+    10,
+  );
+  expect(responses.filter((response) => response.status === 429)).toHaveLength(
+    2,
+  );
+  const limited = await other.login();
+  expect(limited.status).toBe(429);
+  expect(limited.headers.get("retry-after")).toBe("900");
+  expect((await pool.query("select * from login_attempts")).rowCount).toBe(0);
+  expect((await pool.query("select * from auth_sessions")).rowCount).toBe(0);
+  h.clock.advance(899999 / 3600000);
+  expect((await h.login()).headers.get("retry-after")).toBe("1");
+  h.clock.advance(1 / 3600000);
+  expect((await other.login()).status).toBe(200);
+});
+
+it("отказ входа по IP-квоте учитывается в квоте email и не сдвигает окно IP", async () => {
+  const h = await start();
+  await h.activate();
+  const other = await start(h.clock);
+  for (let i = 0; i < 45; i++)
+    expect((await (i % 2 ? h : other).post("login", {})).status).toBe(422);
+  h.clock.advance(10 / 60);
+  for (let i = 0; i < 5; i++)
+    expect((await h.post("login", { email: EMAIL })).status).toBe(422);
+  for (let i = 0; i < 5; i++)
+    expect(
+      (await other.post("login", { email: EMAIL })).headers.get("retry-after"),
+    ).toBe("300");
+  const both = await h.login();
+  expect(both.status).toBe(429);
+  expect(both.headers.get("retry-after")).toBe("900");
+  h.clock.advance(5 / 60);
+  expect((await other.post("login", {})).status).toBe(422);
+  expect((await other.login()).headers.get("retry-after")).toBe("600");
+  expect((await pool.query("select * from login_attempts")).rowCount).toBe(0);
+});
