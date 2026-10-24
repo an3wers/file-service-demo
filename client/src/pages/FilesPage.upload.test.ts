@@ -579,7 +579,7 @@ it.each(["server", "presigned", "multipart"] as const)(
   },
 );
 
-it("после выхода сохраняет историю и игнорирует поздний ответ до следующего входа", async () => {
+it("подтверждённый выход очищает историю загрузок и игнорирует поздний ответ", async () => {
   const { requests, router } = await setup("server", 1, { lifecycle: true });
   await launch();
   await fireEvent.click(screen.getByRole("button", { name: "Отмена" }));
@@ -593,11 +593,11 @@ it("после выхода сохраняет историю и игнорир�
   );
   await flushPromises();
   expect(router.currentRoute.value.name).toBe("login");
-  expect(useUpload().rows.value).toHaveLength(1);
+  expect(useUpload().rows.value).toHaveLength(0);
   requests[0]!.finish();
   await flushPromises();
-  expect(useUpload().rows.value[0]!.status.value).toBe("failed");
-  expect(useUpload().rows.value[0]!.result.value).toBeNull();
+  expect(useUpload().rows.value).toHaveLength(0);
+  expect(localStorage.getItem("file-service.uploads.v1")).toBeNull();
 });
 
 describe("итерации выбора файлов", () => {

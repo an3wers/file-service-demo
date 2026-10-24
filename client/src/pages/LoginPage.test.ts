@@ -155,6 +155,22 @@ it("обновление восстанавливает попытку с пре
   expect(fetch).toHaveBeenCalledTimes(1);
 });
 
+it("после входа и выхода в другой вкладке прежняя попытка не возобновляется при обновлении", async () => {
+  const fetch = vi.fn().mockResolvedValue(json(attempt()));
+  vi.stubGlobal("fetch", fetch);
+  const first = mountPage();
+  await credentials(first);
+  first.unmount();
+  localStorage.setItem(
+    "file-service-auth-state",
+    JSON.stringify({ generation: 2, signedIn: false }),
+  );
+  const reloaded = mountPage();
+  expect(reloaded.find("input[name=email]").exists()).toBe(true);
+  expect(reloaded.find("input[name=code]").exists()).toBe(false);
+  expect(fetch).toHaveBeenCalledTimes(1);
+});
+
 it("закрытие вкладки убирает возможность продолжить попытку", async () => {
   const fetch = vi.fn().mockResolvedValue(json(attempt()));
   vi.stubGlobal("fetch", fetch);

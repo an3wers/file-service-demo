@@ -5,7 +5,7 @@ import { fireEvent, screen } from "@testing-library/vue";
 import FilesPage from "./FilesPage.vue";
 import { useFileBrowser } from "@/composables/useFileBrowser";
 import { useUpload } from "@/composables/useUpload";
-import { startSession } from "@/api/session";
+import { getAccessToken, startSession } from "@/api/session";
 
 function json(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), {
@@ -239,5 +239,49 @@ describe("создание каталога на странице файлов",
     wrapper.unmount();
     const reopened = await mountPage(address);
     expect(reopened.wrapper.text()).toContain("reports");
+  });
+});
+
+describe("выход со страницы файлов", () => {
+  it("при ошибке выхода остаётся на странице с точным сообщением, ручной повтор завершает выход", async () => {
+    const logouts: number[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) => {
+        if (url === "/api/auth/logout") {
+          logouts.push(logouts.length);
+          return logouts.length === 1
+            ? json(
+                { error: { code: "DATABASE_UNAVAILABLE", message: "" } },
+                503,
+              )
+            : new Response(null, { status: 204 });
+        }
+        return json(
+          url.startsWith("/api/directories")
+            ? { items: [] }
+            : {
+                items: [],
+                pagination: { page: 1, limit: 20, total: 0, totalPages: 0 },
+              },
+        );
+      }),
+    );
+    await mountPage();
+
+    await fireEvent.click(screen.getByRole("button", { name: "Выйти" }));
+    await flushPromises();
+
+    expect(screen.getByRole("alert").textContent?.trim()).toBe(
+      "Произошла ошибка при выходе, попробуйте еще раз",
+    );
+    expect(getAccessToken()).toBe("token");
+
+    await fireEvent.click(screen.getByRole("button", { name: "Выйти" }));
+    await flushPromises();
+
+    expect(logouts).toHaveLength(2);
+    expect(getAccessToken()).toBeNull();
+    expect(screen.queryByRole("alert")).toBeNull();
   });
 });

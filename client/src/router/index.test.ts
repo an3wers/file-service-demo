@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createMemoryHistory } from "vue-router";
 import type { AuthSession } from "@/api/generated";
 import { clearSession, getAccessToken, onSessionExpired } from "@/api/session";
+import { readSharedAuth } from "@/api/sharedAuth";
 import { createAuth } from "@/composables/useAuth";
 import type { AuthChannel, AuthMessage } from "@/composables/useAuth";
 import { createAppRouter } from "./index";
@@ -75,6 +76,14 @@ function setup() {
   });
 
   return { channel, auth, upload, browser, notify, router };
+}
+
+function changeInOtherTab(signedIn: boolean): void {
+  const { generation } = readSharedAuth();
+  localStorage.setItem(
+    "file-service-auth-state",
+    JSON.stringify({ generation: generation + 1, signedIn }),
+  );
 }
 
 async function settle(): Promise<void> {
@@ -173,7 +182,7 @@ describe("роутер", () => {
     expect(router.currentRoute.value.name).toBe("login");
   });
 
-  it("при выходе сообщает другим вкладкам, отменяет загрузку и сбрасывает навигацию", async () => {
+  it("при подтверждённом выходе сообщает другим вкладкам и очищает загрузки и навигацию", async () => {
     respondWith(signedIn, () => new Response(null, { status: 204 }));
 
     const { router, auth, channel, upload, browser } = setup();
@@ -184,39 +193,89 @@ describe("роутер", () => {
 
     expect(channel.posted).toEqual([{ type: "logout" }]);
     expect(getAccessToken()).toBeNull();
-    expect(upload.stop).toHaveBeenCalled();
-    expect(upload.reset).not.toHaveBeenCalled();
+    expect(upload.reset).toHaveBeenCalled();
     expect(browser.reset).toHaveBeenCalled();
     expect(router.currentRoute.value.name).toBe("login");
   });
 
-  it("выходит локально, даже если POST /logout упал", async () => {
+  it("потерянный ответ выхода сохраняет сессию, страницу и состояние", async () => {
     respondWith(signedIn, offline);
 
-    const { router, auth } = setup();
+    const { router, auth, channel, upload, browser } = setup();
 
     await router.push("/");
-    await auth.logout();
+    await expect(auth.logout()).rejects.toMatchObject({
+      code: "NETWORK_ERROR",
+    });
     await settle();
 
+    expect(getAccessToken()).toBe("token");
+    expect(router.currentRoute.value.name).toBe("files");
+    expect(channel.posted).toEqual([]);
+    expect(upload.reset).not.toHaveBeenCalled();
+    expect(browser.reset).not.toHaveBeenCalled();
+  });
+});
+
+describe("смена пользователя", () => {
+  it("вход другого пользователя после истечения очищает загрузки и навигацию прежнего", async () => {
+    const other = {
+      ...SESSION,
+      user: { ...SESSION.user, id: "00000000-0000-4000-8000-000000000002" },
+    };
+    respondWith(signedIn, guest, () => json(200, other));
+
+    const { router, auth, upload, browser } = setup();
+
+    await router.push("/");
+    const { renewSession } = await import("@/api/client");
+    await expect(renewSession()).rejects.toMatchObject({ status: 401 });
+    await settle();
+
+    expect(upload.reset).not.toHaveBeenCalled();
+    expect(browser.reset).not.toHaveBeenCalled();
+
+    await auth.verifyLogin("attempt", "123456", readSharedAuth().generation);
+
+    expect(upload.reset).toHaveBeenCalledTimes(1);
+    expect(browser.reset).toHaveBeenCalledTimes(1);
+  });
+
+  it("вкладка, пропустившая сообщение о смене входа, при продлении принимает общее состояние", async () => {
+    const fetchMock = respondWith(signedIn);
+
+    const { router, upload, browser, notify } = setup();
+
+    await router.push("/");
+    changeInOtherTab(false);
+    const { renewSession } = await import("@/api/client");
+    await expect(renewSession()).rejects.toMatchObject({
+      code: "SESSION_CHANGED",
+    });
+    await settle();
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(getAccessToken()).toBeNull();
+    expect(upload.reset).toHaveBeenCalled();
+    expect(browser.reset).toHaveBeenCalled();
+    expect(notify).toHaveBeenCalledWith("Вы вышли в другой вкладке");
     expect(router.currentRoute.value.name).toBe("login");
   });
 });
 
 describe("канал между вкладками", () => {
-  it("«выход» в другой вкладке очищает сессию, отменяет загрузку и переводит на /login", async () => {
+  it("«выход» в другой вкладке очищает сессию, загрузки и переводит на /login", async () => {
     const fetchMock = respondWith(signedIn);
 
     const { router, channel, upload, browser, notify } = setup();
 
     await router.push("/");
+    changeInOtherTab(false);
     channel.deliver({ type: "logout" });
     await settle();
 
     expect(getAccessToken()).toBeNull();
-    expect(upload.stop).toHaveBeenCalled();
-    expect(upload.reset).not.toHaveBeenCalled();
+    expect(upload.reset).toHaveBeenCalled();
     expect(browser.reset).toHaveBeenCalled();
     expect(notify).toHaveBeenCalledWith("Вы вышли в другой вкладке");
     expect(router.currentRoute.value.name).toBe("login");
@@ -245,6 +304,7 @@ describe("канал между вкладками", () => {
     const { router, channel } = setup();
 
     await router.push("/login");
+    changeInOtherTab(true);
     channel.deliver({ type: "login" });
     await settle();
 
@@ -253,7 +313,7 @@ describe("канал между вкладками", () => {
     expect(router.currentRoute.value.name).toBe("files");
   });
 
-  it("«вход» в другой вкладке вне /login ничего не делает", async () => {
+  it("сообщение без смены общего входа ничего не делает", async () => {
     const fetchMock = respondWith(signedIn);
 
     const { router, channel } = setup();

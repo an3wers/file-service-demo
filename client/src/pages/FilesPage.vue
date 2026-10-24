@@ -24,6 +24,7 @@ const auth = useAuth();
 const upload = useUpload();
 const confirmOpen = ref(false);
 const loggingOut = ref(false);
+const logoutFailed = ref(false);
 
 function warnBeforeLeaving(event: BeforeUnloadEvent): void {
   event.preventDefault();
@@ -44,9 +45,12 @@ onUnmounted(() =>
 
 async function logout(): Promise<void> {
   loggingOut.value = true;
+  logoutFailed.value = false;
 
   try {
     await auth.logout();
+  } catch {
+    logoutFailed.value = true;
   } finally {
     loggingOut.value = false;
   }
@@ -87,6 +91,13 @@ function confirmLogout(): void {
           <LogOutIcon v-else data-icon="inline-start" />
           Выйти
         </Button>
+        <p
+          v-if="logoutFailed"
+          role="alert"
+          class="basis-full text-right text-destructive text-sm"
+        >
+          Произошла ошибка при выходе, попробуйте еще раз
+        </p>
       </div>
     </header>
 
@@ -100,9 +111,9 @@ function confirmLogout(): void {
         <AlertDialogHeader>
           <AlertDialogTitle>Выйти?</AlertDialogTitle>
           <AlertDialogDescription>
-            Передача файлов будет остановлена. История загрузок сохранится, а
-            проверка результатов продолжится после следующего входа. Уже
-            принятая сервером работа может завершиться после выхода.
+            Передача файлов будет остановлена, а история загрузок очищена во
+            всех вкладках. Уже принятая сервером работа может завершиться после
+            выхода.
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>

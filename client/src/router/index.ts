@@ -94,8 +94,12 @@ export function createAppRouter({
   });
 
   auth.onSignOut((reason) => {
-    upload.stop();
-    if (reason !== "expired") browser.reset();
+    if (reason === "expired") {
+      upload.stop();
+    } else {
+      upload.reset();
+      browser.reset();
+    }
 
     const notice = SIGN_OUT_NOTICES[reason];
 
@@ -107,12 +111,13 @@ export function createAppRouter({
       void router.push({ name: "login" });
   });
 
-  auth.onSignInElsewhere(async () => {
-    if (router.currentRoute.value.name !== "login") {
-      return;
-    }
+  auth.onUserSwitch(() => {
+    upload.reset();
+    browser.reset();
+  });
 
-    if (await auth.renew()) {
+  auth.onSignInElsewhere(async () => {
+    if ((await auth.renew()) && router.currentRoute.value.meta.guestOnly) {
       await router.push({ name: "files" });
     }
   });

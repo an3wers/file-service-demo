@@ -14,6 +14,7 @@ const MESSAGES: Record<string, string> = {
   LOGIN_ATTEMPT_INVALID: "Попытка входа завершена. Войдите заново",
   LOGIN_CODE_INVALID: "Неверный код входа",
   LOGIN_CODE_EXPIRED: "Срок кода истёк. Начните новый вход",
+  SESSION_CHANGED: "Вход изменился в другой вкладке",
   ACTIVATION_LINK_INVALID:
     "Ссылка недействительна. Запросите новое письмо активации",
   ROUTE_NOT_FOUND: "Метод API не найден — клиент и сервер разошлись по версиям",

@@ -8,6 +8,7 @@ import type {
 } from "@/api/generated";
 import { sendAuthRequest, sendRequest } from "./client";
 import { clearSession, startSession } from "./session";
+import { knownGeneration } from "./sharedAuth";
 
 export function login(
   email: string,
@@ -24,21 +25,28 @@ export function login(
 export async function verifyLogin(
   attemptToken: string,
   code: string,
-  signal?: AbortSignal,
+  generation: number,
 ): Promise<void> {
   startSession(
-    await sendAuthRequest<AuthSession>("/auth/login/verify", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ attemptToken, code }),
-      signal,
-    }),
+    await sendAuthRequest<AuthSession>(
+      "/auth/login/verify",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ attemptToken, code }),
+      },
+      (shared) => !shared.signedIn && shared.generation === generation,
+    ),
   );
 }
 
 export async function logout(): Promise<void> {
+  await sendAuthRequest<void>(
+    "/auth/logout",
+    { method: "POST" },
+    (shared) => shared.generation === knownGeneration(),
+  );
   clearSession();
-  await sendAuthRequest<void>("/auth/logout", { method: "POST" });
 }
 
 export function register(

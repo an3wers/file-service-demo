@@ -6,14 +6,23 @@ import {
   getSessionUser,
   onSessionChange,
   onSessionExpired,
+  onSharedSessionChanged,
+  onUserSwitched,
 } from "@/api/session";
 import type { SessionUser } from "@/api/session";
+import {
+  acceptGeneration,
+  knownGeneration,
+  readSharedAuth,
+  writeSharedAuth,
+} from "@/api/sharedAuth";
 
 export type AuthStatus = "booting" | "ready" | "failed";
 
 export type SignOutReason = "logout" | "expired" | "elsewhere";
 
-export type AuthMessage = { type: "login" } | { type: "logout" };
+export type AuthMessage =
+  { type: "login" } | { type: "logout" } | { type: "expired" };
 
 export interface AuthChannel {
   postMessage(message: AuthMessage): void;
@@ -32,6 +41,7 @@ export function createAuth(channel: AuthChannel | null) {
   const signedIn = computed(() => user.value !== null);
   const signOutHandlers = new Set<(reason: SignOutReason) => void>();
   const signInHandlers = new Set<() => void>();
+  const switchHandlers = new Set<() => void>();
   let booting: Promise<void> | null = null;
 
   function announceSignOut(reason: SignOutReason): void {
@@ -44,23 +54,51 @@ export function createAuth(channel: AuthChannel | null) {
     user.value = getSessionUser();
   });
 
-  onSessionExpired(() => announceSignOut("expired"));
-
-  channel?.addEventListener("message", ({ data }) => {
-    if (data.type === "logout") {
-      if (!getSessionUser()) {
-        return;
-      }
-
-      clearSession();
-      announceSignOut("elsewhere");
-      return;
-    }
-
-    for (const handler of signInHandlers) {
+  onUserSwitched(() => {
+    for (const handler of switchHandlers) {
       handler();
     }
   });
+
+  function sync(reason: SignOutReason): void {
+    const shared = readSharedAuth();
+
+    if (shared.generation === knownGeneration()) {
+      return;
+    }
+
+    acceptGeneration(shared.generation);
+
+    if (getSessionUser()) {
+      clearSession();
+      announceSignOut(reason);
+    }
+
+    if (shared.signedIn) {
+      for (const handler of signInHandlers) {
+        handler();
+      }
+    }
+  }
+
+  function isSessionChanged(error: unknown): boolean {
+    return isApiError(error) && error.code === "SESSION_CHANGED";
+  }
+
+  onSessionExpired(() => {
+    const shared = readSharedAuth();
+    if (shared.signedIn && shared.generation === knownGeneration()) {
+      writeSharedAuth({ generation: shared.generation + 1, signedIn: false });
+    }
+    announceSignOut("expired");
+    channel?.postMessage({ type: "expired" });
+  });
+
+  onSharedSessionChanged(() => sync("elsewhere"));
+
+  channel?.addEventListener("message", ({ data }) =>
+    sync(data.type === "expired" ? "expired" : "elsewhere"),
+  );
 
   async function boot(): Promise<void> {
     status.value = "booting";
@@ -74,6 +112,7 @@ export function createAuth(channel: AuthChannel | null) {
         status.value = "failed";
         return;
       }
+      channel?.postMessage({ type: "expired" });
     }
 
     status.value = "ready";
@@ -92,18 +131,28 @@ export function createAuth(channel: AuthChannel | null) {
   async function verifyLogin(
     attemptToken: string,
     code: string,
-    signal?: AbortSignal,
+    generation: number,
   ): Promise<void> {
-    await authApi.verifyLogin(attemptToken, code, signal);
+    try {
+      await authApi.verifyLogin(attemptToken, code, generation);
+    } catch (error) {
+      if (isSessionChanged(error)) sync("elsewhere");
+      throw error;
+    }
     status.value = "ready";
     channel?.postMessage({ type: "login" });
   }
 
   async function logout(): Promise<void> {
-    const request = authApi.logout();
+    try {
+      await authApi.logout();
+    } catch (error) {
+      if (!isSessionChanged(error)) throw error;
+      sync("elsewhere");
+      return;
+    }
     announceSignOut("logout");
     channel?.postMessage({ type: "logout" });
-    await request.catch(() => {});
   }
 
   async function renew(): Promise<boolean> {
@@ -124,6 +173,12 @@ export function createAuth(channel: AuthChannel | null) {
     return () => signOutHandlers.delete(handler);
   }
 
+  function onUserSwitch(handler: () => void): () => void {
+    switchHandlers.add(handler);
+
+    return () => switchHandlers.delete(handler);
+  }
+
   function onSignInElsewhere(handler: () => void): () => void {
     signInHandlers.add(handler);
 
@@ -141,6 +196,7 @@ export function createAuth(channel: AuthChannel | null) {
     renew,
     onSignOut,
     onSignInElsewhere,
+    onUserSwitch,
   };
 }
 

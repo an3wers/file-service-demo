@@ -4,6 +4,7 @@ import { useRoute, useRouter } from "vue-router";
 import type { LoginAttempt } from "@/api/generated";
 import { login as requestLogin } from "@/api/auth";
 import { serverNow } from "@/api/client";
+import { readSharedAuth } from "@/api/sharedAuth";
 import { safeReturnTo } from "@/lib/returnTo";
 import { EyeIcon, EyeOffIcon, HardDriveIcon } from "@lucide/vue";
 import { isApiError } from "@/api/client";
@@ -41,10 +42,12 @@ const code = ref("");
 const attempt = ref<LoginAttempt | null>(null);
 const storageKey = "file-service-login-attempt";
 let clockOffset = 0;
+let generation = readSharedAuth().generation;
 try {
   const saved = JSON.parse(sessionStorage.getItem(storageKey) ?? "null");
   if (
     saved &&
+    saved.generation === generation &&
     typeof saved.attempt?.attemptToken === "string" &&
     Number.isFinite(saved.clockOffset) &&
     [
@@ -140,12 +143,13 @@ async function submit(): Promise<void> {
       await auth.verifyLogin(
         attempt.value.attemptToken,
         code.value,
-        controller.signal,
+        generation,
       );
       if (controller.signal.aborted) return;
       forgetAttempt();
       await router.push(safeReturnTo(route.query.returnTo));
     } else {
+      const started = readSharedAuth().generation;
       const response = await requestLogin(
         email.value,
         password.value,
@@ -155,12 +159,13 @@ async function submit(): Promise<void> {
       password.value = "";
       passwordVisible.value = false;
       attempt.value = response;
+      generation = started;
       clockOffset = serverNow() - Date.now();
       now.value = Date.now() + clockOffset;
       try {
         sessionStorage.setItem(
           storageKey,
-          JSON.stringify({ attempt: response, clockOffset }),
+          JSON.stringify({ attempt: response, clockOffset, generation }),
         );
       } catch {
         failure.value =
@@ -178,6 +183,7 @@ async function submit(): Promise<void> {
         remainingAttempts.value = details.remainingAttempts;
       if (
         error.code === "LOGIN_ATTEMPT_INVALID" ||
+        error.code === "SESSION_CHANGED" ||
         details?.remainingAttempts === 0
       )
         forgetAttempt();

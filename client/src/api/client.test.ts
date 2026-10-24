@@ -200,7 +200,7 @@ describe("запрос к API", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
-  it("продление, завершившееся после выхода, не возвращает сессию", async () => {
+  it("продление, завершившееся после выхода, не возвращает сессию и не отправляет запрос прежнего пользователя", async () => {
     startSession(session("old", 20));
 
     let answer: (response: Response) => void = () => {};
@@ -215,11 +215,13 @@ describe("запрос к API", () => {
 
     const request = apiRequest("/files");
 
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalled());
     clearSession();
     answer(json(200, session("new")));
 
-    await expect(request).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+    await expect(request).rejects.toMatchObject({ name: "AbortError" });
     expect(getAccessToken()).toBeNull();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
   it("не продлевает сессию, пока до истечения больше 30 секунд", async () => {

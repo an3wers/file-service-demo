@@ -3,9 +3,20 @@ import type { ApiErrorBody } from "@/types/api";
 import {
   expireSession,
   getAccessToken,
+  getSessionUser,
   isRenewalDue,
+  sessionSignal,
   shareRenewal,
+  sharedSessionChanged,
 } from "./session";
+import {
+  acceptGeneration,
+  exclusive,
+  knownGeneration,
+  readSharedAuth,
+  writeSharedAuth,
+} from "./sharedAuth";
+import type { SharedAuth } from "./sharedAuth";
 
 export class ApiError extends Error {
   status: number;
@@ -177,42 +188,74 @@ export async function sendRequest<T>(
   return parseBody(text) as T;
 }
 
-let pendingAuthRequest: Promise<void> | null = null;
-
 export function sendAuthRequest<T>(
   path: "/auth/login/verify" | "/auth/logout" | "/auth/refresh",
   init: RequestInit,
+  allowed: (shared: SharedAuth) => boolean,
 ): Promise<T> {
-  const run = () => sendRequest<T>(path, init);
-  const request = pendingAuthRequest ? pendingAuthRequest.then(run) : run();
-  const settled = request.then(
-    () => {},
-    () => {},
-  );
-  pendingAuthRequest = settled;
-  void settled.then(() => {
-    if (pendingAuthRequest === settled) pendingAuthRequest = null;
+  return exclusive(async () => {
+    const before = readSharedAuth();
+
+    if (!allowed(before)) {
+      throw new ApiError(
+        409,
+        "SESSION_CHANGED",
+        "Вход изменился в другой вкладке",
+      );
+    }
+
+    const settle = (signedIn: boolean): void => {
+      if (path === "/auth/refresh" && before.signedIn === signedIn) {
+        acceptGeneration(before.generation);
+      } else {
+        writeSharedAuth({ generation: before.generation + 1, signedIn });
+      }
+    };
+
+    try {
+      const result = await sendRequest<T>(path, init);
+      settle(path !== "/auth/logout");
+      return result;
+    } catch (error) {
+      if (
+        path === "/auth/refresh" &&
+        isApiError(error) &&
+        error.status === 401
+      ) {
+        settle(false);
+      }
+      throw error;
+    }
   });
-  return request;
 }
 
 export function renewSession(): Promise<void> {
   return shareRenewal(
     () =>
-      sendAuthRequest<AuthSession>("/auth/refresh", {
-        method: "POST",
-      }),
+      sendAuthRequest<AuthSession>(
+        "/auth/refresh",
+        { method: "POST" },
+        ({ generation }) =>
+          getSessionUser() === null || generation === knownGeneration(),
+      ),
     (error) => {
       if (isApiError(error) && error.status === 401) {
         expireSession();
+      } else if (isApiError(error) && error.code === "SESSION_CHANGED") {
+        sharedSessionChanged();
       }
     },
   );
 }
 
 async function withSession<T>(
-  run: (authorization: Record<string, string>) => Promise<T>,
+  run: (
+    authorization: Record<string, string>,
+    signal: AbortSignal,
+  ) => Promise<T>,
 ): Promise<T> {
+  const signal = sessionSignal();
+
   if (isRenewalDue()) {
     await renewSession();
   }
@@ -222,7 +265,7 @@ async function withSession<T>(
     value ? { Authorization: `Bearer ${value}` } : {};
 
   try {
-    return await run(authorize(token));
+    return await run(authorize(token), signal);
   } catch (error) {
     if (!isApiError(error) || error.status !== 401) {
       throw error;
@@ -241,7 +284,7 @@ async function withSession<T>(
       await renewSession();
     }
 
-    return await run(authorize(getAccessToken()));
+    return await run(authorize(getAccessToken()), signal);
   }
 }
 
@@ -251,14 +294,18 @@ export function apiRequest<T>(
 ): Promise<T> {
   // Content-Type здесь не выставляем никогда: JSON-вызовы ставят его сами, а у
   // FormData его должен проставить браузер — иначе потеряется boundary.
-  return withSession((authorization) => {
+  return withSession((authorization, signal) => {
     const headers = new Headers(init.headers);
 
     for (const [name, value] of Object.entries(authorization)) {
       headers.set(name, value);
     }
 
-    return sendRequest<T>(path, { ...init, headers });
+    return sendRequest<T>(path, {
+      ...init,
+      headers,
+      signal: init.signal ? AbortSignal.any([init.signal, signal]) : signal,
+    });
   });
 }
 
@@ -362,8 +409,14 @@ export function apiUpload<T>(
   options: UploadOptions = {},
 ): Promise<T> {
   // Content-Type не трогаем: у FormData его вместе с boundary ставит браузер.
-  return withSession((headers) =>
-    sendUpload<T>(path, body, { ...options, headers }),
+  return withSession((headers, signal) =>
+    sendUpload<T>(path, body, {
+      ...options,
+      headers,
+      signal: options.signal
+        ? AbortSignal.any([options.signal, signal])
+        : signal,
+    }),
   );
 }
 

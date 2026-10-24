@@ -1,9 +1,16 @@
 import { afterEach } from "vitest";
 import { enableAutoUnmount } from "@vue/test-utils";
+import { acceptGeneration } from "@/api/sharedAuth";
 
 // Каждый mount снимается после теста: иначе висящие компоненты продолжают
 // держать watch/таймеры и текут между тест-кейсами одного файла.
 enableAutoUnmount(afterEach);
+
+afterEach(() => {
+  localStorage.removeItem("file-service-auth-state");
+  localStorage.removeItem("file-service-personal-owner");
+  acceptGeneration(0);
+});
 
 // happy-dom не реализует API, на которые опирается reka-ui (основа shadcn-vue):
 // без заглушек любой Dialog/Popover падает ещё на монтировании.
