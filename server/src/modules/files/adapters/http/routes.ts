@@ -12,6 +12,7 @@ import {
 } from "../../../../middleware/validate.js";
 import {
   createDirectorySchema,
+  deleteDirectoryQuerySchema,
   directoriesQuerySchema,
   downloadUrlQuerySchema,
   fileCardQuerySchema,
@@ -24,6 +25,7 @@ import {
   updateFileSchema,
 } from "./schemas.js";
 import type {
+  DeleteDirectoryQuery,
   DirectoriesQuery,
   DownloadUrlQuery,
   FileCardQuery,
@@ -360,6 +362,17 @@ export function createDirectoriesRouter(scenarios: FilesScenarios): Router {
           name: req.body.name,
         }),
       );
+    },
+  );
+
+  directoriesRouter.delete(
+    "/",
+    validateQuery(deleteDirectoryQuerySchema),
+    async (_req, res) => {
+      const { path } = validatedQuery<DeleteDirectoryQuery>(res);
+
+      await catalogOf(res).deleteDirectory(path);
+      res.status(204).end();
     },
   );
 

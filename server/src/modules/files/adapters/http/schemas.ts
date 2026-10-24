@@ -64,6 +64,10 @@ export const directoriesQuerySchema = z.object({
   parent: z.string().max(1024).optional(),
 });
 
+export const deleteDirectoryQuerySchema = z.object({
+  path: z.string().max(1024),
+});
+
 export type UploadBody = z.infer<typeof uploadBodySchema>;
 export type PresignUploadBody = z.infer<typeof presignUploadSchema>;
 export type PartUrlsBody = z.infer<typeof partUrlsSchema>;
@@ -71,6 +75,7 @@ export type ListFilesQuery = z.infer<typeof listFilesQuerySchema>;
 export type FileCardQuery = z.infer<typeof fileCardQuerySchema>;
 export type DownloadUrlQuery = z.infer<typeof downloadUrlQuerySchema>;
 export type DirectoriesQuery = z.infer<typeof directoriesQuerySchema>;
+export type DeleteDirectoryQuery = z.infer<typeof deleteDirectoryQuerySchema>;
 export type IdParams = z.infer<typeof idParamsSchema>;
 
 export const createDirectorySchema = z

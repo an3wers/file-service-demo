@@ -22,3 +22,9 @@ export function createDirectory(
     body: JSON.stringify({ parent, name }),
   });
 }
+
+export function deleteDirectory(path: string): Promise<void> {
+  return apiRequest<void>(`/directories${buildQuery({ path })}`, {
+    method: "DELETE",
+  });
+}

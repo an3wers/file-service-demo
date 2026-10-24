@@ -65,4 +65,72 @@ describe("HTTP-контракт каталогов", () => {
       error: { code: "VALIDATION_ERROR" },
     });
   });
+
+  it("удаляет пустой каталог, а корень, непустой и отсутствующий каталоги защищает", async () => {
+    const { app } = buildHttpHarness();
+    await new Promise<void>((resolve, reject) => {
+      server = app.listen(0, "127.0.0.1", (error) =>
+        error ? reject(error) : resolve(),
+      );
+      server.once("error", reject);
+    });
+    const origin = `http://127.0.0.1:${(server!.address() as AddressInfo).port}/api`;
+    const base = `${origin}/directories`;
+    const create = (body: unknown) =>
+      fetch(base, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+    const remove = (path?: string) =>
+      fetch(
+        path === undefined
+          ? base
+          : `${base}?${new URLSearchParams({ path }).toString()}`,
+        { method: "DELETE" },
+      );
+    expect((await create({ name: "Docs" })).status).toBe(201);
+    expect((await create({ parent: "Docs", name: "Sub" })).status).toBe(201);
+    expect((await create({ name: "Media" })).status).toBe(201);
+
+    const withChild = await remove("Docs");
+    expect(withChild.status).toBe(409);
+    expect(await withChild.json()).toMatchObject({
+      error: { code: "DIRECTORY_NOT_EMPTY" },
+    });
+
+    const form = new FormData();
+    form.append("file", new Blob(["hello"]), "report.txt");
+    form.append("directory", "Media");
+    expect(
+      (await fetch(`${origin}/files`, { method: "POST", body: form })).status,
+    ).toBe(201);
+    const withFile = await remove("Media");
+    expect(withFile.status).toBe(409);
+    expect(await withFile.json()).toMatchObject({
+      error: { code: "DIRECTORY_NOT_EMPTY" },
+    });
+
+    const root = await remove("");
+    expect(root.status).toBe(400);
+    expect(await root.json()).toMatchObject({
+      error: { code: "INVALID_DIRECTORY" },
+    });
+    const unknown = await remove("unknown");
+    expect(unknown.status).toBe(404);
+    expect(await unknown.json()).toMatchObject({
+      error: { code: "DIRECTORY_NOT_FOUND" },
+    });
+    expect((await remove()).status).toBe(422);
+
+    expect((await remove("Docs/Sub")).status).toBe(204);
+    expect((await remove("Docs/Sub")).status).toBe(404);
+    expect((await remove(" Docs ")).status).toBe(204);
+    expect(
+      directoriesResponseSchema.parse(await (await fetch(base)).json()),
+    ).toEqual({
+      parent: "",
+      items: [{ name: "Media", path: "Media", fileCount: 1 }],
+    });
+  });
 });

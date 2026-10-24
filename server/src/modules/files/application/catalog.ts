@@ -13,6 +13,9 @@ import {
 import type { Clock } from "../domain/ports/clock.js";
 import {
   DirectoryAlreadyExistsError,
+  DirectoryNotEmptyError,
+  DirectoryNotFoundError,
+  InvalidDirectoryError,
   FileNotFoundError,
   FileNotReadyError,
 } from "../domain/errors.js";
@@ -88,6 +91,7 @@ export interface CatalogModule {
   listFiles(input: ListFilesInput): Promise<ListFilesResult>;
   deleteFile(id: string): Promise<void>;
   updateFile(id: string, input: UpdateFileInput): Promise<StoredFile>;
+  deleteDirectory(rawPath: string): Promise<void>;
   listDirectories(rawParent: string | undefined): Promise<{
     parent: string;
     items: DirectoryDto[];
@@ -271,6 +275,22 @@ export function createCatalogModule({
         });
       }
       return { name, path, fileCount: 0 };
+    },
+
+    async deleteDirectory(rawPath) {
+      const path = normalizeDirectory(rawPath);
+      if (!path)
+        throw new InvalidDirectoryError("Личный корень удалить нельзя", {
+          path,
+        });
+      const result = await directories.remove(path);
+      if (result === "missing")
+        throw new DirectoryNotFoundError("Директория не найдена", { path });
+      if (result === "occupied")
+        throw new DirectoryNotEmptyError(
+          "Каталог не пуст: в нём есть подкаталоги, файлы или незавершённые загрузки",
+          { path },
+        );
     },
 
     async listDirectories(rawParent) {

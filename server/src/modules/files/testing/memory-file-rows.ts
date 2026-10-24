@@ -44,6 +44,7 @@ import { FileNotFoundError } from "../domain/errors.js";
 export interface MemoryFileRows extends FileRows {
   forOwner(owner: string): FileRows;
   setTerminationGuard(guard: (id: string) => boolean): void;
+  isTerminated(id: string): boolean;
   /** Передвигает часы, чтобы резервирование могло стать просроченным. */
   advance(hours: number): void;
   /** Отклоняет следующий вызов этого метода для проверки обработки ошибок. */
@@ -432,6 +433,7 @@ export function createMemoryFileRows(
     setTerminationGuard(guard) {
       terminated = guard;
     },
+    isTerminated: (id) => terminated(id),
 
     advance(hours: number): void {
       clock.advance(hours);
