@@ -1,5 +1,6 @@
 import { toast } from "vue-sonner";
-import type { FileDto } from "@/types/api";
+import type { DirectoryDto, FileDto } from "@/types/api";
+import { updateDirectory } from "@/api/directories";
 import { deleteFile, getDownloadUrl, updateFile } from "@/api/files";
 import { isApiError } from "@/api/client";
 import { errorMessage, isRetryable, requestReference } from "@/lib/errors";
@@ -104,6 +105,36 @@ async function move(file: FileDto, directory: string): Promise<FileDto> {
   return updated;
 }
 
+async function renameDirectory(
+  directory: DirectoryDto,
+  name: string,
+): Promise<DirectoryDto> {
+  const updated = await updateDirectory(directory.path, { name });
+  toast.success(`Каталог «${directory.name}» переименован в «${updated.name}»`);
+  useFileBrowser().refresh();
+  return updated;
+}
+
+async function moveDirectory(
+  directory: DirectoryDto,
+  parent: string,
+): Promise<DirectoryDto> {
+  const updated = await updateDirectory(directory.path, { parent });
+  toast.success(
+    `Каталог «${updated.name}» перемещён в «${parent || "Корень"}»`,
+  );
+  useFileBrowser().refresh();
+  return updated;
+}
+
 export function useFileActions() {
-  return { download, downloadByUrl, remove, rename, move };
+  return {
+    download,
+    downloadByUrl,
+    remove,
+    rename,
+    move,
+    renameDirectory,
+    moveDirectory,
+  };
 }

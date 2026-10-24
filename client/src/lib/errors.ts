@@ -33,6 +33,8 @@ const MESSAGES: Record<string, string> = {
   DIRECTORY_ALREADY_EXISTS: "Директория уже существует",
   DIRECTORY_NOT_EMPTY:
     "Каталог не пуст: удалите подкаталоги, файлы и незавершённые загрузки",
+  DIRECTORY_BUSY:
+    "В каталоге идут незавершённые загрузки или он изменяется — повторите позже",
   INVALID_DIRECTORY: "Недопустимый путь директории",
   INVALID_FILE_NAME: "Недопустимое имя файла",
 
