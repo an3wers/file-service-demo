@@ -64,7 +64,7 @@ export const directoriesQuerySchema = z.object({
   parent: z.string().max(1024).optional(),
 });
 
-export const deleteDirectoryQuerySchema = z.object({
+export const directoryPathQuerySchema = z.object({
   path: z.string().max(1024),
 });
 
@@ -75,7 +75,7 @@ export type ListFilesQuery = z.infer<typeof listFilesQuerySchema>;
 export type FileCardQuery = z.infer<typeof fileCardQuerySchema>;
 export type DownloadUrlQuery = z.infer<typeof downloadUrlQuerySchema>;
 export type DirectoriesQuery = z.infer<typeof directoriesQuerySchema>;
-export type DeleteDirectoryQuery = z.infer<typeof deleteDirectoryQuerySchema>;
+export type DirectoryPathQuery = z.infer<typeof directoryPathQuerySchema>;
 export type IdParams = z.infer<typeof idParamsSchema>;
 
 export const createDirectorySchema = z
@@ -84,6 +84,16 @@ export const createDirectorySchema = z
     name: z.string().max(512),
   })
   .meta({ id: "CreateDirectoryBody" });
+
+export const updateDirectorySchema = z
+  .object({
+    name: z.string().max(512).optional(),
+    parent: z.string().max(1024).optional(),
+  })
+  .refine((body) => body.name !== undefined || body.parent !== undefined, {
+    message: "Укажите новое имя или родительский каталог",
+  })
+  .meta({ id: "UpdateDirectoryBody" });
 
 export const updateFileSchema = z
   .object({

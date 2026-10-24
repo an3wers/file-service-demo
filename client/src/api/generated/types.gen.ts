@@ -20,6 +20,11 @@ export type CreateDirectoryBody = {
     name: string;
 };
 
+export type UpdateDirectoryBody = {
+    name?: string;
+    parent?: string;
+};
+
 export type LivenessResponse = {
     status: 'ok';
     timestamp: string;
@@ -1671,6 +1676,57 @@ export type ListDirectoriesResponses = {
 };
 
 export type ListDirectoriesResponse = ListDirectoriesResponses[keyof ListDirectoriesResponses];
+
+export type UpdateDirectoryData = {
+    body: UpdateDirectoryBody;
+    path?: never;
+    query: {
+        path: string;
+    };
+    url: '/api/directories';
+};
+
+export type UpdateDirectoryErrors = {
+    /**
+     * Недопустимое имя, каталог, личный корень или перенос в потомка
+     */
+    400: ErrorResponse;
+    /**
+     * Нет токена доступа или он недействителен
+     */
+    401: ErrorResponse;
+    /**
+     * Каталог или новый родитель не найден
+     */
+    404: ErrorResponse;
+    /**
+     * Путь уже занят или в каталоге идут незавершённые загрузки
+     */
+    409: ErrorResponse;
+    /**
+     * Запрос не прошёл валидацию; details — результат z.flattenError()
+     */
+    422: ErrorResponse;
+    /**
+     * Непредвиденная ошибка сервера
+     */
+    500: ErrorResponse;
+    /**
+     * Хранилище или база данных недоступны
+     */
+    503: ErrorResponse;
+};
+
+export type UpdateDirectoryError = UpdateDirectoryErrors[keyof UpdateDirectoryErrors];
+
+export type UpdateDirectoryResponses = {
+    /**
+     * Каталог изменён
+     */
+    200: DirectoryDto;
+};
+
+export type UpdateDirectoryResponse = UpdateDirectoryResponses[keyof UpdateDirectoryResponses];
 
 export type CreateDirectoryData = {
     body: CreateDirectoryBody;

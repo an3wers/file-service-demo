@@ -3,7 +3,7 @@ import { extname } from "node:path";
 import { InvalidDirectoryError, InvalidFileNameError } from "./errors.js";
 
 const MAX_SEGMENT_LENGTH = 100;
-const MAX_DIRECTORY_BYTES = 700;
+export const MAX_DIRECTORY_BYTES = 700;
 const MAX_NAME_LENGTH = 255;
 // eslint-disable-next-line no-control-regex -- намеренно вырезаем управляющие символы из ключа
 const CONTROL_CHARS = /[\u0000-\u001f\u007f]/;

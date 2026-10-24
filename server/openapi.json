@@ -3444,6 +3444,117 @@
             }
           }
         }
+      },
+      "patch": {
+        "tags": [
+          "directories"
+        ],
+        "summary": "Переименовать или переместить каталог",
+        "description": "Меняет имя и/или родителя каталога вместе со всеми подкаталогами и файлами. Идентификаторы, объектные ключи и содержимое файлов сохраняются. Личный корень изменить нельзя; каталог нельзя перенести в самого себя или в своего потомка.",
+        "operationId": "updateDirectory",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "path",
+            "schema": {
+              "type": "string",
+              "maxLength": 1024
+            },
+            "required": true
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateDirectoryBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Каталог изменён",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DirectoryDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Недопустимое имя, каталог, личный корень или перенос в потомка",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Нет токена доступа или он недействителен",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Каталог или новый родитель не найден",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Путь уже занят или в каталоге идут незавершённые загрузки",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Запрос не прошёл валидацию; details — результат z.flattenError()",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Непредвиденная ошибка сервера",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Хранилище или база данных недоступны",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
       }
     }
   },
@@ -3501,6 +3612,19 @@
         "required": [
           "name"
         ]
+      },
+      "UpdateDirectoryBody": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "maxLength": 512
+          },
+          "parent": {
+            "type": "string",
+            "maxLength": 1024
+          }
+        }
       },
       "LivenessResponse": {
         "type": "object",

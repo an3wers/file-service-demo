@@ -42,6 +42,8 @@ export class DirectoryAlreadyExistsError extends FilesDomainError {}
 
 export class DirectoryNotEmptyError extends FilesDomainError {}
 
+export class DirectoryBusyError extends FilesDomainError {}
+
 export class ImpossibleFileRowError extends FilesDomainError {
   constructor(
     message: string,

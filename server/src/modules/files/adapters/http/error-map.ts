@@ -4,6 +4,7 @@ import {
   UploadOperationConflictError,
   UploadOperationProcessingError,
   DirectoryAlreadyExistsError,
+  DirectoryBusyError,
   DirectoryNotEmptyError,
   DirectoryNotFoundError,
   FileNotFoundError,
@@ -49,6 +50,7 @@ const RESPONSES: ReadonlyArray<[DomainErrorClass, HttpResponse]> = [
     DirectoryNotEmptyError,
     { status: 409, code: ERROR_CODES.DIRECTORY_NOT_EMPTY },
   ],
+  [DirectoryBusyError, { status: 409, code: ERROR_CODES.DIRECTORY_BUSY }],
   [FileNotFoundError, { status: 404, code: ERROR_CODES.FILE_NOT_FOUND }],
   [FileNotReadyError, { status: 409, code: ERROR_CODES.FILE_NOT_READY }],
   [
