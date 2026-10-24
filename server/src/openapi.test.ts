@@ -80,12 +80,9 @@ describe("OpenAPI-документ", () => {
     });
 
     const { authRouter } = createAuthHttp({
-      login: "operator",
-      password: "test-password",
       accessSecret: "a".repeat(32),
-      refreshSecret: "r".repeat(32),
+      codeSecret: "r".repeat(32),
       accessTtlSeconds: 900,
-      refreshTtlSeconds: 604800,
       cookieSecure: false,
     });
 

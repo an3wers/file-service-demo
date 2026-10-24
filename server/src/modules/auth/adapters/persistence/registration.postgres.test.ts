@@ -10,8 +10,7 @@ import { Router } from "express";
 import { createApp } from "../../../../app.js";
 import { createAuthRouter, createRequireAuth } from "../http/routes.js";
 import { createAuthHarness } from "../../testing/auth.harness.js";
-import { createSessionsModule } from "../../application/sessions.js";
-import { createSqlUserRows } from "./sql-user-rows.js";
+import { createSqlSessionStore } from "./sql-session-store.js";
 import { createRegistration } from "../../application/registration.js";
 import { vi } from "vitest";
 import { mapAuthError } from "../http/error-map.js";
@@ -27,7 +26,9 @@ beforeAll(async () => {
   await migrate();
 });
 beforeEach(async () => {
-  await pool.query("truncate auth_secrets, auth_mail_events, users");
+  await pool.query(
+    "truncate login_attempts, auth_sessions, auth_secrets, auth_mail_events, users",
+  );
 });
 afterAll(async () => {
   if (created) await pool.query(`drop schema ${schema} cascade`);
@@ -191,12 +192,7 @@ it("собранное HTTP-приложение не пускает неакт�
   first.passwordHash = await auth.hasher.hash("original password");
   const store = createSqlRegistrationStore();
   await store.save(first, deadline());
-  const sessions = createSessionsModule({
-    users: createSqlUserRows(),
-    hasher: auth.hasher,
-    tokens: auth.tokens,
-    login: first.id,
-  });
+  const sessions = auth.withStore(createSqlSessionStore());
   const sendEmail = vi.fn();
   const registration = createRegistration({
     store: {
@@ -244,10 +240,10 @@ it("собранное HTTP-приложение не пускает неакт�
     });
   try {
     const login = await post("login", {
-      login: first.id,
+      email: first.email,
       password: "original password",
     });
-    expect(login.status).toBe(401);
+    expect(login.status).toBe(403);
     expect(login.headers.getSetCookie()).toEqual([]);
     expect((await fetch(`${base}/api/files`)).status).toBe(401);
     const failed = await post("register", {
@@ -270,7 +266,7 @@ it("собранное HTTP-приложение не пускает неакт�
     expect(
       (await pool.query("select count(*) from auth_mail_events")).rows[0]
         ?.count,
-    ).toBe(3);
+    ).toBe(5);
     await wait(150);
     expect(sendEmail).not.toHaveBeenCalled();
   } finally {
@@ -505,12 +501,7 @@ it("собранное HTTP-приложение соблюдает квоты �
   const consume = vi.fn(store.consume);
   let offset = 0;
   const sendEmail = vi.fn().mockResolvedValue({ messageId: "accepted" });
-  const sessions = createSessionsModule({
-    users: createSqlUserRows(),
-    hasher: auth.hasher,
-    tokens: auth.tokens,
-    login: "operator",
-  });
+  const sessions = auth.withStore(createSqlSessionStore());
   const app = createApp({
     authRouter: createAuthRouter(sessions, {
       cookieSecure: false,

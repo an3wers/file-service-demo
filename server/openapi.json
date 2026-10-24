@@ -574,10 +574,20 @@
         "tags": [
           "auth"
         ],
-        "summary": "Вход",
-        "description": "Меняет логин и пароль пользователя из окружения на токен доступа (в теле ответа) и токен обновления (в httpOnly-cookie).",
+        "summary": "Пароль и отправка кода входа",
         "operationId": "login",
         "security": [],
+        "description": "Создаёт независимую попытку на 15 минут и код на пять минут без сессии и cookie. Одна SMTP-попытка; accepted не гарантирует доставку, unconfirmed сохраняет возможность ввода. Первый шаг: 10 запросов за 15 минут по email, 50 с IP. Письма: одно в минуту и пять в час по email и назначению, 20 в час с IP совместно с другими письмами доступа.",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "Origin",
+            "schema": {
+              "type": "string"
+            },
+            "required": true
+          }
+        ],
         "requestBody": {
           "required": true,
           "content": {
@@ -585,10 +595,8 @@
               "schema": {
                 "type": "object",
                 "properties": {
-                  "login": {
-                    "type": "string",
-                    "minLength": 1,
-                    "maxLength": 255
+                  "email": {
+                    "type": "string"
                   },
                   "password": {
                     "type": "string",
@@ -597,7 +605,7 @@
                   }
                 },
                 "required": [
-                  "login",
+                  "email",
                   "password"
                 ]
               }
@@ -606,14 +614,185 @@
         },
         "responses": {
           "200": {
-            "description": "Вход выполнен",
+            "description": "Попытка создана; даты UTC ISO 8601",
+            "headers": {
+              "Cache-Control": {
+                "required": true,
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              },
+              "Date": {
+                "required": true,
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LoginAttempt"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "BAD_REQUEST",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "INVALID_CREDENTIALS",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "EMAIL_NOT_VERIFIED после правильного пароля или ORIGIN_NOT_ALLOWED",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "PAYLOAD_TOO_LARGE",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "UNSUPPORTED_MEDIA_TYPE",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Запрос не прошёл валидацию; details — результат z.flattenError()",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "RATE_LIMITED: details.retryAfterSeconds; без новой попытки и письма",
+            "headers": {
+              "Retry-After": {
+                "required": true,
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Непредвиденная ошибка сервера",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Хранилище или база данных недоступны",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/auth/login/verify": {
+      "post": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "Проверка кода входа",
+        "operationId": "verifyLogin",
+        "security": [],
+        "description": "Атомарно погашает попытку и создаёт одну серверную сессию. Пятая неверная проверка завершает попытку, ошибка формата не расходует пять проверок. Не более 20 проверок за 15 минут по пользователю и 100 с IP, включая неизвестные попытки и некорректные тела. После потерянного ответа cookie позволяет refresh, иначе нужен новый вход.",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "Origin",
+            "schema": {
+              "type": "string"
+            },
+            "required": true
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "attemptToken": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 256
+                  },
+                  "code": {
+                    "type": "string",
+                    "pattern": "^[0-9]{6}$"
+                  }
+                },
+                "required": [
+                  "attemptToken",
+                  "code"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Сессия создана",
             "headers": {
               "Set-Cookie": {
                 "required": true,
-                "description": "refresh_token: токен обновления; HttpOnly, SameSite=Strict, Path=/api/auth",
+                "description": "refresh_token: токен обновления; HttpOnly, Secure вне localhost, SameSite=Strict, Path=/api/auth",
                 "schema": {
                   "type": "string",
-                  "description": "refresh_token: токен обновления; HttpOnly, SameSite=Strict, Path=/api/auth"
+                  "description": "refresh_token: токен обновления; HttpOnly, Secure вне localhost, SameSite=Strict, Path=/api/auth"
                 }
               }
             },
@@ -625,8 +804,58 @@
               }
             }
           },
+          "400": {
+            "description": "LOGIN_CODE_INVALID: details.remainingAttempts; LOGIN_CODE_EXPIRED или BAD_REQUEST",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
           "401": {
-            "description": "INVALID_CREDENTIALS: неверный логин или пароль",
+            "description": "Нет токена доступа или он недействителен",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "ORIGIN_NOT_ALLOWED",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "410": {
+            "description": "LOGIN_ATTEMPT_INVALID",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "PAYLOAD_TOO_LARGE",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "UNSUPPORTED_MEDIA_TYPE",
             "content": {
               "application/json": {
                 "schema": {
@@ -637,6 +866,24 @@
           },
           "422": {
             "description": "Запрос не прошёл валидацию; details — результат z.flattenError()",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "RATE_LIMITED: details.retryAfterSeconds",
+            "headers": {
+              "Retry-After": {
+                "required": true,
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -674,9 +921,9 @@
           "auth"
         ],
         "summary": "Продление",
-        "description": "Меняет токен обновления из cookie на новую пару токенов; новый токен обновления приходит в cookie.",
         "operationId": "refreshSession",
         "security": [],
+        "description": "Постоянный случайный токен обновления сохраняется. Каждое успешное продление заново отсчитывает семь дней, общего календарного предела нет. Параллельные и повторные запросы разрешены, отозванные и истёкшие сессии не восстанавливаются. 401 очищает cookie, временный 503 её сохраняет.",
         "parameters": [
           {
             "in": "cookie",
@@ -686,6 +933,14 @@
               "type": "string"
             },
             "description": "Токен обновления из входа или продления"
+          },
+          {
+            "in": "header",
+            "name": "Origin",
+            "schema": {
+              "type": "string"
+            },
+            "required": true
           }
         ],
         "responses": {
@@ -694,10 +949,10 @@
             "headers": {
               "Set-Cookie": {
                 "required": true,
-                "description": "refresh_token: токен обновления; HttpOnly, SameSite=Strict, Path=/api/auth",
+                "description": "refresh_token: токен обновления; HttpOnly, Secure вне localhost, SameSite=Strict, Path=/api/auth",
                 "schema": {
                   "type": "string",
-                  "description": "refresh_token: токен обновления; HttpOnly, SameSite=Strict, Path=/api/auth"
+                  "description": "refresh_token: токен обновления; HttpOnly, Secure вне localhost, SameSite=Strict, Path=/api/auth"
                 }
               }
             },
@@ -709,8 +964,48 @@
               }
             }
           },
+          "400": {
+            "description": "BAD_REQUEST",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
           "401": {
-            "description": "SESSION_EXPIRED: cookie нет, токен недействителен или истёк, сессии отозваны",
+            "description": "SESSION_EXPIRED",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "ORIGIN_NOT_ALLOWED",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "PAYLOAD_TOO_LARGE",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "UNSUPPORTED_MEDIA_TYPE",
             "content": {
               "application/json": {
                 "schema": {
@@ -758,12 +1053,121 @@
           "auth"
         ],
         "summary": "Выход",
-        "description": "Очищает cookie токена обновления в этом браузере. Ничего не отзывает; повторный вызов не ошибка.",
         "operationId": "logout",
         "security": [],
+        "description": "Отзывает текущую серверную сессию и очищает cookie. Повтор без действующей сессии успешен. Другие браузеры сохраняют сессии. Выданный JWT сохраняет доступ до своего истечения, не более 15 минут.",
+        "parameters": [
+          {
+            "in": "cookie",
+            "name": "refresh_token",
+            "schema": {
+              "description": "Токен обновления из входа или продления",
+              "type": "string"
+            },
+            "description": "Токен обновления из входа или продления"
+          },
+          {
+            "in": "header",
+            "name": "Origin",
+            "schema": {
+              "type": "string"
+            },
+            "required": true
+          }
+        ],
         "responses": {
           "204": {
-            "description": "Cookie очищена"
+            "description": "Сессия отозвана, cookie очищена",
+            "headers": {
+              "Set-Cookie": {
+                "required": true,
+                "description": "refresh_token: токен обновления; HttpOnly, Secure вне localhost, SameSite=Strict, Path=/api/auth",
+                "schema": {
+                  "type": "string",
+                  "description": "refresh_token: токен обновления; HttpOnly, Secure вне localhost, SameSite=Strict, Path=/api/auth"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "BAD_REQUEST",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Нет токена доступа или он недействителен",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "ORIGIN_NOT_ALLOWED",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "PAYLOAD_TOO_LARGE",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "UNSUPPORTED_MEDIA_TYPE",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Запрос не прошёл валидацию; details — результат z.flattenError()",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Непредвиденная ошибка сервера",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Хранилище или база данных недоступны",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
           }
         }
       }
@@ -2519,6 +2923,44 @@
         ],
         "additionalProperties": false
       },
+      "LoginAttempt": {
+        "type": "object",
+        "properties": {
+          "attemptToken": {
+            "type": "string"
+          },
+          "attemptExpiresAt": {
+            "type": "string",
+            "format": "date-time",
+            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+          },
+          "codeExpiresAt": {
+            "type": "string",
+            "format": "date-time",
+            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+          },
+          "resendAvailableAt": {
+            "type": "string",
+            "format": "date-time",
+            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+          },
+          "deliveryStatus": {
+            "type": "string",
+            "enum": [
+              "accepted",
+              "unconfirmed"
+            ]
+          }
+        },
+        "required": [
+          "attemptToken",
+          "attemptExpiresAt",
+          "codeExpiresAt",
+          "resendAvailableAt",
+          "deliveryStatus"
+        ],
+        "additionalProperties": false
+      },
       "AuthSession": {
         "type": "object",
         "properties": {
@@ -2527,19 +2969,31 @@
           },
           "expiresIn": {
             "type": "integer",
-            "minimum": -9007199254740991,
+            "exclusiveMinimum": 0,
             "maximum": 9007199254740991,
             "description": "Сколько секунд живёт токен доступа"
           },
           "user": {
             "type": "object",
             "properties": {
-              "login": {
+              "id": {
+                "type": "string",
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+              },
+              "name": {
                 "type": "string"
+              },
+              "email": {
+                "type": "string",
+                "format": "email",
+                "pattern": "^(?:[A-Za-z0-9_'+\\-]+\\.)*[A-Za-z0-9_'+\\-]*[A-Za-z0-9_+-]@(?:[A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$"
               }
             },
             "required": [
-              "login"
+              "id",
+              "name",
+              "email"
             ],
             "additionalProperties": false
           }

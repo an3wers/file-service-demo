@@ -9,7 +9,15 @@ import {
 } from "./session";
 
 function session(accessToken: string, expiresIn = 900): AuthSession {
-  return { accessToken, expiresIn, user: { login: "admin" } };
+  return {
+    accessToken,
+    expiresIn,
+    user: {
+      id: "00000000-0000-4000-8000-000000000001",
+      name: "admin",
+      email: "admin@example.com",
+    },
+  };
 }
 
 function json(status: number, body: unknown): Response {

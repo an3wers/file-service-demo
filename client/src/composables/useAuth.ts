@@ -89,8 +89,12 @@ export function createAuth(channel: AuthChannel | null) {
     return booting;
   }
 
-  async function login(login: string, password: string): Promise<void> {
-    await authApi.login(login, password);
+  async function verifyLogin(
+    attemptToken: string,
+    code: string,
+    signal?: AbortSignal,
+  ): Promise<void> {
+    await authApi.verifyLogin(attemptToken, code, signal);
     status.value = "ready";
     channel?.postMessage({ type: "login" });
   }
@@ -132,7 +136,7 @@ export function createAuth(channel: AuthChannel | null) {
     bootError,
     signedIn,
     ensureSession,
-    login,
+    verifyLogin,
     logout,
     renew,
     onSignOut,

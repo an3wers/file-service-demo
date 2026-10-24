@@ -9,7 +9,11 @@ import { createAppRouter } from "./index";
 const SESSION: AuthSession = {
   accessToken: "token",
   expiresIn: 900,
-  user: { login: "admin" },
+  user: {
+    id: "00000000-0000-4000-8000-000000000001",
+    name: "admin",
+    email: "admin@example.com",
+  },
 };
 
 function json(status: number, body: unknown): Response {

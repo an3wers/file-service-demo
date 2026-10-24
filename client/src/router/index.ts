@@ -83,7 +83,7 @@ export function createAppRouter({
     }
 
     if (to.meta.requiresAuth && !auth.signedIn.value) {
-      return { name: "login" };
+      return { name: "login", query: { returnTo: to.fullPath } };
     }
 
     if (to.meta.guestOnly && auth.signedIn.value) {

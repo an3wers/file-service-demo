@@ -80,7 +80,7 @@ function confirmLogout(): void {
         </div>
         <ThemeSelect />
         <span class="max-w-full break-all text-muted-foreground text-sm">{{
-          auth.user.value?.login
+          auth.user.value?.name
         }}</span>
         <Button variant="outline" :disabled="loggingOut" @click="requestLogout">
           <Spinner v-if="loggingOut" data-icon="inline-start" />

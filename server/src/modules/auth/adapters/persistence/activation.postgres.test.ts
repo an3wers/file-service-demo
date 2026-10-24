@@ -34,7 +34,9 @@ beforeAll(async () => {
   await migrate();
 });
 beforeEach(async () => {
-  await pool.query("truncate auth_secrets, auth_mail_events, users");
+  await pool.query(
+    "truncate login_attempts, auth_sessions, auth_secrets, auth_mail_events, users",
+  );
 });
 afterEach(async () => {
   await Promise.all(

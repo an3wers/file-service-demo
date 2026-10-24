@@ -52,6 +52,14 @@ export type ActivationResult = {
     message: 'Email подтверждён. Теперь можно войти';
 };
 
+export type LoginAttempt = {
+    attemptToken: string;
+    attemptExpiresAt: string;
+    codeExpiresAt: string;
+    resendAvailableAt: string;
+    deliveryStatus: 'accepted' | 'unconfirmed';
+};
+
 export type AuthSession = {
     accessToken: string;
     /**
@@ -59,7 +67,9 @@ export type AuthSession = {
      */
     expiresIn: number;
     user: {
-        login: string;
+        id: string;
+        name: string;
+        email: string;
     };
 };
 
@@ -436,8 +446,11 @@ export type RegisterResponse = RegisterResponses[keyof RegisterResponses];
 
 export type LoginData = {
     body: {
-        login: string;
+        email: string;
         password: string;
+    };
+    headers: {
+        Origin: string;
     };
     path?: never;
     query?: never;
@@ -446,13 +459,33 @@ export type LoginData = {
 
 export type LoginErrors = {
     /**
-     * INVALID_CREDENTIALS: неверный логин или пароль
+     * BAD_REQUEST
+     */
+    400: ErrorResponse;
+    /**
+     * INVALID_CREDENTIALS
      */
     401: ErrorResponse;
+    /**
+     * EMAIL_NOT_VERIFIED после правильного пароля или ORIGIN_NOT_ALLOWED
+     */
+    403: ErrorResponse;
+    /**
+     * PAYLOAD_TOO_LARGE
+     */
+    413: ErrorResponse;
+    /**
+     * UNSUPPORTED_MEDIA_TYPE
+     */
+    415: ErrorResponse;
     /**
      * Запрос не прошёл валидацию; details — результат z.flattenError()
      */
     422: ErrorResponse;
+    /**
+     * RATE_LIMITED: details.retryAfterSeconds; без новой попытки и письма
+     */
+    429: ErrorResponse;
     /**
      * Непредвиденная ошибка сервера
      */
@@ -467,15 +500,85 @@ export type LoginError = LoginErrors[keyof LoginErrors];
 
 export type LoginResponses = {
     /**
-     * Вход выполнен
+     * Попытка создана; даты UTC ISO 8601
      */
-    200: AuthSession;
+    200: LoginAttempt;
 };
 
 export type LoginResponse = LoginResponses[keyof LoginResponses];
 
+export type VerifyLoginData = {
+    body: {
+        attemptToken: string;
+        code: string;
+    };
+    headers: {
+        Origin: string;
+    };
+    path?: never;
+    query?: never;
+    url: '/api/auth/login/verify';
+};
+
+export type VerifyLoginErrors = {
+    /**
+     * LOGIN_CODE_INVALID: details.remainingAttempts; LOGIN_CODE_EXPIRED или BAD_REQUEST
+     */
+    400: ErrorResponse;
+    /**
+     * Нет токена доступа или он недействителен
+     */
+    401: ErrorResponse;
+    /**
+     * ORIGIN_NOT_ALLOWED
+     */
+    403: ErrorResponse;
+    /**
+     * LOGIN_ATTEMPT_INVALID
+     */
+    410: ErrorResponse;
+    /**
+     * PAYLOAD_TOO_LARGE
+     */
+    413: ErrorResponse;
+    /**
+     * UNSUPPORTED_MEDIA_TYPE
+     */
+    415: ErrorResponse;
+    /**
+     * Запрос не прошёл валидацию; details — результат z.flattenError()
+     */
+    422: ErrorResponse;
+    /**
+     * RATE_LIMITED: details.retryAfterSeconds
+     */
+    429: ErrorResponse;
+    /**
+     * Непредвиденная ошибка сервера
+     */
+    500: ErrorResponse;
+    /**
+     * Хранилище или база данных недоступны
+     */
+    503: ErrorResponse;
+};
+
+export type VerifyLoginError = VerifyLoginErrors[keyof VerifyLoginErrors];
+
+export type VerifyLoginResponses = {
+    /**
+     * Сессия создана
+     */
+    200: AuthSession;
+};
+
+export type VerifyLoginResponse = VerifyLoginResponses[keyof VerifyLoginResponses];
+
 export type RefreshSessionData = {
     body?: never;
+    headers: {
+        Origin: string;
+    };
     path?: never;
     query?: never;
     url: '/api/auth/refresh';
@@ -483,9 +586,25 @@ export type RefreshSessionData = {
 
 export type RefreshSessionErrors = {
     /**
-     * SESSION_EXPIRED: cookie нет, токен недействителен или истёк, сессии отозваны
+     * BAD_REQUEST
+     */
+    400: ErrorResponse;
+    /**
+     * SESSION_EXPIRED
      */
     401: ErrorResponse;
+    /**
+     * ORIGIN_NOT_ALLOWED
+     */
+    403: ErrorResponse;
+    /**
+     * PAYLOAD_TOO_LARGE
+     */
+    413: ErrorResponse;
+    /**
+     * UNSUPPORTED_MEDIA_TYPE
+     */
+    415: ErrorResponse;
     /**
      * Запрос не прошёл валидацию; details — результат z.flattenError()
      */
@@ -513,14 +632,54 @@ export type RefreshSessionResponse = RefreshSessionResponses[keyof RefreshSessio
 
 export type LogoutData = {
     body?: never;
+    headers: {
+        Origin: string;
+    };
     path?: never;
     query?: never;
     url: '/api/auth/logout';
 };
 
+export type LogoutErrors = {
+    /**
+     * BAD_REQUEST
+     */
+    400: ErrorResponse;
+    /**
+     * Нет токена доступа или он недействителен
+     */
+    401: ErrorResponse;
+    /**
+     * ORIGIN_NOT_ALLOWED
+     */
+    403: ErrorResponse;
+    /**
+     * PAYLOAD_TOO_LARGE
+     */
+    413: ErrorResponse;
+    /**
+     * UNSUPPORTED_MEDIA_TYPE
+     */
+    415: ErrorResponse;
+    /**
+     * Запрос не прошёл валидацию; details — результат z.flattenError()
+     */
+    422: ErrorResponse;
+    /**
+     * Непредвиденная ошибка сервера
+     */
+    500: ErrorResponse;
+    /**
+     * Хранилище или база данных недоступны
+     */
+    503: ErrorResponse;
+};
+
+export type LogoutError = LogoutErrors[keyof LogoutErrors];
+
 export type LogoutResponses = {
     /**
-     * Cookie очищена
+     * Сессия отозвана, cookie очищена
      */
     204: void;
 };

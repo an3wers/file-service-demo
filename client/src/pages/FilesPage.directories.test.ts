@@ -49,7 +49,11 @@ beforeEach(() => {
   startSession({
     accessToken: "token",
     expiresIn: 3600,
-    user: { login: "operator" },
+    user: {
+      id: "00000000-0000-4000-8000-000000000001",
+      name: "operator",
+      email: "operator@example.com",
+    },
   });
 });
 

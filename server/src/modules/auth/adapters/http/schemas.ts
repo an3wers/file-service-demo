@@ -1,18 +1,14 @@
 import { z } from "zod";
 
-export const loginBodySchema = z.object({
-  login: z.string().min(1).max(255),
-  password: z.string().min(1).max(1024),
-});
-
 export const sessionResponseSchema = z
   .object({
     accessToken: z.string(),
     expiresIn: z
       .number()
       .int()
+      .positive()
       .meta({ description: "Сколько секунд живёт токен доступа" }),
-    user: z.object({ login: z.string() }),
+    user: z.object({ id: z.uuid(), name: z.string(), email: z.email() }),
   })
   .meta({ id: "AuthSession" });
 
@@ -50,3 +46,21 @@ export const registrationResponseSchema = z
     retryAfterSeconds: z.number().int().nonnegative(),
   })
   .meta({ id: "RegistrationResult" });
+
+export const loginBodySchema = z.object({
+  email: registrationEmailSchema,
+  password: z.string().min(1).max(1024),
+});
+export const loginVerifySchema = z.object({
+  attemptToken: z.string().min(1).max(256),
+  code: z.string().regex(/^[0-9]{6}$/, "Введите шесть цифр"),
+});
+export const loginAttemptSchema = z
+  .object({
+    attemptToken: z.string(),
+    attemptExpiresAt: z.iso.datetime(),
+    codeExpiresAt: z.iso.datetime(),
+    resendAvailableAt: z.iso.datetime(),
+    deliveryStatus: z.enum(["accepted", "unconfirmed"]),
+  })
+  .meta({ id: "LoginAttempt" });

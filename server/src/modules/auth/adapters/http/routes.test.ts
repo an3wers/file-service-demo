@@ -1,268 +1,393 @@
 import type { AddressInfo } from "node:net";
 import type { Server } from "node:http";
 import { Router } from "express";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, expect, it } from "vitest";
 import { createApp } from "../../../../app.js";
-import { ERROR_CODES } from "../../../../errors.js";
 import {
-  ACCESS_TTL_SECONDS,
-  LOGIN,
+  EMAIL,
   PASSWORD,
-  REFRESH_TTL_SECONDS,
   createAuthHarness,
 } from "../../testing/auth.harness.js";
+import type { SessionsModule } from "../../application/sessions.js";
 import { createAuthRouter, createRequireAuth } from "./routes.js";
 import { mapAuthError } from "./error-map.js";
 
-let server: Server | undefined;
-
-async function start(options: { cookieSecure?: boolean } = {}) {
+const servers: Server[] = [];
+afterEach(async () => {
+  await Promise.all(
+    servers
+      .splice(0)
+      .map(
+        (server) =>
+          new Promise<void>((resolve) => server.close(() => resolve())),
+      ),
+  );
+});
+async function start(
+  options: {
+    cookieSecure?: boolean;
+    sessions?: (h: ReturnType<typeof createAuthHarness>) => SessionsModule;
+  } = {},
+) {
   const auth = createAuthHarness();
-
-  await auth.sync();
-
-  const filesRouter = Router().get("/", (_req, res) => {
-    res.json({ items: [] });
-  });
+  await auth.seed();
+  const sessions = options.sessions?.(auth) ?? auth.sessions;
   const app = createApp({
     healthRouter: Router(),
-    authRouter: createAuthRouter(auth.sessions, {
-      cookieSecure: options.cookieSecure ?? false,
+    authRouter: createAuthRouter(sessions, {
+      cookieSecure: options.cookieSecure ?? true,
+      allowedOrigins: ["https://files.example.com"],
     }),
-    requireAuth: createRequireAuth(auth.sessions),
-    filesRouter,
+    requireAuth: createRequireAuth(sessions),
+    filesRouter: Router().get("/", (_req, res) => res.json({ items: [] })),
     directoriesRouter: Router(),
     corsOrigin: [],
     errorMappers: [mapAuthError],
   });
-
-  server = await new Promise<Server>((resolve) => {
+  const server = await new Promise<Server>((resolve) => {
     const listening = app.listen(0, () => resolve(listening));
   });
-
-  return {
-    auth,
-    base: `http://127.0.0.1:${(server.address() as AddressInfo).port}`,
+  servers.push(server);
+  const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+  const post = (path: string, body?: unknown, cookie?: string) =>
+    fetch(`${base}/api/auth/${path}`, {
+      method: "POST",
+      headers: {
+        Origin: "https://files.example.com",
+        ...(body === undefined ? {} : { "Content-Type": "application/json" }),
+        ...(cookie ? { Cookie: cookie } : {}),
+      },
+      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+    });
+  const login = (email = EMAIL, password = PASSWORD) =>
+    post("login", { email, password });
+  const verify = (attemptToken: string, code = auth.code()) =>
+    post("login/verify", { attemptToken, code });
+  const enter = async () => {
+    const response = await login();
+    expect(response.status).toBe(200);
+    return verify((await response.json()).attemptToken);
   };
+  const files = (token?: string) =>
+    fetch(`${base}/api/files`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    });
+  return { auth, post, login, verify, enter, base, files };
 }
+const cookieOf = (response: Response) =>
+  response.headers.getSetCookie()[0]?.split(";")[0] ?? "";
+const errorOf = async (response: Response) => (await response.json()).error;
 
-afterEach(async () => {
-  await new Promise<void>((resolve) =>
-    server ? server.close(() => resolve()) : resolve(),
+it("после пароля создаёт попытку без сессии и cookie, только код открывает доступ к файлам", async () => {
+  const h = await start();
+  const response = await h.login(" USER@Example.com ");
+  expect(response.status).toBe(200);
+  const attempt = await response.json();
+  expect(attempt).toEqual({
+    attemptToken: expect.stringMatching(/^[\w-]{43}$/),
+    attemptExpiresAt: "2026-01-01T00:15:00.000Z",
+    codeExpiresAt: "2026-01-01T00:05:00.000Z",
+    resendAvailableAt: "2026-01-01T00:01:00.000Z",
+    deliveryStatus: "accepted",
+  });
+  expect(response.headers.getSetCookie()).toEqual([]);
+  expect(response.headers.get("cache-control")).toBe("no-store");
+  expect((await h.files()).status).toBe(401);
+  expect((await h.post("refresh")).status).toBe(401);
+  const verified = await h.verify(attempt.attemptToken);
+  expect(verified.status).toBe(200);
+  const session = await verified.json();
+  expect(session).toEqual({
+    accessToken: expect.any(String),
+    expiresIn: 900,
+    user: {
+      id: "00000000-0000-4000-8000-000000000001",
+      name: "Имя",
+      email: EMAIL,
+    },
+  });
+  const cookie = verified.headers.getSetCookie()[0]!;
+  for (const attribute of [
+    "HttpOnly",
+    "Secure",
+    "SameSite=Strict",
+    "Path=/api/auth",
+    "Max-Age=604800",
+  ])
+    expect(cookie).toContain(attribute);
+  expect(cookie).not.toContain("Domain=");
+  expect((await h.files(session.accessToken)).status).toBe(200);
+  expect((await h.verify(attempt.attemptToken)).status).toBe(410);
+  expect((await h.post("refresh", undefined, cookieOf(verified))).status).toBe(
+    200,
   );
-  server = undefined;
 });
 
-function login(
-  base: string,
-  body: unknown = { login: LOGIN, password: PASSWORD },
-) {
-  return fetch(`${base}/api/auth/login`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-}
-
-function refresh(base: string, cookie?: string) {
-  return fetch(`${base}/api/auth/refresh`, {
-    method: "POST",
-    headers: cookie ? { Cookie: cookie } : {},
-  });
-}
-
-function refreshCookie(response: Response): string {
-  const header = response.headers
-    .getSetCookie()
-    .find((value) => value.startsWith("refresh_token="));
-
-  return header?.split(";")[0] ?? "";
-}
-
-function listFiles(base: string, authorization?: string) {
-  return fetch(`${base}/api/files`, {
-    headers: authorization ? { Authorization: authorization } : {},
-  });
-}
-
-async function errorCode(response: Response): Promise<string> {
-  return ((await response.json()) as { error: { code: string } }).error.code;
-}
-
-async function accessTokenOf(base: string): Promise<string> {
-  return ((await (await login(base)).json()) as { accessToken: string })
-    .accessToken;
-}
-
-describe("POST /api/auth/login", () => {
-  it("отдаёт токен доступа и кладёт токен обновления в httpOnly-cookie", async () => {
-    const { base } = await start();
-
-    const response = await login(base);
-    const body = await response.json();
-    const [cookie] = response.headers.getSetCookie();
-
-    expect(response.status).toBe(200);
-    expect(body).toEqual({
-      accessToken: expect.any(String),
-      expiresIn: ACCESS_TTL_SECONDS,
-      user: { login: LOGIN },
-    });
-    expect(cookie).toMatch(/^refresh_token=[^;]+;/);
-    expect(cookie).toContain(`Max-Age=${REFRESH_TTL_SECONDS}`);
-    expect(cookie).toContain("Path=/api/auth");
-    expect(cookie).toContain("HttpOnly");
-    expect(cookie).toContain("SameSite=Strict");
-    expect(cookie).not.toContain("Secure");
-  });
-
-  it("ставит Secure у cookie, когда это включено в конфигурации", async () => {
-    const { base } = await start({ cookieSecure: true });
-
-    const [cookie] = (await login(base)).headers.getSetCookie();
-
-    expect(cookie).toContain("Secure");
-  });
-
-  it("отвечает одинаковым 401 INVALID_CREDENTIALS на неверный логин и неверный пароль", async () => {
-    const { base } = await start();
-
-    const wrongLogin = await login(base, {
-      login: "stranger",
-      password: PASSWORD,
-    });
-    const wrongPassword = await login(base, {
-      login: LOGIN,
-      password: "wrong password",
-    });
-
-    expect(wrongLogin.status).toBe(401);
-    expect(wrongPassword.status).toBe(401);
-
-    const [loginBody, passwordBody] = await Promise.all([
-      wrongLogin.json(),
-      wrongPassword.json(),
-    ]);
-
-    expect(loginBody.error.code).toBe(ERROR_CODES.INVALID_CREDENTIALS);
-    expect(passwordBody.error.code).toBe(ERROR_CODES.INVALID_CREDENTIALS);
-    expect(loginBody.error.message).toBe(passwordBody.error.message);
-    expect(wrongLogin.headers.getSetCookie()).toEqual([]);
-  });
+it("неизвестный email и неправильный пароль одинаковы; неактивность видна только после правильного пароля", async () => {
+  const h = await start();
+  const results = [];
+  for (const [email, password] of [
+    ["missing@example.com", PASSWORD],
+    [EMAIL, "wrong password"],
+  ]) {
+    const response = await h.login(email, password);
+    expect(response.status).toBe(401);
+    const error = await errorOf(response);
+    results.push({ code: error.code, message: error.message });
+  }
+  expect(results[0]).toEqual(results[1]);
+  await h.auth.seed("inactive");
+  expect((await h.login(EMAIL, "wrong password")).status).toBe(401);
+  const inactive = await h.login();
+  expect(inactive.status).toBe(403);
+  expect((await errorOf(inactive)).code).toBe("EMAIL_NOT_VERIFIED");
+  expect(h.auth.sendEmail).not.toHaveBeenCalled();
+  expect(
+    (await h.post("login", { login: "operator", password: PASSWORD })).status,
+  ).toBe(422);
 });
 
-describe("POST /api/auth/refresh", () => {
-  it("меняет токен обновления из cookie на новую пару и новую cookie", async () => {
-    const { auth, base } = await start();
-    const first = refreshCookie(await login(base));
-
-    auth.clock.advance(1);
-    const response = await refresh(base, first);
-    const second = refreshCookie(response);
-
-    expect(response.status).toBe(200);
-    expect(await response.json()).toMatchObject({
-      user: { login: LOGIN },
-      expiresIn: ACCESS_TTL_SECONDS,
-    });
-    expect(second).not.toBe("");
-    expect(second).not.toBe(first);
-    expect((await refresh(base, second)).status).toBe(200);
-  });
-
-  it("отвечает 401 SESSION_EXPIRED без cookie", async () => {
-    const { base } = await start();
-
-    const response = await refresh(base);
-
-    expect(response.status).toBe(401);
-    expect(await errorCode(response)).toBe(ERROR_CODES.SESSION_EXPIRED);
-  });
-
-  it("отвечает 401 SESSION_EXPIRED и стирает cookie после отзыва сессий", async () => {
-    const { auth, base } = await start();
-    const cookie = refreshCookie(await login(base));
-
-    await auth.sync({ password: "a brand new password" });
-    const response = await refresh(base, cookie);
-
-    expect(response.status).toBe(401);
-    expect(await errorCode(response)).toBe(ERROR_CODES.SESSION_EXPIRED);
-    expect(response.headers.getSetCookie()[0]).toMatch(
-      /^refresh_token=;.*Expires=Thu, 01 Jan 1970/,
+it("пять неправильных кодов завершают попытку, ошибка формата не расходует проверки", async () => {
+  const h = await start();
+  const { attemptToken } = await (await h.login()).json();
+  for (const code of ["12345", "１２３４５６", " 123456", 123456])
+    expect((await h.post("login/verify", { attemptToken, code })).status).toBe(
+      422,
     );
-  });
+  const wrong = h.auth.code() === "000000" ? "999999" : "000000";
+  for (let remainingAttempts = 4; remainingAttempts >= 0; remainingAttempts--) {
+    const response = await h.verify(attemptToken, wrong);
+    expect(response.status).toBe(400);
+    expect(await errorOf(response)).toMatchObject({
+      code: "LOGIN_CODE_INVALID",
+      details: { remainingAttempts },
+    });
+  }
+  expect((await h.verify(attemptToken)).status).toBe(410);
 });
 
-describe("POST /api/auth/logout", () => {
-  it("отвечает 204 и очищает cookie, в том числе без неё", async () => {
-    const { base } = await start();
+it("проверяет код и попытку на точной границе сроков", async () => {
+  const h = await start();
+  const { attemptToken } = await (await h.login()).json();
+  h.auth.clock.advance(300000 / 3600000);
+  const expired = await h.verify(attemptToken);
+  expect(expired.status).toBe(400);
+  expect((await errorOf(expired)).code).toBe("LOGIN_CODE_EXPIRED");
+  h.auth.clock.advance(600000 / 3600000);
+  expect((await h.verify(attemptToken)).status).toBe(410);
+  expect((await h.verify("unknown", "123456")).status).toBe(410);
+});
 
-    const withCookie: Record<string, string>[] = [
-      { Cookie: refreshCookie(await login(base)) },
-      {},
-    ];
+it("попытки независимы и секреты разных назначений не заменяют друг друга", async () => {
+  const h = await start();
+  const first = await (await h.login()).json();
+  const oldCode = h.auth.code();
+  h.auth.clock.advance(1 / 60);
+  const second = await (await h.login()).json();
+  const secondCode = h.auth.code();
+  expect(first.attemptToken).not.toBe(second.attemptToken);
+  if (oldCode !== secondCode)
+    expect((await h.verify(second.attemptToken, oldCode)).status).toBe(400);
+  const signedIn = await h.verify(first.attemptToken, oldCode);
+  expect(signedIn.status).toBe(200);
+  expect((await h.verify(second.attemptToken, secondCode)).status).toBe(200);
+  expect(
+    (await h.post("refresh", undefined, `refresh_token=${first.attemptToken}`))
+      .status,
+  ).toBe(401);
+  expect(
+    (await h.files(cookieOf(signedIn).slice("refresh_token=".length))).status,
+  ).toBe(401);
+});
 
-    for (const headers of withCookie) {
-      const response = await fetch(`${base}/api/auth/logout`, {
-        method: "POST",
-        headers,
-      });
-      const [cookie] = response.headers.getSetCookie();
+it("сбой SMTP сохраняет попытку; сбой записи не отправляет письмо и не раскрывает ошибку", async () => {
+  const h = await start();
+  h.auth.sendEmail.mockRejectedValueOnce(
+    new Error("private@example.com secret"),
+  );
+  const response = await h.login();
+  expect(response.status).toBe(200);
+  const attempt = await response.json();
+  expect(attempt.deliveryStatus).toBe("unconfirmed");
+  expect((await h.verify(attempt.attemptToken)).status).toBe(200);
+  const broken = await start({
+    sessions: (a) =>
+      a.withStore({
+        ...a.store,
+        saveAttempt: async () => {
+          throw new Error("SQL private secret");
+        },
+      }),
+  });
+  const failed = await broken.login();
+  expect(failed.status).toBe(503);
+  expect(await failed.text()).not.toContain("private");
+  expect(broken.auth.sendEmail).not.toHaveBeenCalled();
+});
 
-      expect(response.status).toBe(204);
-      expect(cookie).toMatch(/^refresh_token=;/);
-      expect(cookie).toContain("Path=/api/auth");
-      expect(cookie).toContain("Expires=Thu, 01 Jan 1970");
+it("квота писем возвращает 429 без новой попытки, а первый шаг ограничен отдельно", async () => {
+  const h = await start();
+  const first = await (await h.login()).json();
+  const limited = await h.login();
+  expect(limited.status).toBe(429);
+  expect(limited.headers.get("retry-after")).toBe("60");
+  expect(h.auth.sendEmail).toHaveBeenCalledTimes(1);
+  expect((await h.verify(first.attemptToken)).status).toBe(200);
+  for (let i = 0; i < 8; i++) await h.login(EMAIL, "wrong");
+  const denied = await h.login();
+  expect(denied.status).toBe(429);
+  expect(denied.headers.get("retry-after")).toBe("900");
+});
+
+it("параллельные проверки создают одну сессию, потерянный ответ не разрешает повторное погашение", async () => {
+  const h = await start();
+  const { attemptToken } = await (await h.login()).json();
+  const responses = await Promise.all(
+    Array.from({ length: 10 }, () => h.verify(attemptToken)),
+  );
+  expect(responses.filter((response) => response.status === 200)).toHaveLength(
+    1,
+  );
+  expect(responses.filter((response) => response.status === 410)).toHaveLength(
+    9,
+  );
+});
+
+it("продление сохраняет refresh-токен и сдвигает семь дней дольше месяца; выход отзывает только текущую сессию", async () => {
+  const h = await start();
+  const first = await h.enter();
+  const cookie = cookieOf(first);
+  const access = (await first.json()).accessToken;
+  h.auth.clock.advance(1 / 60);
+  const other = cookieOf(await h.enter());
+  for (let i = 0; i < 6; i++) {
+    h.auth.clock.advance(6 * 24);
+    const results = await Promise.all(
+      Array.from({ length: 4 }, () => h.post("refresh", undefined, cookie)),
+    );
+    for (const response of results) {
+      expect(response.status).toBe(200);
+      expect(cookieOf(response)).toBe(cookie);
     }
-  });
+  }
+  expect((await h.files(access)).status).toBe(401);
+  const logout = await h.post("logout", undefined, cookie);
+  expect(logout.status).toBe(204);
+  expect(cookieOf(logout)).toBe("refresh_token=");
+  expect((await h.post("refresh", undefined, cookie)).status).toBe(401);
+  expect((await h.post("logout", undefined, cookie)).status).toBe(204);
+  expect((await h.post("logout")).status).toBe(204);
+  expect((await h.post("refresh", undefined, other)).status).toBe(401);
 });
 
-describe("requireAuth", () => {
-  it("пускает запрос с действующим токеном доступа", async () => {
-    const { base } = await start();
-    const token = await accessTokenOf(base);
+it("выход сохраняет доступ JWT до 15 минут и не отзывает другой браузер", async () => {
+  const h = await start({ cookieSecure: false });
+  const first = await h.enter();
+  const cookie = cookieOf(first);
+  const access = (await first.json()).accessToken;
+  h.auth.clock.advance(1 / 60);
+  const other = cookieOf(await h.enter());
+  expect(first.headers.getSetCookie()[0]).not.toContain("Secure");
+  await h.post("logout", undefined, cookie);
+  expect((await h.post("refresh", undefined, other)).status).toBe(200);
+  expect((await h.files(access)).status).toBe(200);
+  h.auth.clock.advance(14 / 60);
+  expect((await h.files(access)).status).toBe(401);
+});
 
-    expect((await listFiles(base, `Bearer ${token}`)).status).toBe(200);
+it("истёкшая сессия не восстанавливается; временный сбой refresh и logout сохраняет cookie", async () => {
+  const h = await start();
+  const cookie = cookieOf(await h.enter());
+  h.auth.clock.advance(7 * 24);
+  const expired = await h.post("refresh", undefined, cookie);
+  expect(expired.status).toBe(401);
+  expect(cookieOf(expired)).toBe("refresh_token=");
+  const broken = await start({
+    sessions: (a) =>
+      a.withStore({
+        ...a.store,
+        refresh: async () => {
+          throw new Error("secret");
+        },
+        revoke: async () => {
+          throw new Error("secret");
+        },
+      }),
   });
+  for (const path of ["refresh", "logout"]) {
+    const failed = await broken.post(path, undefined, "refresh_token=unknown");
+    expect(failed.status).toBe(503);
+    expect(failed.headers.getSetCookie()).toEqual([]);
+  }
+});
 
-  it("отвечает 401 UNAUTHORIZED без заголовка Authorization", async () => {
-    const { base } = await start();
+it("все маршруты требуют разрешённый Origin и запрещают кэширование", async () => {
+  const h = await start();
+  for (const path of ["login", "login/verify", "refresh", "logout"]) {
+    for (const origin of [null, "null", "https://foreign.example.com"]) {
+      const response = await fetch(`${h.base}/api/auth/${path}`, {
+        method: "POST",
+        headers: origin ? { Origin: origin } : {},
+      });
+      expect(response.status).toBe(403);
+      expect((await errorOf(response)).code).toBe("ORIGIN_NOT_ALLOWED");
+      expect(response.headers.get("cache-control")).toBe("no-store");
+    }
+  }
+});
 
-    const response = await listFiles(base);
+it("IP-ограничение проверок считает неизвестные попытки, испорченные и слишком большие тела и игнорирует поддельный proxy", async () => {
+  const h = await start();
+  for (let index = 0; index < 100; index++) {
+    const response = await fetch(`${h.base}/api/auth/LOGIN/verify/`, {
+      method: "POST",
+      headers: {
+        Origin: "https://files.example.com",
+        "Content-Type": "application/json",
+        "X-Forwarded-For": `192.0.2.${index}`,
+      },
+      body:
+        index % 2
+          ? "{"
+          : JSON.stringify({ attemptToken: "unknown", code: "123456" }),
+    });
+    expect([400, 410]).toContain(response.status);
+  }
+  const response = await h.verify("unknown", "123456");
+  expect(response.status).toBe(429);
+  expect(response.headers.get("retry-after")).toBe("900");
+  h.auth.clock.advance(900000 / 3600000);
+  expect((await h.verify("unknown", "123456")).status).toBe(410);
+});
 
-    expect(response.status).toBe(401);
-    expect(await errorCode(response)).toBe(ERROR_CODES.UNAUTHORIZED);
-  });
+it("HTTP-ошибки формата имеют общие безопасные ответы", async () => {
+  const h = await start();
+  for (const path of ["login", "login/verify", "refresh", "logout"]) {
+    for (const [body, contentType, status] of [
+      ["{secret", "application/json", 400],
+      ["secret", "text/plain", 415],
+      [JSON.stringify({ secret: "x".repeat(17000) }), "application/json", 413],
+    ] as const) {
+      const response = await fetch(`${h.base}/api/auth/${path}`, {
+        method: "POST",
+        headers: {
+          Origin: "https://files.example.com",
+          "Content-Type": contentType,
+        },
+        body,
+      });
+      expect(response.status).toBe(status);
+      expect(await response.text()).not.toContain("secret");
+    }
+  }
+});
 
-  it("отвечает 401 UNAUTHORIZED на просроченный токен доступа", async () => {
-    const { auth, base } = await start();
-    const token = await accessTokenOf(base);
-
-    auth.clock.advance(1);
-    const response = await listFiles(base, `Bearer ${token}`);
-
-    expect(response.status).toBe(401);
-    expect(await errorCode(response)).toBe(ERROR_CODES.UNAUTHORIZED);
-  });
-
-  it("отвечает 401 UNAUTHORIZED на токен обновления вместо токена доступа", async () => {
-    const { base } = await start();
-    const refreshToken = refreshCookie(await login(base)).replace(
-      "refresh_token=",
-      "",
-    );
-
-    const response = await listFiles(base, `Bearer ${refreshToken}`);
-
-    expect(response.status).toBe(401);
-    expect(await errorCode(response)).toBe(ERROR_CODES.UNAUTHORIZED);
-  });
-
-  it("отвечает 401 UNAUTHORIZED на схему, отличную от Bearer", async () => {
-    const { base } = await start();
-    const token = await accessTokenOf(base);
-
-    expect((await listFiles(base, `Basic ${token}`)).status).toBe(401);
-  });
+it("ошибки формата учитываются общим лимитом пользователя без расхода пяти кодов", async () => {
+  const h = await start();
+  const { attemptToken } = await (await h.login()).json();
+  for (let index = 0; index < 20; index++)
+    expect((await h.verify(attemptToken, "123")).status).toBe(422);
+  const response = await h.verify(attemptToken);
+  expect(response.status).toBe(429);
+  expect((await errorOf(response)).code).toBe("RATE_LIMITED");
 });

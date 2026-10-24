@@ -42,7 +42,11 @@ function login(): void {
   startSession({
     accessToken: "token",
     expiresIn: 3600,
-    user: { login: "operator" },
+    user: {
+      id: "00000000-0000-4000-8000-000000000001",
+      name: "operator",
+      email: "operator@example.com",
+    },
   });
 }
 function launch(): void {
@@ -281,7 +285,11 @@ describe("восстановление после перезагрузки", () 
     session.startSession({
       accessToken: "token",
       expiresIn: 3600,
-      user: { login: "operator" },
+      user: {
+        id: "00000000-0000-4000-8000-000000000001",
+        name: "operator",
+        email: "operator@example.com",
+      },
     });
     await vi.advanceTimersByTimeAsync(0);
     await flushPromises();
@@ -309,7 +317,11 @@ describe("восстановление после перезагрузки", () 
     session.startSession({
       accessToken: "token",
       expiresIn: 3600,
-      user: { login: "operator" },
+      user: {
+        id: "00000000-0000-4000-8000-000000000001",
+        name: "operator",
+        email: "operator@example.com",
+      },
     });
     await vi.advanceTimersByTimeAsync(0);
     const row = reloaded.rows.value[0]!;
@@ -345,7 +357,11 @@ describe("восстановление после перезагрузки", () 
     session.startSession({
       accessToken: "token",
       expiresIn: 3600,
-      user: { login: "operator" },
+      user: {
+        id: "00000000-0000-4000-8000-000000000001",
+        name: "operator",
+        email: "operator@example.com",
+      },
     });
     await vi.advanceTimersByTimeAsync(0);
     await flushPromises();

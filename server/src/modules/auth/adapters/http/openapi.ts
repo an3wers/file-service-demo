@@ -4,6 +4,8 @@ import { apiErrors, errorResponse } from "../../../../http-contract.js";
 import { REFRESH_COOKIE, REFRESH_COOKIE_PATH } from "./cookie.js";
 import {
   loginBodySchema,
+  loginVerifySchema,
+  loginAttemptSchema,
   sessionResponseSchema,
   registrationBodySchema,
   registrationResponseSchema,
@@ -16,7 +18,7 @@ const json = <T>(schema: T) => ({ "application/json": { schema } });
 
 const setsRefreshCookie = z.object({
   "Set-Cookie": z.string().meta({
-    description: `${REFRESH_COOKIE}: токен обновления; HttpOnly, SameSite=Strict, Path=${REFRESH_COOKIE_PATH}`,
+    description: `${REFRESH_COOKIE}: токен обновления; HttpOnly, Secure вне localhost, SameSite=Strict, Path=${REFRESH_COOKIE_PATH}`,
   }),
 });
 
@@ -121,20 +123,67 @@ export const authPaths: ZodOpenApiPathsObject = {
   "/login": {
     post: {
       tags: ["auth"],
-      summary: "Вход",
-      description:
-        "Меняет логин и пароль пользователя из окружения на токен доступа (в теле ответа) " +
-        "и токен обновления (в httpOnly-cookie).",
+      summary: "Пароль и отправка кода входа",
       operationId: "login",
       security: [],
+      description:
+        "Создаёт независимую попытку на 15 минут и код на пять минут без сессии и cookie. Одна SMTP-попытка; accepted не гарантирует доставку, unconfirmed сохраняет возможность ввода. Первый шаг: 10 запросов за 15 минут по email, 50 с IP. Письма: одно в минуту и пять в час по email и назначению, 20 в час с IP совместно с другими письмами доступа.",
+      requestParams: { header: z.object({ Origin: z.string() }) },
       requestBody: { required: true, content: json(loginBodySchema) },
       responses: {
         200: {
-          description: "Вход выполнен",
+          description: "Попытка создана; даты UTC ISO 8601",
+          headers: z.object({
+            "Cache-Control": z.literal("no-store"),
+            Date: z.string(),
+          }),
+          content: json(loginAttemptSchema),
+        },
+        ...apiErrors({
+          400: "BAD_REQUEST",
+          401: "INVALID_CREDENTIALS",
+          403: "EMAIL_NOT_VERIFIED после правильного пароля или ORIGIN_NOT_ALLOWED",
+          413: "PAYLOAD_TOO_LARGE",
+          415: "UNSUPPORTED_MEDIA_TYPE",
+          503: "SERVICE_UNAVAILABLE",
+        }),
+        429: {
+          ...errorResponse(
+            "RATE_LIMITED: details.retryAfterSeconds; без новой попытки и письма",
+          ),
+          headers: z.object({ "Retry-After": z.string() }),
+        },
+      },
+    },
+  },
+  "/login/verify": {
+    post: {
+      tags: ["auth"],
+      summary: "Проверка кода входа",
+      operationId: "verifyLogin",
+      security: [],
+      description:
+        "Атомарно погашает попытку и создаёт одну серверную сессию. Пятая неверная проверка завершает попытку, ошибка формата не расходует пять проверок. Не более 20 проверок за 15 минут по пользователю и 100 с IP, включая неизвестные попытки и некорректные тела. После потерянного ответа cookie позволяет refresh, иначе нужен новый вход.",
+      requestParams: { header: z.object({ Origin: z.string() }) },
+      requestBody: { required: true, content: json(loginVerifySchema) },
+      responses: {
+        200: {
+          description: "Сессия создана",
           headers: setsRefreshCookie,
           content: json(sessionResponseSchema),
         },
-        ...apiErrors({ 401: "INVALID_CREDENTIALS: неверный логин или пароль" }),
+        ...apiErrors({
+          400: "LOGIN_CODE_INVALID: details.remainingAttempts; LOGIN_CODE_EXPIRED или BAD_REQUEST",
+          403: "ORIGIN_NOT_ALLOWED",
+          410: "LOGIN_ATTEMPT_INVALID",
+          413: "PAYLOAD_TOO_LARGE",
+          415: "UNSUPPORTED_MEDIA_TYPE",
+          503: "SERVICE_UNAVAILABLE",
+        }),
+        429: {
+          ...errorResponse("RATE_LIMITED: details.retryAfterSeconds"),
+          headers: z.object({ "Retry-After": z.string() }),
+        },
       },
     },
   },
@@ -142,12 +191,14 @@ export const authPaths: ZodOpenApiPathsObject = {
     post: {
       tags: ["auth"],
       summary: "Продление",
-      description:
-        "Меняет токен обновления из cookie на новую пару токенов; новый токен обновления " +
-        "приходит в cookie.",
       operationId: "refreshSession",
       security: [],
-      requestParams: { cookie: refreshCookie },
+      description:
+        "Постоянный случайный токен обновления сохраняется. Каждое успешное продление заново отсчитывает семь дней, общего календарного предела нет. Параллельные и повторные запросы разрешены, отозванные и истёкшие сессии не восстанавливаются. 401 очищает cookie, временный 503 её сохраняет.",
+      requestParams: {
+        cookie: refreshCookie,
+        header: z.object({ Origin: z.string() }),
+      },
       responses: {
         200: {
           description: "Сессия продлена",
@@ -155,7 +206,12 @@ export const authPaths: ZodOpenApiPathsObject = {
           content: json(sessionResponseSchema),
         },
         ...apiErrors({
-          401: "SESSION_EXPIRED: cookie нет, токен недействителен или истёк, сессии отозваны",
+          400: "BAD_REQUEST",
+          401: "SESSION_EXPIRED",
+          403: "ORIGIN_NOT_ALLOWED",
+          413: "PAYLOAD_TOO_LARGE",
+          415: "UNSUPPORTED_MEDIA_TYPE",
+          503: "SERVICE_UNAVAILABLE",
         }),
       },
     },
@@ -164,13 +220,26 @@ export const authPaths: ZodOpenApiPathsObject = {
     post: {
       tags: ["auth"],
       summary: "Выход",
-      description:
-        "Очищает cookie токена обновления в этом браузере. Ничего не отзывает; повторный вызов " +
-        "не ошибка.",
       operationId: "logout",
       security: [],
+      description:
+        "Отзывает текущую серверную сессию и очищает cookie. Повтор без действующей сессии успешен. Другие браузеры сохраняют сессии. Выданный JWT сохраняет доступ до своего истечения, не более 15 минут.",
+      requestParams: {
+        cookie: refreshCookie,
+        header: z.object({ Origin: z.string() }),
+      },
       responses: {
-        204: { description: "Cookie очищена" },
+        204: {
+          description: "Сессия отозвана, cookie очищена",
+          headers: setsRefreshCookie,
+        },
+        ...apiErrors({
+          400: "BAD_REQUEST",
+          403: "ORIGIN_NOT_ALLOWED",
+          413: "PAYLOAD_TOO_LARGE",
+          415: "UNSUPPORTED_MEDIA_TYPE",
+          503: "SERVICE_UNAVAILABLE",
+        }),
       },
     },
   },

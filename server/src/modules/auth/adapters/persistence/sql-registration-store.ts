@@ -1,5 +1,7 @@
-import type { PoolClient } from "pg";
-import { pool } from "../../../../db/pool.js";
+import {
+  authTransaction as transaction,
+  consumeAuthLimit,
+} from "./auth-transaction.js";
 import { systemClock } from "../../domain/ports/clock.js";
 import type { Clock } from "../../domain/ports/clock.js";
 import type {
@@ -10,62 +12,6 @@ import type {
 export function createSqlRegistrationStore(
   clock: Clock = systemClock,
 ): RegistrationStore & MailEventCleanup {
-  async function transaction<T>(
-    deadline: Date,
-    action: (client: PoolClient) => Promise<T>,
-  ): Promise<T> {
-    const remaining = deadline.getTime() - Date.now();
-    if (remaining <= 0) throw new Error("Deadline exceeded");
-    let client: PoolClient | undefined;
-    let expired = false;
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const timeout = new Promise<never>((_resolve, reject) => {
-      timer = setTimeout(() => {
-        expired = true;
-        client?.release(true);
-        client = undefined;
-        reject(new Error("Deadline exceeded"));
-      }, remaining);
-    });
-    async function run() {
-      const connection = await pool.connect();
-      if (expired || Date.now() >= deadline.getTime()) {
-        connection.release();
-        throw new Error("Deadline exceeded");
-      }
-      client = connection;
-      try {
-        await connection.query("begin");
-        const remaining = deadline.getTime() - Date.now();
-        if (remaining <= 0) throw new Error("Deadline exceeded");
-        await connection.query(
-          "select set_config('statement_timeout', $1, true)",
-          [String(remaining)],
-        );
-        await connection.query("select set_config('lock_timeout', $1, true)", [
-          String(remaining),
-        ]);
-        const value = await action(connection);
-        if (Date.now() >= deadline.getTime())
-          throw new Error("Deadline exceeded");
-        await connection.query("commit");
-        if (Date.now() >= deadline.getTime())
-          throw new Error("Deadline exceeded");
-        return value;
-      } catch (error) {
-        if (!expired) await connection.query("rollback");
-        throw error;
-      } finally {
-        if (!expired) connection.release();
-        client = undefined;
-      }
-    }
-    try {
-      return await Promise.race([run(), timeout]);
-    } finally {
-      clearTimeout(timer);
-    }
-  }
   return {
     requestActivation: (email, tokenHash, expiresAt, deadline) =>
       transaction(deadline, async (client) => {
@@ -114,33 +60,9 @@ export function createSqlRegistrationStore(
           ).rowCount ?? 0,
       ),
     consume: (key, limits, now, deadline) =>
-      transaction(deadline, async (client) => {
-        await client.query(
-          "select pg_advisory_xact_lock(hashtextextended($1, 0))",
-          [key],
-        );
-        let retryMs = 0;
-        for (const limit of limits) {
-          const { rows } = await client.query<{ occurred_at: Date }>(
-            "select occurred_at from auth_mail_events where key = $1 and window_ms = $2 and occurred_at > $3 order by occurred_at",
-            [key, limit.windowMs, new Date(now.getTime() - limit.windowMs)],
-          );
-          if (rows.length >= limit.maximum) {
-            retryMs = Math.max(
-              retryMs,
-              rows[rows.length - limit.maximum]!.occurred_at.getTime() +
-                limit.windowMs -
-                now.getTime(),
-            );
-          } else {
-            await client.query(
-              "insert into auth_mail_events (key, window_ms, occurred_at) values ($1, $2, $3)",
-              [key, limit.windowMs, now],
-            );
-          }
-        }
-        return Math.ceil(retryMs / 1000);
-      }),
+      transaction(deadline, (client) =>
+        consumeAuthLimit(client, key, limits, now),
+      ),
     save: (record, deadline) =>
       transaction(deadline, async (client) => {
         await client.query(

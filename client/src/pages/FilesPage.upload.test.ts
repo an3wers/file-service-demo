@@ -68,11 +68,23 @@ async function setup(
           });
         return new Response(null, { status: 204 });
       }
-      if (url === "/api/auth/refresh" || url === "/api/auth/login")
+      if (url === "/api/auth/login")
+        return json({
+          attemptToken: "a".repeat(43),
+          attemptExpiresAt: new Date(Date.now() + 900000).toISOString(),
+          codeExpiresAt: new Date(Date.now() + 300000).toISOString(),
+          resendAvailableAt: new Date(Date.now() + 60000).toISOString(),
+          deliveryStatus: "accepted",
+        });
+      if (url === "/api/auth/refresh" || url === "/api/auth/login/verify")
         return json({
           accessToken: "token",
           expiresIn: 3600,
-          user: { login: "operator" },
+          user: {
+            id: "00000000-0000-4000-8000-000000000001",
+            name: "operator",
+            email: "operator@example.com",
+          },
         });
       if (url === "/api/files/presign-upload") {
         const body = JSON.parse(String(init?.body));
@@ -337,7 +349,11 @@ beforeEach(() => {
   startSession({
     accessToken: "token",
     expiresIn: 3600,
-    user: { login: "operator" },
+    user: {
+      id: "00000000-0000-4000-8000-000000000001",
+      name: "operator",
+      email: "operator@example.com",
+    },
   });
 });
 
@@ -349,9 +365,17 @@ async function launch(): Promise<void> {
   await flushPromises();
 }
 async function loginAgain(): Promise<void> {
-  await fireEvent.update(screen.getByLabelText("Логин"), "operator");
+  await fireEvent.update(
+    screen.getByLabelText("Email"),
+    "operator@example.com",
+  );
   await fireEvent.update(screen.getByLabelText("Пароль"), "password");
   await fireEvent.click(screen.getByRole("button", { name: "Войти" }));
+  await flushPromises();
+  await fireEvent.update(screen.getByLabelText("Код из письма"), "001234");
+  await fireEvent.click(
+    screen.getByRole("button", { name: "Подтвердить код" }),
+  );
   await flushPromises();
 }
 

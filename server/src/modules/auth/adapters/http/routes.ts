@@ -8,13 +8,13 @@ import {
   RegistrationUnavailableError,
   ActivationLinkInvalidError,
 } from "../../domain/registration-errors.js";
-import { validateBody } from "../../../../middleware/validate.js";
 import type { Session, SessionsModule } from "../../application/sessions.js";
 import { SessionExpiredError } from "../../domain/errors.js";
 import { mapAuthError } from "./error-map.js";
 import { REFRESH_COOKIE, readCookie, refreshCookieOptions } from "./cookie.js";
 import {
   loginBodySchema,
+  loginVerifySchema,
   registrationBodySchema,
   registrationEmailSchema,
   activationRequestSchema,
@@ -38,6 +38,7 @@ export function createAuthRouter(
   router.use(async (req, res, next) => {
     res.set("Cache-Control", "no-store");
     res.set("Referrer-Policy", "no-referrer");
+    res.set("Date", sessions.now().toUTCString());
     if (
       allowedOrigins &&
       (!req.get("origin") ||
@@ -75,10 +76,13 @@ export function createAuthRouter(
         "Ожидается application/json",
       );
     }
-    if (!registration || !res.locals.registrationDeadline)
+    if (!res.locals.registrationDeadline && !res.locals.authDeadline)
       return parseJson(req, res, next);
-    await registration.withinDeadline(
-      res.locals.registrationDeadline,
+    const withinDeadline = res.locals.registrationDeadline
+      ? registration!.withinDeadline
+      : sessions.withinDeadline;
+    await withinDeadline(
+      res.locals.registrationDeadline ?? res.locals.authDeadline,
       () =>
         new Promise<void>((resolve, reject) => {
           parseJson(req, res, (error) => (error ? reject(error) : resolve()));
@@ -154,9 +158,26 @@ export function createAuthRouter(
       res.json(response);
     },
   );
-  router.use(parseBody);
+  const prepareSession =
+    (verify = false): RequestHandler =>
+    async (req, res, next) => {
+      const until = sessions.deadline();
+      res.locals.authDeadline = until;
+      if (verify)
+        await sessions.consumeVerifyIp(
+          req.ip ?? req.socket.remoteAddress ?? "unknown",
+          until,
+        );
+      else
+        await sessions.consumeLoginIp(
+          req.ip ?? req.socket.remoteAddress ?? "unknown",
+          until,
+        );
+      next();
+    };
 
   function respond(res: Response, session: Session): void {
+    res.set("Date", sessions.now().toUTCString());
     res.cookie(REFRESH_COOKIE, session.refreshToken, {
       ...cookieOptions,
       maxAge: session.refreshExpiresIn * 1000,
@@ -171,15 +192,51 @@ export function createAuthRouter(
     res.json(body);
   }
 
-  router.post("/login", validateBody(loginBodySchema), async (req, res) => {
-    respond(res, await sessions.login(req.body.login, req.body.password));
+  router.post("/login", prepareSession(), parseBody, async (req, res) => {
+    const { email, password } = loginBodySchema.parse(req.body);
+    const attempt = await sessions.login(
+      email,
+      password,
+      req.ip ?? req.socket.remoteAddress ?? "unknown",
+      res.locals.authDeadline,
+    );
+    res.set("Date", sessions.now().toUTCString());
+    res.json(attempt);
   });
+  router.post(
+    "/login/verify",
+    prepareSession(true),
+    parseBody,
+    async (req, res) => {
+      const parsed = loginVerifySchema.safeParse(req.body);
+      if (!parsed.success) {
+        const token = loginVerifySchema
+          .pick({ attemptToken: true })
+          .safeParse(req.body);
+        if (token.success)
+          await sessions.verify(
+            token.data.attemptToken,
+            null,
+            res.locals.authDeadline,
+          );
+        throw parsed.error;
+      }
+      const { attemptToken, code } = parsed.data;
+      respond(
+        res,
+        await sessions.verify(attemptToken, code, res.locals.authDeadline),
+      );
+    },
+  );
 
-  router.post("/refresh", async (req, res) => {
+  router.post("/refresh", parseBody, async (req, res) => {
     try {
       respond(
         res,
-        await sessions.refresh(readCookie(req.get("cookie"), REFRESH_COOKIE)),
+        await sessions.refresh(
+          readCookie(req.get("cookie"), REFRESH_COOKIE),
+          sessions.deadline(),
+        ),
       );
     } catch (error) {
       if (error instanceof SessionExpiredError) {
@@ -190,12 +247,17 @@ export function createAuthRouter(
     }
   });
 
-  router.post("/logout", (_req, res) => {
+  router.post("/logout", parseBody, async (req, res) => {
+    await sessions.logout(
+      readCookie(req.get("cookie"), REFRESH_COOKIE),
+      sessions.deadline(),
+    );
     res.clearCookie(REFRESH_COOKIE, cookieOptions);
     res.status(204).end();
   });
 
   const sanitizeError: ErrorRequestHandler = (error, req, res, next) => {
+    res.set("Date", sessions.now().toUTCString());
     if (error instanceof ActivationLinkInvalidError)
       return next(
         new AppError(400, ERROR_CODES.ACTIVATION_LINK_INVALID, error.message),

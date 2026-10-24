@@ -49,7 +49,11 @@ it.each(["booting", "failed", "ready"] as const)(
       startSession({
         accessToken: "existing-user-token",
         expiresIn: 900,
-        user: { login: "other-user" },
+        user: {
+          id: "00000000-0000-4000-8000-000000000001",
+          name: "other-user",
+          email: "other-user@example.com",
+        },
       });
     sessionStorage.setItem("file-service-activation-token", "private-token");
     const router = createAppRouter({

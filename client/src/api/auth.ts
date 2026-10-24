@@ -1,5 +1,6 @@
 import type {
   AuthSession,
+  LoginAttempt,
   RegistrationResult,
   RegisterData,
   RequestActivationData,
@@ -8,12 +9,29 @@ import type {
 import { sendAuthRequest, sendRequest } from "./client";
 import { clearSession, startSession } from "./session";
 
-export async function login(login: string, password: string): Promise<void> {
+export function login(
+  email: string,
+  password: string,
+  signal?: AbortSignal,
+): Promise<LoginAttempt> {
+  return sendRequest<LoginAttempt>("/auth/login", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email, password }),
+    signal,
+  });
+}
+export async function verifyLogin(
+  attemptToken: string,
+  code: string,
+  signal?: AbortSignal,
+): Promise<void> {
   startSession(
-    await sendAuthRequest<AuthSession>("/auth/login", {
+    await sendAuthRequest<AuthSession>("/auth/login/verify", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ login, password }),
+      body: JSON.stringify({ attemptToken, code }),
+      signal,
     }),
   );
 }

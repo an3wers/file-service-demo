@@ -131,6 +131,11 @@ export function parseErrorBody(
  * Запросы идут по относительному пути через vite-прокси, поэтому CORS сервера
  * в игру не вступает ни в dev, ни в `vite preview`.
  */
+let serverClockOffset = 0;
+export function serverNow(): number {
+  return Date.now() + serverClockOffset;
+}
+
 export async function sendRequest<T>(
   path: string,
   init: RequestInit = {},
@@ -149,6 +154,9 @@ export async function sendRequest<T>(
 
     throw new ApiError(0, "NETWORK_ERROR", "Сервер недоступен");
   }
+
+  const serverDate = Date.parse(response.headers.get("Date") ?? "");
+  if (Number.isFinite(serverDate)) serverClockOffset = serverDate - Date.now();
 
   if (response.status === 204) {
     // Простое `undefined as T` не компилируется в строгом режиме.
@@ -172,7 +180,7 @@ export async function sendRequest<T>(
 let pendingAuthRequest: Promise<void> | null = null;
 
 export function sendAuthRequest<T>(
-  path: "/auth/login" | "/auth/logout" | "/auth/refresh",
+  path: "/auth/login/verify" | "/auth/logout" | "/auth/refresh",
   init: RequestInit,
 ): Promise<T> {
   const run = () => sendRequest<T>(path, init);

@@ -1,17 +1,36 @@
+import { createHash, createHmac, randomBytes, randomInt } from "node:crypto";
+import type { Notification } from "../../notification/index.js";
+import type { PasswordHasher } from "../domain/ports/password-hasher.js";
+import type { Tokens } from "../domain/ports/tokens.js";
+import type { SessionStore } from "../domain/ports/session-store.js";
+import type { Clock } from "../domain/ports/clock.js";
+import type { User } from "../domain/user.js";
 import {
   InvalidCredentialsError,
   SessionExpiredError,
+  EmailNotVerifiedError,
+  LoginAttemptInvalidError,
+  LoginCodeExpiredError,
+  LoginCodeInvalidError,
+  LoginCodeFormatError,
 } from "../domain/errors.js";
-import type { PasswordHasher } from "../domain/ports/password-hasher.js";
-import type { AccessClaims, Tokens } from "../domain/ports/tokens.js";
-import type { UserRowsForSessions } from "../domain/ports/user-rows.js";
-import type { User } from "../domain/user.js";
+import {
+  MailRateLimitedError,
+  RegistrationUnavailableError,
+} from "../domain/registration-errors.js";
+
+const REFRESH_TTL_SECONDS = 604800;
+const secretDigest = (purpose: string, value: string) =>
+  createHash("sha256").update(`${purpose}\0${value}`).digest("hex");
 
 export interface SessionsDeps {
-  users: UserRowsForSessions;
+  store: SessionStore;
   hasher: PasswordHasher;
   tokens: Tokens;
-  login: string;
+  notification: Notification;
+  clock: Clock;
+  codeSecret: string;
+  deadlineMs?: number;
 }
 
 export interface Session {
@@ -19,72 +38,194 @@ export interface Session {
   expiresIn: number;
   refreshToken: string;
   refreshExpiresIn: number;
-  user: { login: string };
-}
-
-export interface SessionsModule {
-  login(login: string, password: string): Promise<Session>;
-  refresh(refreshToken: string | undefined): Promise<Session>;
-  authenticate(accessToken: string): Promise<AccessClaims | null>;
+  user: { id: string; name: string; email: string };
 }
 
 export function createSessionsModule({
-  users,
+  store,
   hasher,
   tokens,
-  login: allowedLogin,
-}: SessionsDeps): SessionsModule {
-  async function issueSession(user: User): Promise<Session> {
-    const [access, refresh] = await Promise.all([
-      tokens.issueAccess(user.id),
-      tokens.issueRefresh(user.id, user.tokenVersion),
-    ]);
-
+  notification,
+  clock,
+  codeSecret,
+  deadlineMs = 15000,
+}: SessionsDeps) {
+  const deadline = () => new Date(Date.now() + deadlineMs);
+  const codeDigest = (attemptHash: string, code: string) =>
+    createHmac("sha256", codeSecret)
+      .update(`login-code\0${attemptHash}\0${code}`)
+      .digest("hex");
+  async function available<T>(run: () => Promise<T>): Promise<T> {
+    try {
+      return await run();
+    } catch {
+      throw new RegistrationUnavailableError();
+    }
+  }
+  async function withinDeadline<T>(
+    until: Date,
+    run: () => Promise<T>,
+  ): Promise<T> {
+    const remaining = until.getTime() - Date.now();
+    if (remaining <= 0) throw new RegistrationUnavailableError();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      return await Promise.race([
+        run(),
+        new Promise<never>((_resolve, reject) => {
+          timer = setTimeout(
+            () => reject(new RegistrationUnavailableError()),
+            remaining,
+          );
+        }),
+      ]);
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+  async function consume(key: string, maximum: number, until: Date) {
+    const retry = await available(() =>
+      store.consume(key, [{ windowMs: 900000, maximum }], until),
+    );
+    if (retry) throw new MailRateLimitedError(retry);
+  }
+  async function issueSession(
+    user: User,
+    refreshToken: string,
+  ): Promise<Session> {
+    const access = await available(() => tokens.issueAccess(user.id));
     return {
       accessToken: access.token,
       expiresIn: access.expiresIn,
-      refreshToken: refresh.token,
-      refreshExpiresIn: refresh.expiresIn,
-      user: { login: user.login },
+      refreshToken,
+      refreshExpiresIn: REFRESH_TTL_SECONDS,
+      user: { id: user.id, name: user.name, email: user.email },
     };
   }
-
   return {
-    async login(login, password) {
-      const user =
-        login === allowedLogin ? await users.findByLogin(login) : null;
-
-      if (!user || user.state !== "active") {
-        await hasher.hash(password);
-        throw new InvalidCredentialsError();
+    deadline,
+    withinDeadline,
+    now: () => clock.now(),
+    consumeLoginIp: (ip: string, until: Date) =>
+      consume(`login:ip:${secretDigest("ip", ip)}`, 50, until),
+    consumeVerifyIp: (ip: string, until: Date) =>
+      consume(`login:verify:ip:${secretDigest("ip", ip)}`, 100, until),
+    async login(email: string, password: string, ip: string, until: Date) {
+      await consume(`login:email:${secretDigest("email", email)}`, 10, until);
+      const user = await available(() => store.findByEmail(email, until));
+      const correct = user
+        ? await available(() => hasher.verify(password, user.passwordHash))
+        : (await available(() => hasher.hash(password)), false);
+      if (!correct || !user) throw new InvalidCredentialsError();
+      if (user.state !== "active") throw new EmailNotVerifiedError();
+      const attemptToken = randomBytes(32).toString("base64url");
+      const tokenHash = secretDigest("login-attempt", attemptToken);
+      const code = randomInt(1000000).toString().padStart(6, "0");
+      const now = clock.now().getTime();
+      const attempt = {
+        tokenHash,
+        userId: user.id,
+        passwordHash: user.passwordHash,
+        codeHash: codeDigest(tokenHash, code),
+        expiresAt: new Date(now + 900000),
+        codeExpiresAt: new Date(now + 300000),
+        resendAvailableAt: new Date(now + 60000),
+      };
+      const retry = await available(() =>
+        store.saveAttempt(
+          attempt,
+          {
+            email: `mail:login:${secretDigest("email", email)}`,
+            ip: `mail:ip:${createHash("sha256").update(ip).digest("hex")}`,
+          },
+          until,
+        ),
+      );
+      if (retry) throw new MailRateLimitedError(retry);
+      let deliveryStatus: "accepted" | "unconfirmed" = "unconfirmed";
+      const remaining = until.getTime() - Date.now();
+      if (remaining > 0) {
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), remaining);
+        try {
+          deliveryStatus = await Promise.race([
+            notification
+              .sendEmail(
+                {
+                  to: user.email,
+                  subject: "Код входа",
+                  text: `Код входа: ${code}\nКод действует пять минут.`,
+                },
+                { signal: controller.signal },
+              )
+              .then(() => "accepted" as const),
+            new Promise<"unconfirmed">((resolve) =>
+              controller.signal.addEventListener(
+                "abort",
+                () => resolve("unconfirmed"),
+                { once: true },
+              ),
+            ),
+          ]);
+        } catch {
+          deliveryStatus = "unconfirmed";
+        } finally {
+          clearTimeout(timer);
+        }
       }
-
-      if (!(await hasher.verify(password, user.passwordHash))) {
-        throw new InvalidCredentialsError();
-      }
-
-      return issueSession(user);
+      return {
+        attemptToken,
+        attemptExpiresAt: attempt.expiresAt.toISOString(),
+        codeExpiresAt: attempt.codeExpiresAt.toISOString(),
+        resendAvailableAt: attempt.resendAvailableAt.toISOString(),
+        deliveryStatus,
+      };
     },
-
-    async refresh(refreshToken) {
-      const claims = refreshToken
-        ? await tokens.verifyRefresh(refreshToken)
+    async verify(attemptToken: string, code: string | null, until: Date) {
+      const refreshToken = randomBytes(32).toString("base64url");
+      const tokenHash = secretDigest("login-attempt", attemptToken);
+      const result = await available(() =>
+        store.verify(
+          tokenHash,
+          code === null ? null : codeDigest(tokenHash, code),
+          {
+            tokenHash: secretDigest("refresh-session", refreshToken),
+            ttlSeconds: REFRESH_TTL_SECONDS,
+          },
+          until,
+        ),
+      );
+      if (result.status === "unavailable") throw new LoginAttemptInvalidError();
+      if (result.status === "format") throw new LoginCodeFormatError();
+      if (result.status === "expired") throw new LoginCodeExpiredError();
+      if (result.status === "invalid")
+        throw new LoginCodeInvalidError(result.remainingAttempts);
+      if (result.status === "limited")
+        throw new MailRateLimitedError(result.retryAfterSeconds);
+      if (result.status !== "verified")
+        throw new RegistrationUnavailableError();
+      return issueSession(result.user, refreshToken);
+    },
+    async refresh(refreshToken: string | undefined, until: Date) {
+      const user = refreshToken
+        ? await available(() =>
+            store.refresh(
+              secretDigest("refresh-session", refreshToken),
+              REFRESH_TTL_SECONDS,
+              until,
+            ),
+          )
         : null;
-      const user = claims ? await users.findById(claims.userId) : null;
-
-      if (
-        !claims ||
-        !user ||
-        user.state !== "active" ||
-        user.login !== allowedLogin ||
-        user.tokenVersion !== claims.version
-      ) {
-        throw new SessionExpiredError();
-      }
-
-      return issueSession(user);
+      if (!user || !refreshToken) throw new SessionExpiredError();
+      return issueSession(user, refreshToken);
     },
-
-    authenticate: (accessToken) => tokens.verifyAccess(accessToken),
+    async logout(refreshToken: string | undefined, until: Date) {
+      if (refreshToken)
+        await available(() =>
+          store.revoke(secretDigest("refresh-session", refreshToken), until),
+        );
+    },
+    authenticate: (accessToken: string) => tokens.verifyAccess(accessToken),
   };
 }
+export type SessionsModule = ReturnType<typeof createSessionsModule>;

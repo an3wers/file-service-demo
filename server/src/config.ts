@@ -12,25 +12,14 @@ const envSchema = z.object({
   LOG_LEVEL: z
     .enum(["fatal", "error", "warn", "info", "debug", "trace", "silent"])
     .default("info"),
-  LOGIN_USER_APP: z
-    .string()
-    .min(1, "LOGIN_USER_APP must not be empty")
-    .refine(
-      (value) => value === value.trim(),
-      "LOGIN_USER_APP must not start or end with whitespace",
-    ),
-  PASSWORD_USER_APP: z
-    .string()
-    .min(8, "PASSWORD_USER_APP must be at least 8 characters"),
   JWT_ACCESS_SECRET: z
     .string()
     .min(32, "JWT_ACCESS_SECRET must be at least 32 characters"),
-  JWT_REFRESH_SECRET: z
+  AUTH_CODE_SECRET: z
     .string()
-    .min(32, "JWT_REFRESH_SECRET must be at least 32 characters"),
-  JWT_ACCESS_TTL_MINUTES: z.coerce.number().int().positive().default(15),
-  JWT_REFRESH_TTL_DAYS: z.coerce.number().int().positive().default(7),
-  COOKIE_SECURE: booleanish.default(false),
+    .min(32, "AUTH_CODE_SECRET must be at least 32 characters"),
+  JWT_ACCESS_TTL_MINUTES: z.coerce.number().pipe(z.literal(15)).default(15),
+  COOKIE_SECURE: booleanish.default(true),
   CORS_ORIGIN: z.string().default("http://localhost:5173"),
   API_DOCS_ENABLED: booleanish.optional(),
 
@@ -130,6 +119,56 @@ const envSchema = z.object({
 });
 
 const notificationEnvSchema = envSchema.superRefine((value, context) => {
+  if (value.AUTH_CODE_SECRET === value.JWT_ACCESS_SECRET)
+    context.addIssue({
+      code: "custom",
+      path: ["AUTH_CODE_SECRET"],
+      message: "Must differ from the access signing secret",
+    });
+  const origins = value.AUTH_ALLOWED_ORIGINS.split(",")
+    .map((origin) => origin.trim())
+    .filter(Boolean);
+  if (
+    !origins.length ||
+    origins.some((origin) => {
+      try {
+        const url = new URL(origin);
+        return (
+          url.origin !== origin ||
+          (url.protocol !== "https:" &&
+            !(
+              url.protocol === "http:" &&
+              ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname)
+            ))
+        );
+      } catch {
+        return true;
+      }
+    })
+  )
+    context.addIssue({
+      code: "custom",
+      path: ["AUTH_ALLOWED_ORIGINS"],
+      message: "Expected HTTPS origins or local HTTP origins",
+    });
+  if (
+    !value.COOKIE_SECURE &&
+    origins.some((origin) => {
+      try {
+        return !["localhost", "127.0.0.1", "[::1]"].includes(
+          new URL(origin).hostname,
+        );
+      } catch {
+        return true;
+      }
+    })
+  )
+    context.addIssue({
+      code: "custom",
+      path: ["COOKIE_SECURE"],
+      message: "Secure cookies are required outside local development",
+    });
+
   if (value.NOTIFICATION_ENABLED) {
     for (const key of [
       "SMTP_HOST",
@@ -200,12 +239,9 @@ export const config = {
       .filter(Boolean),
   },
   auth: {
-    login: env.LOGIN_USER_APP,
-    password: env.PASSWORD_USER_APP,
     accessSecret: env.JWT_ACCESS_SECRET,
-    refreshSecret: env.JWT_REFRESH_SECRET,
+    codeSecret: env.AUTH_CODE_SECRET,
     accessTtlSeconds: env.JWT_ACCESS_TTL_MINUTES * 60,
-    refreshTtlSeconds: env.JWT_REFRESH_TTL_DAYS * 24 * 60 * 60,
     cookieSecure: env.COOKIE_SECURE,
   },
 

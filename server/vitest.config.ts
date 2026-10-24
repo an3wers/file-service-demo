@@ -18,10 +18,8 @@ const testEnv = {
   TRUSTED_PROXIES: "",
   LOG_LEVEL: "silent",
   PORT: "3000",
-  LOGIN_USER_APP: "operator",
-  PASSWORD_USER_APP: "test-password",
   JWT_ACCESS_SECRET: "test-access-secret-0123456789abcdef",
-  JWT_REFRESH_SECRET: "test-refresh-secret-0123456789abcdef",
+  AUTH_CODE_SECRET: "test-refresh-secret-0123456789abcdef",
   COOKIE_SECURE: "false",
   CORS_ORIGIN: "http://localhost:5173",
 
