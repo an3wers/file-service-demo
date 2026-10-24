@@ -3,6 +3,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { pool } from "../../../../db/pool.js";
 import { migrate } from "../../../../db/migrate.js";
 import { createPostgresOwner } from "../../testing/postgres-owner.js";
+import { createSqlDirectories } from "./sql-directories.js";
 import { createSqlFileRows } from "./sql-file-rows.js";
 import {
   describeFileRowsErrors,
@@ -82,6 +83,36 @@ describe("размещение строк метаданных на PostgreSQL",
       originalName: "a.txt",
       directory: "",
     });
+  });
+
+  it("нарушение внешнего ключа при резервировании и создании каталога без ранней проверки становится отсутствием каталога", async () => {
+    const rows = createSqlFileRows("test", undefined, owner);
+    const directories = createSqlDirectories(undefined, owner);
+    const id = randomUUID();
+
+    await expect(
+      rows.reserveFile({
+        id,
+        objectKey: `missing/${id}.txt`,
+        directory: "missing",
+        originalName: "a.txt",
+        extension: "txt",
+        contentType: "text/plain",
+        sizeBytes: 1,
+        etag: null,
+        status: "pending",
+        uploadSource: "server",
+      }),
+    ).rejects.toMatchObject({
+      name: "DirectoryNotFoundError",
+      details: { path: "missing" },
+    });
+    await expect(directories.create("missing", "inner")).rejects.toMatchObject({
+      name: "DirectoryNotFoundError",
+      details: { path: "missing" },
+    });
+    expect(await rows.findFileById(id)).toBeNull();
+    expect(await directories.exists("missing/inner")).toBe(false);
   });
 });
 
