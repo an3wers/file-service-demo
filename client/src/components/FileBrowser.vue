@@ -42,6 +42,10 @@ import CreateDirectoryDialog from "./CreateDirectoryDialog.vue";
 import MoveDialog from "./MoveDialog.vue";
 import RenameDialog from "./RenameDialog.vue";
 import UploadPanel from "./UploadPanel.vue";
+import {
+  useDialogTarget,
+  type DialogTarget,
+} from "@/composables/useDialogTarget";
 import { useFileActions } from "@/composables/useFileActions";
 import { useFileBrowser } from "@/composables/useFileBrowser";
 import { useFileBrowserRoute } from "@/composables/useFileBrowserRoute";
@@ -53,22 +57,16 @@ const upload = useUpload();
 
 useFileBrowserRoute();
 
-const selectedFile = ref<FileDto | null>(null);
-const cardOpen = ref(false);
-const fileToDelete = ref<FileDto | null>(null);
-const deleteOpen = ref(false);
-const fileToRename = ref<FileDto | null>(null);
-const renameOpen = ref(false);
-const fileToMove = ref<FileDto | null>(null);
-const moveOpen = ref(false);
+const card = useDialogTarget<FileDto>();
+const fileDeletion = useDialogTarget<FileDto>();
+const fileRename = useDialogTarget<FileDto>();
+const fileMove = useDialogTarget<FileDto>();
 const uploadOpen = ref(false);
 const createOpen = ref(false);
-const directoryToDelete = ref<Pick<DirectoryDto, "name" | "path"> | null>(null);
-const deleteDirectoryOpen = ref(false);
-const directoryToRename = ref<DirectoryDto | null>(null);
-const renameDirectoryOpen = ref(false);
-const directoryToMove = ref<DirectoryDto | null>(null);
-const moveDirectoryOpen = ref(false);
+const directoryDeletion =
+  useDialogTarget<Pick<DirectoryDto, "name" | "path">>();
+const directoryRename = useDialogTarget<DirectoryDto>();
+const directoryMove = useDialogTarget<DirectoryDto>();
 
 const limitValue = computed({
   get: () => String(browser.limit.value),
@@ -78,61 +76,39 @@ const limitValue = computed({
 const totalPages = computed(() => browser.pagination.value?.totalPages ?? 1);
 const total = computed(() => browser.pagination.value?.total ?? 0);
 
-function openCard(file: FileDto): void {
-  selectedFile.value = file;
-  cardOpen.value = true;
+function fromCard(dialog: DialogTarget<FileDto>) {
+  return (file: FileDto) => {
+    card.open = false;
+    dialog.ask(file);
+  };
 }
 
-function askDelete(file: FileDto): void {
-  cardOpen.value = false;
-  fileToDelete.value = file;
-  deleteOpen.value = true;
-}
-
-function askRename(file: FileDto): void {
-  cardOpen.value = false;
-  fileToRename.value = file;
-  renameOpen.value = true;
-}
-
-function askMove(file: FileDto): void {
-  cardOpen.value = false;
-  fileToMove.value = file;
-  moveOpen.value = true;
-}
+const askDelete = fromCard(fileDeletion);
+const askRename = fromCard(fileRename);
+const askMove = fromCard(fileMove);
 
 async function renameSelected(name: string): Promise<void> {
-  if (fileToRename.value)
-    fileToRename.value = await actions.rename(fileToRename.value, name);
+  if (fileRename.target)
+    fileRename.target = await actions.rename(fileRename.target, name);
 }
 
 async function moveSelected(directory: string): Promise<void> {
-  if (fileToMove.value)
-    fileToMove.value = await actions.move(fileToMove.value, directory);
-}
-
-function askRenameDirectory(directory: DirectoryDto): void {
-  directoryToRename.value = directory;
-  renameDirectoryOpen.value = true;
-}
-
-function askMoveDirectory(directory: DirectoryDto): void {
-  directoryToMove.value = directory;
-  moveDirectoryOpen.value = true;
+  if (fileMove.target)
+    fileMove.target = await actions.move(fileMove.target, directory);
 }
 
 async function renameSelectedDirectory(name: string): Promise<void> {
-  if (directoryToRename.value)
-    directoryToRename.value = await actions.renameDirectory(
-      directoryToRename.value,
+  if (directoryRename.target)
+    directoryRename.target = await actions.renameDirectory(
+      directoryRename.target,
       name,
     );
 }
 
 async function moveSelectedDirectory(parent: string): Promise<void> {
-  if (directoryToMove.value)
-    directoryToMove.value = await actions.moveDirectory(
-      directoryToMove.value,
+  if (directoryMove.target)
+    directoryMove.target = await actions.moveDirectory(
+      directoryMove.target,
       parent,
     );
 }
@@ -141,19 +117,14 @@ function parentOf(path: string): string {
   return path.slice(0, Math.max(0, path.lastIndexOf("/")));
 }
 
-function askDeleteDirectory(directory: Pick<DirectoryDto, "name" | "path">) {
-  directoryToDelete.value = directory;
-  deleteDirectoryOpen.value = true;
-}
-
 function askDeleteCurrentDirectory(): void {
   const path = browser.directory.value;
-  askDeleteDirectory({ path, name: path.split("/").at(-1) ?? path });
+  directoryDeletion.ask({ path, name: path.split("/").at(-1) ?? path });
 }
 
 function onDeleted(file: FileDto): void {
-  if (selectedFile.value?.id === file.id) {
-    cardOpen.value = false;
+  if (card.target?.id === file.id) {
+    card.open = false;
   }
 }
 </script>
@@ -234,14 +205,14 @@ function onDeleted(file: FileDto): void {
       <Separator />
 
       <FileTable
-        @open="openCard"
+        @open="card.ask"
         @download="actions.download"
         @rename="askRename"
         @move="askMove"
         @remove="askDelete"
-        @remove-directory="askDeleteDirectory"
-        @rename-directory="askRenameDirectory"
-        @move-directory="askMoveDirectory"
+        @remove-directory="directoryDeletion.ask"
+        @rename-directory="directoryRename.ask"
+        @move-directory="directoryMove.ask"
       />
 
       <Pagination
@@ -279,14 +250,14 @@ function onDeleted(file: FileDto): void {
 
   <CreateDirectoryDialog v-model:open="createOpen" />
   <DeleteDirectoryDialog
-    v-model:open="deleteDirectoryOpen"
-    :directory="directoryToDelete"
+    v-model:open="directoryDeletion.open"
+    :directory="directoryDeletion.target"
   />
   <UploadPanel v-model:open="uploadOpen" />
 
   <FileCardDialog
-    v-model:open="cardOpen"
-    :file="selectedFile"
+    v-model:open="card.open"
+    :file="card.target"
     @download="actions.download"
     @rename="askRename"
     @move="askMove"
@@ -294,45 +265,45 @@ function onDeleted(file: FileDto): void {
   />
 
   <RenameDialog
-    v-model:open="renameOpen"
+    v-model:open="fileRename.open"
     title="Переименование файла"
-    :description="`Файл «${fileToRename?.name ?? ''}»`"
-    :initial="fileToRename?.name ?? ''"
+    :description="`Файл «${fileRename.target?.name ?? ''}»`"
+    :initial="fileRename.target?.name ?? ''"
     failure="Не удалось переименовать файл"
     :submit="renameSelected"
   />
 
   <MoveDialog
-    v-model:open="moveOpen"
+    v-model:open="fileMove.open"
     title="Перемещение файла"
-    :description="`Выберите каталог для файла «${fileToMove?.name ?? ''}»`"
-    :current="fileToMove?.directory ?? ''"
+    :description="`Выберите каталог для файла «${fileMove.target?.name ?? ''}»`"
+    :current="fileMove.target?.directory ?? ''"
     failure="Не удалось переместить файл"
     :submit="moveSelected"
   />
 
   <RenameDialog
-    v-model:open="renameDirectoryOpen"
+    v-model:open="directoryRename.open"
     title="Переименование каталога"
-    :description="`Каталог «${directoryToRename?.name ?? ''}»`"
-    :initial="directoryToRename?.name ?? ''"
+    :description="`Каталог «${directoryRename.target?.name ?? ''}»`"
+    :initial="directoryRename.target?.name ?? ''"
     failure="Не удалось переименовать каталог"
     :submit="renameSelectedDirectory"
   />
 
   <MoveDialog
-    v-model:open="moveDirectoryOpen"
+    v-model:open="directoryMove.open"
     title="Перемещение каталога"
-    :description="`Выберите новый родительский каталог для «${directoryToMove?.name ?? ''}»`"
-    :current="parentOf(directoryToMove?.path ?? '')"
-    :exclude="directoryToMove?.path"
+    :description="`Выберите новый родительский каталог для «${directoryMove.target?.name ?? ''}»`"
+    :current="parentOf(directoryMove.target?.path ?? '')"
+    :exclude="directoryMove.target?.path"
     failure="Не удалось переместить каталог"
     :submit="moveSelectedDirectory"
   />
 
   <DeleteFileDialog
-    v-model:open="deleteOpen"
-    :file="fileToDelete"
+    v-model:open="fileDeletion.open"
+    :file="fileDeletion.target"
     @deleted="onDeleted"
   />
 </template>
