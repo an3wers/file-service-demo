@@ -228,9 +228,27 @@ export function createAuthRouter(
 
   router.post(
     "/login",
-    prepareSession(sessions.consumeLoginIp),
+    async (req, res, next) => {
+      res.locals.authDeadline = sessions.deadline();
+      res.locals.ipRetry = await sessions.consumeLoginIp(
+        req.ip ?? req.socket.remoteAddress ?? "unknown",
+        res.locals.authDeadline,
+      );
+      next();
+    },
     parseBody,
     async (req, res) => {
+      const candidate = registrationEmailSchema.safeParse(req.body?.email);
+      const retry = Math.max(
+        res.locals.ipRetry,
+        candidate.success
+          ? await sessions.consumeLoginEmail(
+              candidate.data,
+              res.locals.authDeadline,
+            )
+          : 0,
+      );
+      if (retry > 0) throw new MailRateLimitedError(retry);
       const { email, password } = loginBodySchema.parse(req.body);
       const attempt = await sessions.login(
         email,
