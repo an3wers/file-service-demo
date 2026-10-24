@@ -1,7 +1,7 @@
 import type { AddressInfo } from "node:net";
 import type { Server } from "node:http";
 import { Router } from "express";
-import { afterEach, expect, it } from "vitest";
+import { afterEach, expect, it, vi } from "vitest";
 import { createApp } from "../../../../app.js";
 import {
   EMAIL,
@@ -11,6 +11,17 @@ import {
 import type { SessionsModule } from "../../application/sessions.js";
 import { createAuthRouter, createRequireAuth } from "./routes.js";
 import { mapAuthError } from "./error-map.js";
+
+const logs = vi.hoisted(() => [] as Record<string, unknown>[]);
+vi.mock("../../../../logger.js", async () => {
+  const { pino } = await import("pino");
+  return {
+    logger: pino(
+      { level: "info" },
+      { write: (line: string) => logs.push(JSON.parse(line)) },
+    ),
+  };
+});
 
 const servers: Server[] = [];
 afterEach(async () => {
@@ -541,4 +552,113 @@ it("при IP- и email-лимите повтора Retry-After равен на�
   expect(limited.status).toBe(429);
   expect(limited.headers.get("retry-after")).toBe("60");
   expect((await errorOf(limited)).details).toEqual({ retryAfterSeconds: 60 });
+});
+
+const mailEvents = () => logs.filter((l) => l.msg === "Auth mail attempt");
+const requestIdOf = (url: string) =>
+  logs
+    .filter((l) => l.msg === "request completed")
+    .map((l) => l.req as { id: unknown; url: string })
+    .filter((req) => req.url === url)
+    .at(-1)?.id;
+
+it("первоначальная отправка и повтор кода оставляют событие с назначением, исходом, длительностью и запросом без секретов", async () => {
+  const h = await start();
+  logs.length = 0;
+  const response = await h.login();
+  const { attemptToken } = await response.json();
+  const firstCode = h.auth.code();
+  const [first] = mailEvents();
+  expect(first).toEqual(
+    expect.objectContaining({
+      purpose: "login-code",
+      outcome: "accepted",
+      durationMs: expect.any(Number),
+      requestId: requestIdOf("/api/auth/login"),
+    }),
+  );
+  expect(first!.requestId).toBeDefined();
+  h.auth.clock.advance(1 / 60);
+  h.auth.sendEmail.mockRejectedValueOnce(
+    new Error(`SMTP 550 ${EMAIL} rejected`),
+  );
+  const rejected = await h.resend(attemptToken);
+  expect((await rejected.json()).deliveryStatus).toBe("unconfirmed");
+  const second = mailEvents()[1];
+  expect(second).toEqual(
+    expect.objectContaining({
+      purpose: "login-code",
+      outcome: "unconfirmed",
+      durationMs: expect.any(Number),
+      requestId: requestIdOf("/api/auth/login/resend"),
+    }),
+  );
+  expect(second!.requestId).not.toBe(first!.requestId);
+  expect(mailEvents()).toHaveLength(2);
+  expect(h.auth.sendEmail).toHaveBeenCalledTimes(2);
+  const journal = JSON.stringify(logs);
+  for (const secret of [
+    EMAIL,
+    PASSWORD,
+    attemptToken,
+    firstCode,
+    h.auth.code(),
+    "SMTP 550",
+    "Код входа",
+  ])
+    expect(journal).not.toContain(secret);
+});
+
+it("таймаут и неизвестный исход SMTP при входе и повторе оставляют одно событие unconfirmed на попытку", async () => {
+  const slow = await start({ sessions: (a) => a.withStore(a.store, 50) });
+  logs.length = 0;
+  slow.auth.sendEmail.mockImplementationOnce(() => new Promise(() => {}));
+  const attempt = await (await slow.login()).json();
+  expect(attempt.deliveryStatus).toBe("unconfirmed");
+  slow.auth.clock.advance(1 / 60);
+  slow.auth.sendEmail.mockImplementationOnce(
+    (_message, options: { signal: AbortSignal }) =>
+      new Promise((_resolve, reject) =>
+        options.signal.addEventListener("abort", () =>
+          reject(new Error(`aborted ${EMAIL}`)),
+        ),
+      ),
+  );
+  const resent = await slow.resend(attempt.attemptToken);
+  expect((await resent.json()).deliveryStatus).toBe("unconfirmed");
+  expect(mailEvents()).toEqual([
+    expect.objectContaining({
+      purpose: "login-code",
+      outcome: "unconfirmed",
+      durationMs: expect.any(Number),
+      requestId: requestIdOf("/api/auth/login"),
+    }),
+    expect.objectContaining({
+      purpose: "login-code",
+      outcome: "unconfirmed",
+      durationMs: expect.any(Number),
+      requestId: requestIdOf("/api/auth/login/resend"),
+    }),
+  ]);
+  expect(slow.auth.sendEmail).toHaveBeenCalledTimes(2);
+  expect((await slow.verify(attempt.attemptToken)).status).toBe(200);
+  const journal = JSON.stringify(logs);
+  expect(journal).not.toContain(EMAIL);
+  expect(journal).not.toContain(attempt.attemptToken);
+});
+
+it("отказ записи попытки не начинает SMTP и не оставляет событие отправки", async () => {
+  const broken = await start({
+    sessions: (a) =>
+      a.withStore({
+        ...a.store,
+        saveAttempt: async () => {
+          throw new Error("SQL private secret");
+        },
+      }),
+  });
+  logs.length = 0;
+  expect((await broken.login()).status).toBe(503);
+  expect(mailEvents()).toEqual([]);
+  expect(JSON.stringify(logs)).not.toContain(EMAIL);
 });
