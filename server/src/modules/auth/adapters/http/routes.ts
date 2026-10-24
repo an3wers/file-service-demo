@@ -1,5 +1,10 @@
 import express, { Router } from "express";
-import type { ErrorRequestHandler, RequestHandler, Response } from "express";
+import type {
+  ErrorRequestHandler,
+  Request,
+  RequestHandler,
+  Response,
+} from "express";
 import { z } from "zod";
 import { AppError, ERROR_CODES, unauthorized } from "../../../../errors.js";
 import type { Registration } from "../../application/registration.js";
@@ -30,6 +35,9 @@ export interface AuthRouterSettings {
   registration?: Registration;
   allowedOrigins?: string[];
 }
+
+const requestIdOf = (req: Request) =>
+  typeof req.id === "string" || typeof req.id === "number" ? req.id : undefined;
 
 export function createAuthRouter(
   sessions: SessionsModule,
@@ -112,10 +120,7 @@ export function createAuthRouter(
       );
       if (retry > 0) throw new MailRateLimitedError(retry);
       const deadline = res.locals.registrationDeadline;
-      const requestId =
-        typeof req.id === "string" || typeof req.id === "number"
-          ? req.id
-          : undefined;
+      const requestId = requestIdOf(req);
       const result =
         kind === "register"
           ? await registration.register(
@@ -237,6 +242,7 @@ export function createAuthRouter(
         password,
         req.ip ?? req.socket.remoteAddress ?? "unknown",
         res.locals.authDeadline,
+        requestIdOf(req),
       );
       res.set("Date", sessions.now().toUTCString());
       res.json(attempt);
@@ -259,6 +265,7 @@ export function createAuthRouter(
         attemptToken,
         res.locals.ipRetry,
         res.locals.authDeadline,
+        requestIdOf(req),
       );
       res.set("Date", sessions.now().toUTCString());
       res.json(result);
