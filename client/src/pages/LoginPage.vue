@@ -194,6 +194,7 @@ const password = ref("");
 const passwordVisible = ref(false);
 const pending = ref(false);
 const failure = ref<string | null>(null);
+const notVerified = ref(false);
 const passwordInput = useTemplateRef<{ $el: HTMLInputElement }>(
   "passwordInput",
 );
@@ -213,6 +214,7 @@ async function submit(): Promise<void> {
   if (!canSubmit.value) return;
   pending.value = true;
   failure.value = null;
+  notVerified.value = false;
   try {
     if (attempt.value) {
       await auth.verifyLogin(
@@ -245,6 +247,7 @@ async function submit(): Promise<void> {
     failure.value = errorMessage(error, "Не удалось войти");
     password.value = "";
     if (isApiError(error)) {
+      notVerified.value = error.code === "EMAIL_NOT_VERIFIED";
       const details = error.details as
         { remainingAttempts?: number; retryAfterSeconds?: number } | undefined;
       if (details?.remainingAttempts !== undefined) {
@@ -402,6 +405,12 @@ async function submit(): Promise<void> {
                 :role="failure ? 'alert' : 'status'"
               >
                 <FieldError v-if="failure">{{ failure }}</FieldError>
+                <p v-if="failure && notVerified" class="text-sm">
+                  Запросите новое письмо активации и откройте ссылку из него.
+                  <a href="/activation" class="underline"
+                    >Запросить письмо активации</a
+                  >
+                </p>
                 <p v-if="retryRemaining">
                   Повторить можно через {{ retryRemaining }} с
                 </p>
