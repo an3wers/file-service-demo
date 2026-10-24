@@ -67,6 +67,10 @@ export function violatedForeignKey(error: unknown): string | undefined {
   return typeof link?.constraint === "string" ? link.constraint : undefined;
 }
 
+export function hasSqlState(error: unknown, code: string): boolean {
+  return chain(error).some((item) => item.code === code);
+}
+
 function isUnreachable(links: PgErrorShape[]): boolean {
   return links.some((link) => {
     const code = typeof link.code === "string" ? link.code : "";

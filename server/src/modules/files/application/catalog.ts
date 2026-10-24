@@ -74,6 +74,11 @@ export interface UpdateFileInput {
   directory?: string | undefined;
 }
 
+export interface MoveDirectoryInput {
+  name?: string | undefined;
+  parent?: string | undefined;
+}
+
 export interface ListFilesResult {
   items: StoredFile[];
   total: number;
@@ -95,7 +100,7 @@ export interface CatalogModule {
   deleteDirectory(rawPath: string): Promise<void>;
   moveDirectory(
     rawPath: string,
-    input: { name?: string | undefined; parent?: string | undefined },
+    input: MoveDirectoryInput,
   ): Promise<DirectoryDto>;
   listDirectories(rawParent: string | undefined): Promise<{
     parent: string;
