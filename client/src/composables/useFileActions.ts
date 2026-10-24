@@ -106,7 +106,7 @@ async function move(file: FileDto, directory: string): Promise<FileDto> {
 }
 
 async function renameDirectory(
-  directory: DirectoryDto,
+  directory: Pick<DirectoryDto, "name" | "path">,
   name: string,
 ): Promise<DirectoryDto> {
   const updated = await updateDirectory(directory.path, { name });
@@ -116,7 +116,7 @@ async function renameDirectory(
 }
 
 async function moveDirectory(
-  directory: DirectoryDto,
+  directory: Pick<DirectoryDto, "name" | "path">,
   parent: string,
 ): Promise<DirectoryDto> {
   const updated = await updateDirectory(directory.path, { parent });

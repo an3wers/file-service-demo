@@ -1,6 +1,12 @@
 <script setup lang="ts">
 import { computed, ref } from "vue";
-import { SearchIcon, Trash2Icon, UploadIcon } from "@lucide/vue";
+import {
+  FolderInputIcon,
+  PencilIcon,
+  SearchIcon,
+  Trash2Icon,
+  UploadIcon,
+} from "@lucide/vue";
 import type { DirectoryDto, FileDto } from "@/types/api";
 import {
   Card,
@@ -63,10 +69,10 @@ const fileRename = useDialogTarget<FileDto>();
 const fileMove = useDialogTarget<FileDto>();
 const uploadOpen = ref(false);
 const createOpen = ref(false);
-const directoryDeletion =
-  useDialogTarget<Pick<DirectoryDto, "name" | "path">>();
-const directoryRename = useDialogTarget<DirectoryDto>();
-const directoryMove = useDialogTarget<DirectoryDto>();
+type DirectoryRef = Pick<DirectoryDto, "name" | "path">;
+const directoryDeletion = useDialogTarget<DirectoryRef>();
+const directoryRename = useDialogTarget<DirectoryRef>();
+const directoryMove = useDialogTarget<DirectoryRef>();
 
 const limitValue = computed({
   get: () => String(browser.limit.value),
@@ -97,29 +103,37 @@ async function moveSelected(directory: string): Promise<void> {
     fileMove.target = await actions.move(fileMove.target, directory);
 }
 
-async function renameSelectedDirectory(name: string): Promise<void> {
-  if (directoryRename.target)
-    directoryRename.target = await actions.renameDirectory(
-      directoryRename.target,
-      name,
-    );
+async function changeDirectory(
+  dialog: DialogTarget<DirectoryRef>,
+  change: (directory: DirectoryRef) => Promise<DirectoryRef>,
+): Promise<void> {
+  const directory = dialog.target;
+  if (!directory) return;
+  const updated = await change(directory);
+  dialog.target = updated;
+  if (directory.path === browser.directory.value)
+    browser.openDirectory(updated.path);
 }
 
-async function moveSelectedDirectory(parent: string): Promise<void> {
-  if (directoryMove.target)
-    directoryMove.target = await actions.moveDirectory(
-      directoryMove.target,
-      parent,
-    );
+function renameSelectedDirectory(name: string): Promise<void> {
+  return changeDirectory(directoryRename, (directory) =>
+    actions.renameDirectory(directory, name),
+  );
+}
+
+function moveSelectedDirectory(parent: string): Promise<void> {
+  return changeDirectory(directoryMove, (directory) =>
+    actions.moveDirectory(directory, parent),
+  );
 }
 
 function parentOf(path: string): string {
   return path.slice(0, Math.max(0, path.lastIndexOf("/")));
 }
 
-function askDeleteCurrentDirectory(): void {
+function currentDirectory(): DirectoryRef {
   const path = browser.directory.value;
-  directoryDeletion.ask({ path, name: path.split("/").at(-1) ?? path });
+  return { path, name: path.split("/").at(-1) ?? path };
 }
 
 function onDeleted(file: FileDto): void {
@@ -137,12 +151,30 @@ function onDeleted(file: FileDto): void {
         Найдено: {{ total }}. Поиск идёт по текущей папке и её подпапкам.
       </CardDescription>
       <CardAction class="flex flex-wrap gap-2">
+        <template v-if="browser.directory.value">
+          <Button
+            variant="outline"
+            :disabled="browser.loading.value || !!browser.error.value"
+            @click="directoryRename.ask(currentDirectory())"
+          >
+            <PencilIcon data-icon="inline-start" />
+            Переименовать этот каталог
+          </Button>
+          <Button
+            variant="outline"
+            :disabled="browser.loading.value || !!browser.error.value"
+            @click="directoryMove.ask(currentDirectory())"
+          >
+            <FolderInputIcon data-icon="inline-start" />
+            Переместить этот каталог
+          </Button>
+        </template>
         <Button
           v-if="browser.directory.value"
           variant="outline"
           class="text-destructive"
           :disabled="browser.loading.value || !!browser.error.value"
-          @click="askDeleteCurrentDirectory"
+          @click="directoryDeletion.ask(currentDirectory())"
         >
           <Trash2Icon data-icon="inline-start" />
           Удалить этот каталог
