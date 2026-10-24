@@ -304,6 +304,37 @@ it("недействительная ссылка удаляется, форма
   wrapper.unmount();
 });
 
+it("переход со страницы входа ничего не отправляет сам, письмо запрашивается вручную и даёт нейтральный ответ с ожиданием", async () => {
+  vi.useFakeTimers();
+  const fetch = vi.fn().mockResolvedValue(
+    json(202, {
+      message: "Если требуется письмо, инструкции придут на email",
+      retryAfterSeconds: 60,
+    }),
+  );
+  vi.stubGlobal("fetch", fetch);
+  const wrapper = mountPage({ attachTo: document.body });
+  await flushPromises();
+  expect(fetch).not.toHaveBeenCalled();
+  expect(wrapper.find("button[data-confirm]").exists()).toBe(false);
+  await wrapper.get("input[name=email]").setValue("user@example.com");
+  await wrapper.get("form").trigger("submit");
+  await flushPromises();
+  expect(fetch).toHaveBeenCalledTimes(1);
+  expect(fetch.mock.calls[0]![0]).toBe("/api/auth/activation/request");
+  expect(JSON.parse(fetch.mock.calls[0]![1].body)).toEqual({
+    email: "user@example.com",
+  });
+  expect(wrapper.text()).toContain(
+    "Если требуется письмо, инструкции придут на email",
+  );
+  expect(wrapper.text()).toContain("Повторить можно через 60 с");
+  expect(
+    wrapper.get("button[type=submit]").attributes("disabled"),
+  ).toBeDefined();
+  wrapper.unmount();
+});
+
 it("ошибка email имеет подпись, объявление и фокус на поле", async () => {
   vi.stubGlobal(
     "fetch",
