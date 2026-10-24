@@ -36,6 +36,9 @@ export interface AuthRouterSettings {
   allowedOrigins?: string[];
 }
 
+const clientIp = (req: Request) =>
+  req.ip ?? req.socket.remoteAddress ?? "unknown";
+
 const mailLogOf = (req: Request) =>
   req.log.child({
     requestId:
@@ -73,7 +76,7 @@ export function createAuthRouter(
     if (registration) {
       res.locals.registrationDeadline = registration.deadline();
       res.locals.ipRetry = await registration.consumeIp(
-        req.ip ?? req.socket.remoteAddress ?? "unknown",
+        clientIp(req),
         res.locals.registrationDeadline,
       );
     }
@@ -170,7 +173,7 @@ export function createAuthRouter(
       if (!registration) throw new RegistrationUnavailableError();
       res.locals.registrationDeadline = registration.deadline();
       res.locals.ipRetry = await registration.consumeConfirmationIp(
-        req.ip ?? req.socket.remoteAddress ?? "unknown",
+        clientIp(req),
         res.locals.registrationDeadline,
         purpose,
       );
@@ -210,11 +213,13 @@ export function createAuthRouter(
     },
   );
   const prepareSession =
-    (consumeIp: (ip: string, until: Date) => Promise<void>): RequestHandler =>
+    (
+      admitIp: (ip: string, until: Date) => Promise<number | void>,
+    ): RequestHandler =>
     async (req, res, next) => {
       const until = sessions.deadline();
       res.locals.authDeadline = until;
-      await consumeIp(req.ip ?? req.socket.remoteAddress ?? "unknown", until);
+      res.locals.ipRetry = (await admitIp(clientIp(req), until)) ?? 0;
       next();
     };
 
@@ -236,21 +241,14 @@ export function createAuthRouter(
 
   router.post(
     "/login",
-    async (req, res, next) => {
-      res.locals.authDeadline = sessions.deadline();
-      res.locals.ipRetry = await sessions.consumeLoginIp(
-        req.ip ?? req.socket.remoteAddress ?? "unknown",
-        res.locals.authDeadline,
-      );
-      next();
-    },
+    prepareSession(sessions.loginIpRetryAfter),
     parseBody,
     async (req, res) => {
       const candidate = registrationEmailSchema.safeParse(req.body?.email);
       const retry = Math.max(
         res.locals.ipRetry,
         candidate.success
-          ? await sessions.consumeLoginEmail(
+          ? await sessions.loginEmailRetryAfter(
               candidate.data,
               res.locals.authDeadline,
             )
@@ -261,7 +259,7 @@ export function createAuthRouter(
       const attempt = await sessions.login(
         email,
         password,
-        req.ip ?? req.socket.remoteAddress ?? "unknown",
+        clientIp(req),
         res.locals.authDeadline,
         mailLogOf(req),
       );
@@ -271,14 +269,7 @@ export function createAuthRouter(
   );
   router.post(
     "/login/resend",
-    async (req, res, next) => {
-      res.locals.authDeadline = sessions.deadline();
-      res.locals.ipRetry = await sessions.consumeMailIp(
-        req.ip ?? req.socket.remoteAddress ?? "unknown",
-        res.locals.authDeadline,
-      );
-      next();
-    },
+    prepareSession(sessions.mailIpRetryAfter),
     parseBody,
     async (req, res) => {
       const { attemptToken } = loginResendSchema.parse(req.body);

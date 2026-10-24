@@ -156,13 +156,13 @@ export function createSessionsModule({
     deadline,
     withinDeadline,
     now: () => clock.now(),
-    consumeLoginIp: (ip: string, until: Date) =>
+    loginIpRetryAfter: (ip: string, until: Date) =>
       retryAfter(`login:ip:${secretDigest("ip", ip)}`, 50, until),
-    consumeLoginEmail: (email: string, until: Date) =>
+    loginEmailRetryAfter: (email: string, until: Date) =>
       retryAfter(`login:email:${secretDigest("email", email)}`, 10, until),
     consumeVerifyIp: (ip: string, until: Date) =>
       consume(`login:verify:ip:${secretDigest("ip", ip)}`, 100, until),
-    consumeMailIp: (ip: string, until: Date) =>
+    mailIpRetryAfter: (ip: string, until: Date) =>
       available(() =>
         store.consume(
           mailIpKey(ip),
