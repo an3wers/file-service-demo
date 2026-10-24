@@ -1,5 +1,6 @@
 import type { PoolClient } from "pg";
 import type { SessionStore } from "../../domain/ports/session-store.js";
+import { LOGIN_MAIL_LIMITS } from "../../domain/ports/session-store.js";
 import type { User } from "../../domain/user.js";
 import type { Clock } from "../../domain/ports/clock.js";
 import { systemClock } from "../../domain/ports/clock.js";
@@ -58,10 +59,7 @@ export function createSqlSessionStore(
         const emailRetry = await consumeAuthLimit(
           client,
           mailKeys.email,
-          [
-            { windowMs: 60000, maximum: 1 },
-            { windowMs: 3600000, maximum: 5 },
-          ],
+          LOGIN_MAIL_LIMITS,
           () => clock.now(),
         );
         const ipRetry = await consumeAuthLimit(
@@ -90,6 +88,67 @@ export function createSqlSessionStore(
           ],
         );
         return 0;
+      }),
+    resend: (tokenHash, code, mailKey, ipRetrySeconds, deadline) =>
+      authTransaction(deadline, async (client) => {
+        const found = await client.query<{ user_id: string }>(
+          "select user_id from login_attempts where token_hash = $1",
+          [tokenHash],
+        );
+        if (!found.rows[0]) return { status: "unavailable" };
+        const user = await userById(client, found.rows[0].user_id);
+        const { rows } = await client.query<{
+          expires_at: Date;
+          consumed_at: Date | null;
+          token_version: number;
+        }>("select * from login_attempts where token_hash = $1 for update", [
+          tokenHash,
+        ]);
+        const attempt = rows[0];
+        if (
+          !user ||
+          user.state !== "active" ||
+          !attempt ||
+          attempt.consumed_at ||
+          attempt.expires_at <= clock.now() ||
+          attempt.token_version !== user.tokenVersion
+        )
+          return { status: "unavailable" };
+        await client.query("savepoint mail_admission");
+        const retry = Math.max(
+          ipRetrySeconds,
+          await consumeAuthLimit(
+            client,
+            mailKey(user.email),
+            LOGIN_MAIL_LIMITS,
+            () => clock.now(),
+          ),
+        );
+        if (retry || attempt.expires_at <= clock.now())
+          await client.query("rollback to savepoint mail_admission");
+        if (retry) return { status: "limited", retryAfterSeconds: retry };
+        if (attempt.expires_at <= clock.now()) return { status: "unavailable" };
+        const updated = await client.query<{
+          expires_at: Date;
+          code_expires_at: Date;
+          resend_available_at: Date;
+        }>(
+          "update login_attempts set code_hash = $2, code_expires_at = least($3::timestamptz, expires_at), resend_available_at = $4 where token_hash = $1 returning expires_at, code_expires_at, resend_available_at",
+          [
+            tokenHash,
+            code.codeHash,
+            code.codeExpiresAt,
+            code.resendAvailableAt,
+          ],
+        );
+        const row = updated.rows[0]!;
+        return {
+          status: "replaced",
+          email: user.email,
+          expiresAt: row.expires_at,
+          codeExpiresAt: row.code_expires_at,
+          resendAvailableAt: row.resend_available_at,
+        };
       }),
     verify: (tokenHash, codeHash, session, deadline) =>
       authTransaction(deadline, async (client) => {

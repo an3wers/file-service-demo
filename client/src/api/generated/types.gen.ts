@@ -60,6 +60,13 @@ export type LoginAttempt = {
     deliveryStatus: 'accepted' | 'unconfirmed';
 };
 
+export type LoginResend = {
+    attemptExpiresAt: string;
+    codeExpiresAt: string;
+    resendAvailableAt: string;
+    deliveryStatus: 'accepted' | 'unconfirmed';
+};
+
 export type AuthSession = {
     accessToken: string;
     /**
@@ -506,6 +513,72 @@ export type LoginResponses = {
 };
 
 export type LoginResponse = LoginResponses[keyof LoginResponses];
+
+export type ResendLoginCodeData = {
+    body: {
+        attemptToken: string;
+    };
+    headers: {
+        Origin: string;
+    };
+    path?: never;
+    query?: never;
+    url: '/api/auth/login/resend';
+};
+
+export type ResendLoginCodeErrors = {
+    /**
+     * BAD_REQUEST
+     */
+    400: ErrorResponse;
+    /**
+     * Нет токена доступа или он недействителен
+     */
+    401: ErrorResponse;
+    /**
+     * ORIGIN_NOT_ALLOWED
+     */
+    403: ErrorResponse;
+    /**
+     * LOGIN_ATTEMPT_INVALID: попытка неизвестна, завершена или истекла
+     */
+    410: ErrorResponse;
+    /**
+     * PAYLOAD_TOO_LARGE
+     */
+    413: ErrorResponse;
+    /**
+     * UNSUPPORTED_MEDIA_TYPE
+     */
+    415: ErrorResponse;
+    /**
+     * Запрос не прошёл валидацию; details — результат z.flattenError()
+     */
+    422: ErrorResponse;
+    /**
+     * RATE_LIMITED: details.retryAfterSeconds; прежний код, сроки и оставшиеся проверки сохраняются
+     */
+    429: ErrorResponse;
+    /**
+     * Непредвиденная ошибка сервера
+     */
+    500: ErrorResponse;
+    /**
+     * Хранилище или база данных недоступны
+     */
+    503: ErrorResponse;
+};
+
+export type ResendLoginCodeError = ResendLoginCodeErrors[keyof ResendLoginCodeErrors];
+
+export type ResendLoginCodeResponses = {
+    /**
+     * Код заменён; даты UTC ISO 8601
+     */
+    200: LoginResend;
+};
+
+export type ResendLoginCodeResponse = ResendLoginCodeResponses[keyof ResendLoginCodeResponses];
 
 export type VerifyLoginData = {
     body: {

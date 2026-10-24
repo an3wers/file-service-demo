@@ -55,6 +55,7 @@ export const loginVerifySchema = z.object({
   attemptToken: z.string().min(1).max(256),
   code: z.string().regex(/^[0-9]{6}$/, "Введите шесть цифр"),
 });
+export const loginResendSchema = loginVerifySchema.pick({ attemptToken: true });
 export const loginAttemptSchema = z
   .object({
     attemptToken: z.string(),
@@ -64,3 +65,6 @@ export const loginAttemptSchema = z
     deliveryStatus: z.enum(["accepted", "unconfirmed"]),
   })
   .meta({ id: "LoginAttempt" });
+export const loginResendResponseSchema = loginAttemptSchema
+  .omit({ attemptToken: true })
+  .meta({ id: "LoginResend" });

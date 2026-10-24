@@ -63,6 +63,8 @@ async function start(
     post("login", { email, password });
   const verify = (attemptToken: string, code = auth.code()) =>
     post("login/verify", { attemptToken, code });
+  const resend = (attemptToken: string) =>
+    post("login/resend", { attemptToken });
   const enter = async () => {
     const response = await login();
     expect(response.status).toBe(200);
@@ -72,7 +74,7 @@ async function start(
     fetch(`${base}/api/files`, {
       headers: token ? { Authorization: `Bearer ${token}` } : {},
     });
-  return { auth, post, login, verify, enter, base, files };
+  return { auth, post, login, verify, resend, enter, base, files };
 }
 const cookieOf = (response: Response) =>
   response.headers.getSetCookie()[0]?.split(";")[0] ?? "";
@@ -239,6 +241,143 @@ it("квота писем возвращает 429 без новой попыт�
   expect(denied.headers.get("retry-after")).toBe("900");
 });
 
+it("повтор кода без пароля заменяет прежний код, не сдвигает попытку и не сбрасывает проверки", async () => {
+  const h = await start();
+  const { attemptToken } = await (await h.login()).json();
+  const oldCode = h.auth.code();
+  const wrong = oldCode === "000000" ? "999999" : "000000";
+  expect((await h.verify(attemptToken, wrong)).status).toBe(400);
+  h.auth.clock.advance(1 / 60);
+  const response = await h.resend(attemptToken);
+  expect(response.status).toBe(200);
+  expect(await response.json()).toEqual({
+    attemptExpiresAt: "2026-01-01T00:15:00.000Z",
+    codeExpiresAt: "2026-01-01T00:06:00.000Z",
+    resendAvailableAt: "2026-01-01T00:02:00.000Z",
+    deliveryStatus: "accepted",
+  });
+  expect(h.auth.sendEmail).toHaveBeenCalledTimes(2);
+  const newCode = h.auth.code();
+  if (newCode !== oldCode) {
+    const delayed = await h.verify(attemptToken, oldCode);
+    expect(delayed.status).toBe(400);
+    expect((await errorOf(delayed)).details).toEqual({ remainingAttempts: 3 });
+  }
+  expect((await h.verify(attemptToken, newCode)).status).toBe(200);
+  expect((await h.resend(attemptToken)).status).toBe(410);
+});
+
+it("повтор по лимиту возвращает 429 и сохраняет прежний код и оставшиеся проверки", async () => {
+  const h = await start();
+  const { attemptToken } = await (await h.login()).json();
+  const code = h.auth.code();
+  const wrong = code === "000000" ? "999999" : "000000";
+  expect((await h.verify(attemptToken, wrong)).status).toBe(400);
+  h.auth.clock.advance(59 / 3600);
+  const limited = await h.resend(attemptToken);
+  expect(limited.status).toBe(429);
+  expect(limited.headers.get("retry-after")).toBe("1");
+  expect((await errorOf(limited)).details).toEqual({ retryAfterSeconds: 1 });
+  expect(h.auth.sendEmail).toHaveBeenCalledTimes(1);
+  const again = await h.verify(attemptToken, wrong);
+  expect((await errorOf(again)).details).toEqual({ remainingAttempts: 3 });
+  expect((await h.verify(attemptToken, code)).status).toBe(200);
+});
+
+it("первый код и повторы делят пять писем в час по назначению", async () => {
+  const h = await start();
+  const { attemptToken } = await (await h.login()).json();
+  for (let i = 0; i < 4; i++) {
+    h.auth.clock.advance(1 / 60);
+    expect((await h.resend(attemptToken)).status).toBe(200);
+  }
+  h.auth.clock.advance(1 / 60);
+  const limited = await h.resend(attemptToken);
+  expect(limited.status).toBe(429);
+  expect(limited.headers.get("retry-after")).toBe("3300");
+  expect(h.auth.sendEmail).toHaveBeenCalledTimes(5);
+  expect((await h.verify(attemptToken)).status).toBe(200);
+});
+
+it("новый код не живёт дольше попытки, пятая ошибка после повторов завершает попытку", async () => {
+  const h = await start();
+  const { attemptToken } = await (await h.login()).json();
+  const wrong = () => (h.auth.code() === "000000" ? "999999" : "000000");
+  for (let i = 0; i < 4; i++)
+    expect((await h.verify(attemptToken, wrong())).status).toBe(400);
+  h.auth.clock.advance(12 / 60);
+  const response = await h.resend(attemptToken);
+  expect(await response.json()).toMatchObject({
+    attemptExpiresAt: "2026-01-01T00:15:00.000Z",
+    codeExpiresAt: "2026-01-01T00:15:00.000Z",
+  });
+  const last = await h.verify(attemptToken, wrong());
+  expect((await errorOf(last)).details).toEqual({ remainingAttempts: 0 });
+  expect((await h.verify(attemptToken)).status).toBe(410);
+  expect((await h.resend(attemptToken)).status).toBe(410);
+
+  h.auth.clock.advance(1 / 60);
+  const { attemptToken: next } = await (await h.login()).json();
+  h.auth.clock.advance(15 / 60);
+  expect((await h.resend(next)).status).toBe(410);
+});
+
+it("отказ или таймаут SMTP при повторе оставляют новый код; сбой записи не отправляет письмо и сохраняет прежний", async () => {
+  const h = await start();
+  const { attemptToken } = await (await h.login()).json();
+  const oldCode = h.auth.code();
+  h.auth.clock.advance(1 / 60);
+  h.auth.sendEmail.mockRejectedValueOnce(new Error("private@example.com"));
+  const rejected = await h.resend(attemptToken);
+  expect(rejected.status).toBe(200);
+  expect((await rejected.json()).deliveryStatus).toBe("unconfirmed");
+  const newCode = h.auth.code();
+  if (newCode !== oldCode)
+    expect((await h.verify(attemptToken, oldCode)).status).toBe(400);
+  expect((await h.verify(attemptToken, newCode)).status).toBe(200);
+
+  const slow = await start({ sessions: (a) => a.withStore(a.store, 50) });
+  const slowAttempt = await (await slow.login()).json();
+  slow.auth.clock.advance(1 / 60);
+  let signal: AbortSignal | undefined;
+  slow.auth.sendEmail.mockImplementationOnce((_message, options) => {
+    signal = options.signal;
+    return new Promise(() => {});
+  });
+  const timedOut = await slow.resend(slowAttempt.attemptToken);
+  expect((await timedOut.json()).deliveryStatus).toBe("unconfirmed");
+  expect(signal?.aborted).toBe(true);
+  expect((await slow.verify(slowAttempt.attemptToken)).status).toBe(200);
+
+  const broken = await start({
+    sessions: (a) =>
+      a.withStore({
+        ...a.store,
+        resend: async () => {
+          throw new Error("SQL private secret");
+        },
+      }),
+  });
+  const brokenAttempt = await (await broken.login()).json();
+  broken.auth.clock.advance(1 / 60);
+  const failed = await broken.resend(brokenAttempt.attemptToken);
+  expect(failed.status).toBe(503);
+  expect(await failed.text()).not.toContain("private");
+  expect(broken.auth.sendEmail).toHaveBeenCalledTimes(1);
+  expect((await broken.verify(brokenAttempt.attemptToken)).status).toBe(200);
+});
+
+it("IP-квота писем доступа считает повторы неизвестных попыток и некорректных тел", async () => {
+  const h = await start();
+  await h.login();
+  expect((await h.resend("unknown")).status).toBe(410);
+  expect((await h.post("login/resend", {})).status).toBe(422);
+  for (let i = 0; i < 17; i++) await h.resend("unknown");
+  const limited = await h.resend("unknown");
+  expect(limited.status).toBe(429);
+  expect(limited.headers.get("retry-after")).toBe("3600");
+});
+
 it("параллельные проверки создают одну сессию, потерянный ответ не разрешает повторное погашение", async () => {
   const h = await start();
   const { attemptToken } = await (await h.login()).json();
@@ -390,4 +529,16 @@ it("ошибки формата учитываются общим лимитом
   const response = await h.verify(attemptToken);
   expect(response.status).toBe(429);
   expect((await errorOf(response)).code).toBe("RATE_LIMITED");
+});
+
+it("при IP- и email-лимите повтора Retry-After равен наибольшему ожиданию", async () => {
+  const h = await start();
+  await h.login();
+  for (let i = 0; i < 18; i++) await h.resend("unknown");
+  h.auth.clock.advance(59.5 / 60);
+  const { attemptToken } = await (await h.login()).json();
+  const limited = await h.resend(attemptToken);
+  expect(limited.status).toBe(429);
+  expect(limited.headers.get("retry-after")).toBe("60");
+  expect((await errorOf(limited)).details).toEqual({ retryAfterSeconds: 60 });
 });

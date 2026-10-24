@@ -6,6 +6,8 @@ import {
   loginBodySchema,
   loginVerifySchema,
   loginAttemptSchema,
+  loginResendSchema,
+  loginResendResponseSchema,
   sessionResponseSchema,
   registrationBodySchema,
   registrationResponseSchema,
@@ -150,6 +152,42 @@ export const authPaths: ZodOpenApiPathsObject = {
         429: {
           ...errorResponse(
             "RATE_LIMITED: details.retryAfterSeconds; без новой попытки и письма",
+          ),
+          headers: z.object({ "Retry-After": z.string() }),
+        },
+      },
+    },
+  },
+  "/login/resend": {
+    post: {
+      tags: ["auth"],
+      summary: "Повтор кода входа",
+      operationId: "resendLoginCode",
+      security: [],
+      description:
+        "Без пароля заменяет код действующей попытки до SMTP. Новый код живёт пять минут, но не дольше попытки; срок попытки и число неверных проверок не меняются. Одна SMTP-попытка; unconfirmed означает исход SMTP, новый код остаётся действующим. Письма общие с первым кодом: одно в минуту и пять в час по email, 20 в час с IP, включая неизвестные попытки и некорректные тела.",
+      requestParams: { header: z.object({ Origin: z.string() }) },
+      requestBody: { required: true, content: json(loginResendSchema) },
+      responses: {
+        200: {
+          description: "Код заменён; даты UTC ISO 8601",
+          headers: z.object({
+            "Cache-Control": z.literal("no-store"),
+            Date: z.string(),
+          }),
+          content: json(loginResendResponseSchema),
+        },
+        ...apiErrors({
+          400: "BAD_REQUEST",
+          403: "ORIGIN_NOT_ALLOWED",
+          410: "LOGIN_ATTEMPT_INVALID: попытка неизвестна, завершена или истекла",
+          413: "PAYLOAD_TOO_LARGE",
+          415: "UNSUPPORTED_MEDIA_TYPE",
+          503: "SERVICE_UNAVAILABLE",
+        }),
+        429: {
+          ...errorResponse(
+            "RATE_LIMITED: details.retryAfterSeconds; прежний код, сроки и оставшиеся проверки сохраняются",
           ),
           headers: z.object({ "Retry-After": z.string() }),
         },

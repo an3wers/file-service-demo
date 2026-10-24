@@ -15,6 +15,7 @@ import { REFRESH_COOKIE, readCookie, refreshCookieOptions } from "./cookie.js";
 import {
   loginBodySchema,
   loginVerifySchema,
+  loginResendSchema,
   registrationBodySchema,
   registrationEmailSchema,
   activationRequestSchema,
@@ -159,20 +160,11 @@ export function createAuthRouter(
     },
   );
   const prepareSession =
-    (verify = false): RequestHandler =>
+    (consumeIp: (ip: string, until: Date) => Promise<void>): RequestHandler =>
     async (req, res, next) => {
       const until = sessions.deadline();
       res.locals.authDeadline = until;
-      if (verify)
-        await sessions.consumeVerifyIp(
-          req.ip ?? req.socket.remoteAddress ?? "unknown",
-          until,
-        );
-      else
-        await sessions.consumeLoginIp(
-          req.ip ?? req.socket.remoteAddress ?? "unknown",
-          until,
-        );
+      await consumeIp(req.ip ?? req.socket.remoteAddress ?? "unknown", until);
       next();
     };
 
@@ -192,20 +184,47 @@ export function createAuthRouter(
     res.json(body);
   }
 
-  router.post("/login", prepareSession(), parseBody, async (req, res) => {
-    const { email, password } = loginBodySchema.parse(req.body);
-    const attempt = await sessions.login(
-      email,
-      password,
-      req.ip ?? req.socket.remoteAddress ?? "unknown",
-      res.locals.authDeadline,
-    );
-    res.set("Date", sessions.now().toUTCString());
-    res.json(attempt);
-  });
+  router.post(
+    "/login",
+    prepareSession(sessions.consumeLoginIp),
+    parseBody,
+    async (req, res) => {
+      const { email, password } = loginBodySchema.parse(req.body);
+      const attempt = await sessions.login(
+        email,
+        password,
+        req.ip ?? req.socket.remoteAddress ?? "unknown",
+        res.locals.authDeadline,
+      );
+      res.set("Date", sessions.now().toUTCString());
+      res.json(attempt);
+    },
+  );
+  router.post(
+    "/login/resend",
+    async (req, res, next) => {
+      res.locals.authDeadline = sessions.deadline();
+      res.locals.ipRetry = await sessions.consumeMailIp(
+        req.ip ?? req.socket.remoteAddress ?? "unknown",
+        res.locals.authDeadline,
+      );
+      next();
+    },
+    parseBody,
+    async (req, res) => {
+      const { attemptToken } = loginResendSchema.parse(req.body);
+      const result = await sessions.resend(
+        attemptToken,
+        res.locals.ipRetry,
+        res.locals.authDeadline,
+      );
+      res.set("Date", sessions.now().toUTCString());
+      res.json(result);
+    },
+  );
   router.post(
     "/login/verify",
-    prepareSession(true),
+    prepareSession(sessions.consumeVerifyIp),
     parseBody,
     async (req, res) => {
       const parsed = loginVerifySchema.safeParse(req.body);

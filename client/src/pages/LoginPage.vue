@@ -2,7 +2,7 @@
 import { computed, nextTick, onBeforeUnmount, ref, useTemplateRef } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import type { LoginAttempt } from "@/api/generated";
-import { login as requestLogin } from "@/api/auth";
+import { login as requestLogin, resendLoginCode } from "@/api/auth";
 import { serverNow } from "@/api/client";
 import { readSharedAuth } from "@/api/sharedAuth";
 import { safeReturnTo } from "@/lib/returnTo";
@@ -43,6 +43,7 @@ const attempt = ref<LoginAttempt | null>(null);
 const storageKey = "file-service-login-attempt";
 let clockOffset = 0;
 let generation = readSharedAuth().generation;
+const remainingAttempts = ref<number | null>(null);
 try {
   const saved = JSON.parse(sessionStorage.getItem(storageKey) ?? "null");
   if (
@@ -62,6 +63,8 @@ try {
   ) {
     attempt.value = saved.attempt;
     clockOffset = saved.clockOffset;
+    if (Number.isInteger(saved.remainingAttempts))
+      remainingAttempts.value = saved.remainingAttempts;
   }
 } catch {
   attempt.value = null;
@@ -83,11 +86,18 @@ const attemptRemaining = computed(() =>
     ),
   ),
 );
+const resendRemaining = computed(() =>
+  Math.max(
+    0,
+    Math.ceil(
+      (Date.parse(attempt.value?.resendAvailableAt ?? "") - now.value) / 1000,
+    ),
+  ),
+);
 const retryAt = ref(0);
 const retryRemaining = computed(() =>
   Math.max(0, Math.ceil((retryAt.value - now.value) / 1000)),
 );
-const remainingAttempts = ref<number | null>(null);
 const codeInput = useTemplateRef<{ $el: HTMLInputElement }>("codeInput");
 const feedback = useTemplateRef<HTMLDivElement>("feedback");
 const route = useRoute();
@@ -108,6 +118,71 @@ function forgetAttempt() {
     sessionStorage.removeItem(storageKey);
   } catch {
     return;
+  }
+}
+function saveAttempt(): boolean {
+  try {
+    sessionStorage.setItem(
+      storageKey,
+      JSON.stringify({
+        attempt: attempt.value,
+        clockOffset,
+        generation,
+        remainingAttempts: remainingAttempts.value,
+      }),
+    );
+    return true;
+  } catch {
+    return false;
+  }
+}
+function syncClock() {
+  clockOffset = serverNow() - Date.now();
+  now.value = Date.now() + clockOffset;
+}
+async function resend(): Promise<void> {
+  if (!attempt.value || pending.value || resendRemaining.value > 0) return;
+  pending.value = true;
+  failure.value = null;
+  try {
+    const response = await resendLoginCode(
+      attempt.value.attemptToken,
+      controller.signal,
+    );
+    if (controller.signal.aborted || !attempt.value) return;
+    syncClock();
+    attempt.value = { ...attempt.value, ...response };
+    code.value = "";
+    saveAttempt();
+  } catch (error) {
+    if (controller.signal.aborted) return;
+    failure.value = errorMessage(error, "Не удалось отправить код");
+    if (isApiError(error)) {
+      const details = error.details as
+        { retryAfterSeconds?: number } | undefined;
+      if (error.code === "LOGIN_ATTEMPT_INVALID") forgetAttempt();
+      else if (
+        error.status === 429 &&
+        details?.retryAfterSeconds &&
+        attempt.value
+      ) {
+        syncClock();
+        attempt.value = {
+          ...attempt.value,
+          resendAvailableAt: new Date(
+            now.value + details.retryAfterSeconds * 1000,
+          ).toISOString(),
+        };
+        saveAttempt();
+      }
+    }
+  } finally {
+    if (!controller.signal.aborted) {
+      pending.value = false;
+      await nextTick();
+      if (attempt.value && !failure.value) codeInput.value?.$el.focus();
+      else feedback.value?.focus();
+    }
   }
 }
 function restart() {
@@ -160,17 +235,10 @@ async function submit(): Promise<void> {
       passwordVisible.value = false;
       attempt.value = response;
       generation = started;
-      clockOffset = serverNow() - Date.now();
-      now.value = Date.now() + clockOffset;
-      try {
-        sessionStorage.setItem(
-          storageKey,
-          JSON.stringify({ attempt: response, clockOffset, generation }),
-        );
-      } catch {
+      syncClock();
+      if (!saveAttempt())
         failure.value =
           "Не удалось сохранить попытку. После обновления страницы потребуется новый вход";
-      }
     }
   } catch (error) {
     if (controller.signal.aborted) return;
@@ -179,8 +247,10 @@ async function submit(): Promise<void> {
     if (isApiError(error)) {
       const details = error.details as
         { remainingAttempts?: number; retryAfterSeconds?: number } | undefined;
-      if (details?.remainingAttempts !== undefined)
+      if (details?.remainingAttempts !== undefined) {
         remainingAttempts.value = details.remainingAttempts;
+        saveAttempt();
+      }
       if (
         error.code === "LOGIN_ATTEMPT_INVALID" ||
         error.code === "SESSION_CHANGED" ||
@@ -294,12 +364,28 @@ async function submit(): Promise<void> {
                     !attemptRemaining
                       ? "Попытка входа истекла. Начните новый вход."
                       : !codeRemaining
-                        ? "Код истёк. Начните новый вход."
+                        ? "Код истёк. Запросите новый код."
                         : `Код действует ещё ${codeRemaining} с`
                   }}
                 </p>
+                <p v-if="attemptRemaining">
+                  Попытка действует ещё {{ attemptRemaining }} с
+                </p>
                 <p v-if="remainingAttempts !== null">
                   Осталось проверок: {{ remainingAttempts }}
+                </p>
+                <Button
+                  type="button"
+                  variant="outline"
+                  data-action="resend"
+                  :disabled="
+                    pending || resendRemaining > 0 || attemptRemaining === 0
+                  "
+                  @click="resend"
+                  >Отправить код повторно</Button
+                >
+                <p v-if="attemptRemaining && resendRemaining">
+                  Новый код можно запросить через {{ resendRemaining }} с
                 </p>
                 <Button
                   type="button"

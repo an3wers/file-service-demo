@@ -117,12 +117,14 @@ async function start(clock: TestClock = createTestClock(), deadlineMs = 15000) {
   const login = () => post("login", { email: EMAIL, password: PASSWORD });
   const verify = (attemptToken: string, code = auth.code()) =>
     post("login/verify", { attemptToken, code });
+  const resend = (attemptToken: string) =>
+    post("login/resend", { attemptToken });
   const enter = async () => {
     const response = await login();
     expect(response.status).toBe(200);
     return verify((await response.json()).attemptToken);
   };
-  return { auth, clock, post, activate, login, verify, enter, base };
+  return { auth, clock, post, activate, login, verify, resend, enter, base };
 }
 const cookieOf = (response: Response) =>
   response.headers.getSetCookie()[0]?.split(";")[0] ?? "";
@@ -462,4 +464,62 @@ it("скользящее окно IP-квоты отсчитывается по�
   const blocked = await h.post("login", {});
   expect(blocked.status).toBe(429);
   expect(blocked.headers.get("retry-after")).toBe("900");
+});
+
+it("конкурентные повторы между экземплярами заменяют код один раз, новый код переживает перезапуск", async () => {
+  const h = await start();
+  await h.activate();
+  const { attemptToken } = await (await h.login()).json();
+  const oldCode = h.auth.code();
+  h.clock.advance(1 / 60);
+  const other = await start(h.clock);
+  const responses = await Promise.all(
+    Array.from({ length: 10 }, (_, index) =>
+      (index % 2 ? h : other).resend(attemptToken),
+    ),
+  );
+  expect(responses.filter((response) => response.status === 200)).toHaveLength(
+    1,
+  );
+  expect(responses.filter((response) => response.status === 429)).toHaveLength(
+    9,
+  );
+  const sender = other.auth.sendEmail.mock.calls.length ? other : h;
+  const newCode = sender.auth.code();
+  const restarted = await start(h.clock);
+  if (newCode !== oldCode)
+    expect((await restarted.verify(attemptToken, oldCode)).status).toBe(400);
+  expect((await restarted.verify(attemptToken, newCode)).status).toBe(200);
+  expect((await restarted.resend(attemptToken)).status).toBe(410);
+});
+
+it("повтор и проверка конкурируют атомарно: проверенная попытка не получает новый код", async () => {
+  const h = await start();
+  await h.activate();
+  const { attemptToken } = await (await h.login()).json();
+  h.clock.advance(1 / 60);
+  const other = await start(h.clock);
+  const [verified, resent] = await Promise.all([
+    h.verify(attemptToken),
+    other.resend(attemptToken),
+  ]);
+  expect(verified.status).toBe(200);
+  expect([200, 410]).toContain(resent.status);
+  expect((await pool.query("select * from auth_sessions")).rowCount).toBe(1);
+  expect((await h.resend(attemptToken)).status).toBe(410);
+});
+
+it("отклонённый по лимиту повтор не меняет код и сроки в БД и не расходует квоту назначения", async () => {
+  const h = await start();
+  await h.activate();
+  const { attemptToken } = await (await h.login()).json();
+  const before = (await pool.query("select * from login_attempts")).rows[0];
+  const limited = await h.resend(attemptToken);
+  expect(limited.status).toBe(429);
+  expect(limited.headers.get("retry-after")).toBe("60");
+  expect((await pool.query("select * from login_attempts")).rows[0]).toEqual(
+    before,
+  );
+  h.clock.advance(1 / 60);
+  expect((await h.resend(attemptToken)).status).toBe(200);
 });

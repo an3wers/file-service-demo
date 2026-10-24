@@ -1,6 +1,7 @@
 import type {
   AuthSession,
   LoginAttempt,
+  LoginResend,
   RegistrationResult,
   RegisterData,
   RequestActivationData,
@@ -19,6 +20,17 @@ export function login(
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ email, password }),
+    signal,
+  });
+}
+export function resendLoginCode(
+  attemptToken: string,
+  signal?: AbortSignal,
+): Promise<LoginResend> {
+  return sendRequest<LoginResend>("/auth/login/resend", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ attemptToken }),
     signal,
   });
 }

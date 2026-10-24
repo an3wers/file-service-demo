@@ -1,4 +1,5 @@
 import type { Clock } from "../domain/ports/clock.js";
+import { LOGIN_MAIL_LIMITS } from "../domain/ports/session-store.js";
 import type {
   SessionStore,
   LoginAttempt,
@@ -58,10 +59,7 @@ export function createMemorySessionStore(clock: Clock) {
         [...events].map(([key, values]) => [key, [...values]]),
       );
       const retry = Math.max(
-        consume(keys.email, [
-          { windowMs: 60000, maximum: 1 },
-          { windowMs: 3600000, maximum: 5 },
-        ]),
+        consume(keys.email, LOGIN_MAIL_LIMITS),
         consume(keys.ip, [{ windowMs: 3600000, maximum: 20 }]),
       );
       if (retry) {
@@ -76,6 +74,41 @@ export function createMemorySessionStore(clock: Clock) {
         version: user.tokenVersion,
       });
       return 0;
+    },
+    async resend(hash, code, mailKey, ipRetrySeconds) {
+      const attempt = attempts.get(hash);
+      const user = attempt ? users.get(attempt.userId) : undefined;
+      if (
+        !attempt ||
+        attempt.consumed ||
+        attempt.expiresAt <= clock.now() ||
+        !user ||
+        user.state !== "active" ||
+        attempt.version !== user.tokenVersion
+      )
+        return { status: "unavailable" };
+      const key = mailKey(user.email);
+      const previous = events.get(`${key}:60000`);
+      const hourly = events.get(`${key}:3600000`);
+      const retry = Math.max(ipRetrySeconds, consume(key, LOGIN_MAIL_LIMITS));
+      if (retry) {
+        events.set(`${key}:60000`, previous ?? []);
+        events.set(`${key}:3600000`, hourly ?? []);
+        return { status: "limited", retryAfterSeconds: retry };
+      }
+      attempt.codeHash = code.codeHash;
+      attempt.codeExpiresAt =
+        code.codeExpiresAt < attempt.expiresAt
+          ? code.codeExpiresAt
+          : attempt.expiresAt;
+      attempt.resendAvailableAt = code.resendAvailableAt;
+      return {
+        status: "replaced",
+        email: user.email,
+        expiresAt: attempt.expiresAt,
+        codeExpiresAt: attempt.codeExpiresAt,
+        resendAvailableAt: attempt.resendAvailableAt,
+      };
     },
     async verify(hash, codeHash, session) {
       const attempt = attempts.get(hash);

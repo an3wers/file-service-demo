@@ -252,19 +252,17 @@ it("пятая ошибка забывает попытку и позволяе�
 it("общий отказ входа очищает пароль и возвращает фокус без смены страницы", async () => {
   vi.stubGlobal(
     "fetch",
-    vi
-      .fn()
-      .mockResolvedValue(
-        json(
-          {
-            error: {
-              code: "INVALID_CREDENTIALS",
-              message: "Неверный email или пароль",
-            },
+    vi.fn().mockResolvedValue(
+      json(
+        {
+          error: {
+            code: "INVALID_CREDENTIALS",
+            message: "Неверный email или пароль",
           },
-          401,
-        ),
+        },
+        401,
       ),
+    ),
   );
   const wrapper = mountPage();
   await credentials(wrapper);
@@ -275,4 +273,143 @@ it("общий отказ входа очищает пароль и возвра
     "Неверный email или пароль",
   );
   expect(push).not.toHaveBeenCalled();
+});
+
+it("повтор кода без пароля доступен после серверного resendAvailableAt, недоступен во время запроса и обновляет сроки", async () => {
+  vi.useFakeTimers({ toFake: ["Date", "setInterval", "clearInterval"] });
+  const clientTime = Date.parse("2026-01-01T00:00:00Z");
+  const serverTime = clientTime + 3600000;
+  vi.setSystemTime(clientTime);
+  let answer!: (response: Response) => void;
+  const fetch = vi
+    .fn()
+    .mockResolvedValueOnce(
+      json(attempt(serverTime, "unconfirmed"), 200, new Date(serverTime)),
+    )
+    .mockReturnValueOnce(
+      new Promise<Response>((resolve) => (answer = resolve)),
+    );
+  vi.stubGlobal("fetch", fetch);
+  const wrapper = mountPage();
+  await credentials(wrapper);
+  const resend = () => wrapper.get("button[data-action=resend]");
+  expect(resend().attributes("disabled")).toBeDefined();
+  expect(wrapper.text()).toContain("Новый код можно запросить через 60 с");
+  expect(wrapper.text()).toContain("Попытка действует ещё 900 с");
+  vi.advanceTimersByTime(60000);
+  await flushPromises();
+  expect(resend().attributes("disabled")).toBeUndefined();
+  await resend().trigger("click");
+  expect(resend().attributes("disabled")).toBeDefined();
+  expect(fetch.mock.calls[1]![0]).toContain("/auth/login/resend");
+  expect(JSON.parse(fetch.mock.calls[1]![1].body)).toEqual({
+    attemptToken: "a".repeat(43),
+  });
+  answer(
+    json(
+      {
+        attemptExpiresAt: new Date(serverTime + 900000).toISOString(),
+        codeExpiresAt: new Date(serverTime + 360000).toISOString(),
+        resendAvailableAt: new Date(serverTime + 120000).toISOString(),
+        deliveryStatus: "accepted",
+      },
+      200,
+      new Date(serverTime + 60000),
+    ),
+  );
+  await flushPromises();
+  expect(wrapper.text()).toContain("Почтовый сервер принял письмо");
+  expect(wrapper.text()).toContain("Код действует ещё 300 с");
+  expect(wrapper.text()).toContain("Попытка действует ещё 840 с");
+  expect(resend().attributes("disabled")).toBeDefined();
+  expect(
+    JSON.parse(sessionStorage.getItem("file-service-login-attempt")!).attempt,
+  ).toMatchObject({
+    attemptToken: "a".repeat(43),
+    codeExpiresAt: new Date(serverTime + 360000).toISOString(),
+  });
+  await wrapper.get("input[name=code]").setValue("012345");
+  expect(
+    wrapper.get("button[type=submit]").attributes("disabled"),
+  ).toBeUndefined();
+});
+
+it("лимит повтора не мешает вводу кода, оставшиеся проверки переживают обновление, завершённая попытка забывается", async () => {
+  const limited = json(
+    {
+      error: {
+        code: "RATE_LIMITED",
+        message: "Слишком много запросов. Попробуйте позже",
+        details: { retryAfterSeconds: 1800 },
+      },
+    },
+    429,
+  );
+  const fetch = vi
+    .fn()
+    .mockResolvedValueOnce(
+      json({
+        ...attempt(),
+        resendAvailableAt: new Date(Date.now() - 2000).toISOString(),
+      }),
+    )
+    .mockResolvedValueOnce(
+      json(
+        {
+          error: {
+            code: "LOGIN_CODE_INVALID",
+            message: "Неверный код",
+            details: { remainingAttempts: 4 },
+          },
+        },
+        400,
+      ),
+    )
+    .mockResolvedValueOnce(limited)
+    .mockResolvedValueOnce(
+      json(
+        {
+          error: {
+            code: "LOGIN_ATTEMPT_INVALID",
+            message: "Попытка входа завершена. Войдите заново",
+          },
+        },
+        410,
+      ),
+    );
+  vi.stubGlobal("fetch", fetch);
+  const first = mountPage();
+  await credentials(first);
+  await first.get("input[name=code]").setValue("123456");
+  await first.get("form").trigger("submit");
+  await flushPromises();
+  first.unmount();
+  const wrapper = mountPage();
+  expect(wrapper.text()).toContain("Осталось проверок: 4");
+  await wrapper.get("button[data-action=resend]").trigger("click");
+  await flushPromises();
+  expect(wrapper.text()).toContain("Новый код можно запросить через 1800 с");
+  expect(
+    wrapper.get("button[data-action=resend]").attributes("disabled"),
+  ).toBeDefined();
+  await wrapper.get("input[name=code]").setValue("654321");
+  expect(
+    wrapper.get("button[type=submit]").attributes("disabled"),
+  ).toBeUndefined();
+  wrapper.unmount();
+  sessionStorage.setItem(
+    "file-service-login-attempt",
+    JSON.stringify({
+      ...JSON.parse(sessionStorage.getItem("file-service-login-attempt")!),
+      attempt: {
+        ...attempt(),
+        resendAvailableAt: new Date(Date.now() - 2000).toISOString(),
+      },
+    }),
+  );
+  const last = mountPage();
+  await last.get("button[data-action=resend]").trigger("click");
+  await flushPromises();
+  expect(last.find("input[name=email]").exists()).toBe(true);
+  expect(sessionStorage.getItem("file-service-login-attempt")).toBeNull();
 });

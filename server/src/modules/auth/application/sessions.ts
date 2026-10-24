@@ -89,6 +89,46 @@ export function createSessionsModule({
     );
     if (retry) throw new MailRateLimitedError(retry);
   }
+  const mailIpKey = (ip: string) =>
+    `mail:ip:${createHash("sha256").update(ip).digest("hex")}`;
+  const mailEmailKey = (email: string) =>
+    `mail:login:${secretDigest("email", email)}`;
+  const newCode = () => randomInt(1000000).toString().padStart(6, "0");
+  async function deliver(
+    email: string,
+    code: string,
+    until: Date,
+  ): Promise<"accepted" | "unconfirmed"> {
+    const remaining = until.getTime() - Date.now();
+    if (remaining <= 0) return "unconfirmed";
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), remaining);
+    try {
+      return await Promise.race([
+        notification
+          .sendEmail(
+            {
+              to: email,
+              subject: "Код входа",
+              text: `Код входа: ${code}\nКод действует пять минут.`,
+            },
+            { signal: controller.signal },
+          )
+          .then(() => "accepted" as const),
+        new Promise<"unconfirmed">((resolve) =>
+          controller.signal.addEventListener(
+            "abort",
+            () => resolve("unconfirmed"),
+            { once: true },
+          ),
+        ),
+      ]);
+    } catch {
+      return "unconfirmed";
+    } finally {
+      clearTimeout(timer);
+    }
+  }
   async function issueSession(
     user: User,
     refreshToken: string,
@@ -110,6 +150,14 @@ export function createSessionsModule({
       consume(`login:ip:${secretDigest("ip", ip)}`, 50, until),
     consumeVerifyIp: (ip: string, until: Date) =>
       consume(`login:verify:ip:${secretDigest("ip", ip)}`, 100, until),
+    consumeMailIp: (ip: string, until: Date) =>
+      available(() =>
+        store.consume(
+          mailIpKey(ip),
+          [{ windowMs: 3600000, maximum: 20 }],
+          until,
+        ),
+      ),
     async login(email: string, password: string, ip: string, until: Date) {
       await consume(`login:email:${secretDigest("email", email)}`, 10, until);
       const user = await available(() => store.findByEmail(email, until));
@@ -120,7 +168,7 @@ export function createSessionsModule({
       if (user.state !== "active") throw new EmailNotVerifiedError();
       const attemptToken = randomBytes(32).toString("base64url");
       const tokenHash = secretDigest("login-attempt", attemptToken);
-      const code = randomInt(1000000).toString().padStart(6, "0");
+      const code = newCode();
       const now = clock.now().getTime();
       const attempt = {
         tokenHash,
@@ -134,50 +182,45 @@ export function createSessionsModule({
       const retry = await available(() =>
         store.saveAttempt(
           attempt,
-          {
-            email: `mail:login:${secretDigest("email", email)}`,
-            ip: `mail:ip:${createHash("sha256").update(ip).digest("hex")}`,
-          },
+          { email: mailEmailKey(email), ip: mailIpKey(ip) },
           until,
         ),
       );
       if (retry) throw new MailRateLimitedError(retry);
-      let deliveryStatus: "accepted" | "unconfirmed" = "unconfirmed";
-      const remaining = until.getTime() - Date.now();
-      if (remaining > 0) {
-        const controller = new AbortController();
-        const timer = setTimeout(() => controller.abort(), remaining);
-        try {
-          deliveryStatus = await Promise.race([
-            notification
-              .sendEmail(
-                {
-                  to: user.email,
-                  subject: "Код входа",
-                  text: `Код входа: ${code}\nКод действует пять минут.`,
-                },
-                { signal: controller.signal },
-              )
-              .then(() => "accepted" as const),
-            new Promise<"unconfirmed">((resolve) =>
-              controller.signal.addEventListener(
-                "abort",
-                () => resolve("unconfirmed"),
-                { once: true },
-              ),
-            ),
-          ]);
-        } catch {
-          deliveryStatus = "unconfirmed";
-        } finally {
-          clearTimeout(timer);
-        }
-      }
+      const deliveryStatus = await deliver(user.email, code, until);
       return {
         attemptToken,
         attemptExpiresAt: attempt.expiresAt.toISOString(),
         codeExpiresAt: attempt.codeExpiresAt.toISOString(),
         resendAvailableAt: attempt.resendAvailableAt.toISOString(),
+        deliveryStatus,
+      };
+    },
+    async resend(attemptToken: string, ipRetrySeconds: number, until: Date) {
+      const tokenHash = secretDigest("login-attempt", attemptToken);
+      const code = newCode();
+      const now = clock.now().getTime();
+      const result = await available(() =>
+        store.resend(
+          tokenHash,
+          {
+            codeHash: codeDigest(tokenHash, code),
+            codeExpiresAt: new Date(now + 300000),
+            resendAvailableAt: new Date(now + 60000),
+          },
+          mailEmailKey,
+          ipRetrySeconds,
+          until,
+        ),
+      );
+      if (result.status === "unavailable") throw new LoginAttemptInvalidError();
+      if (result.status === "limited")
+        throw new MailRateLimitedError(result.retryAfterSeconds);
+      const deliveryStatus = await deliver(result.email, code, until);
+      return {
+        attemptExpiresAt: result.expiresAt.toISOString(),
+        codeExpiresAt: result.codeExpiresAt.toISOString(),
+        resendAvailableAt: result.resendAvailableAt.toISOString(),
         deliveryStatus,
       };
     },
