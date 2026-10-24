@@ -241,3 +241,14 @@ export function deleteFile(id: string): Promise<void> {
   // 204 без тела — `apiRequest` возвращает undefined, не пытаясь его парсить.
   return apiRequest<void>(`/files/${id}`, { method: "DELETE" });
 }
+
+export function updateFile(
+  id: string,
+  body: { name?: string; directory?: string },
+): Promise<FileDto> {
+  return apiRequest<FileDto>(`/files/${id}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}

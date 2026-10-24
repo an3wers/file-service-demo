@@ -35,7 +35,7 @@ const MESSAGES: Record<string, string> = {
   INVALID_FILE_NAME: "Недопустимое имя файла",
 
   FILE_NOT_FOUND: "Файл не найден — возможно, он уже удалён",
-  FILE_NOT_READY: "Файл ещё не готов к скачиванию",
+  FILE_NOT_READY: "Файл ещё не готов: загрузка или удаление не завершены",
   UPLOAD_NOT_COMPLETED:
     "Объект не найден в хранилище: загрузка в S3 не завершилась",
   DUPLICATE_RESOURCE: "Такая запись уже существует",

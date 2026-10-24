@@ -5,7 +5,9 @@ import {
   ArrowUpIcon,
   DownloadIcon,
   FolderIcon,
+  FolderInputIcon,
   FolderOpenIcon,
+  PencilIcon,
   RefreshCwIcon,
   SearchXIcon,
   Trash2Icon,
@@ -37,6 +39,8 @@ import { useFileBrowser } from "@/composables/useFileBrowser";
 const emit = defineEmits<{
   open: [file: FileDto];
   download: [file: FileDto];
+  rename: [file: FileDto];
+  move: [file: FileDto];
   remove: [file: FileDto];
 }>();
 
@@ -131,7 +135,7 @@ const skeletonRows = [0, 1, 2, 3, 4];
                 />
               </button>
             </TableHead>
-            <TableHead class="h-12 w-28 px-4 text-right">
+            <TableHead class="h-12 w-44 px-4 text-right">
               <span class="sr-only">Действия</span>
             </TableHead>
           </TableRow>
@@ -213,6 +217,24 @@ const skeletonRows = [0, 1, 2, 3, 4];
                     @click.stop="emit('download', file)"
                   >
                     <DownloadIcon />
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    aria-label="Переименовать файл"
+                    :disabled="file.status !== 'ready'"
+                    @click.stop="emit('rename', file)"
+                  >
+                    <PencilIcon />
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    aria-label="Переместить файл"
+                    :disabled="file.status !== 'ready'"
+                    @click.stop="emit('move', file)"
+                  >
+                    <FolderInputIcon />
                   </Button>
                   <Button
                     variant="ghost"
