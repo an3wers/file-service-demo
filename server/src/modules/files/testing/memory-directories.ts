@@ -1,13 +1,15 @@
 import type { DirectoriesForCatalog } from "../domain/ports/directories.js";
 import type { FileRowsForFiles } from "../domain/ports/file-rows.js";
 
+export type MemoryDirectoryTree = Map<
+  string,
+  { parent: string | null; name: string }
+>;
+
 export function createMemoryDirectories(
   fileRows: Pick<FileRowsForFiles, "listFiles">,
+  paths: MemoryDirectoryTree = new Map([["", { parent: null, name: "" }]]),
 ): DirectoriesForCatalog {
-  const paths = new Map<string, { parent: string | null; name: string }>([
-    ["", { parent: null, name: "" }],
-  ]);
-
   return {
     async exists(path) {
       return paths.has(path);

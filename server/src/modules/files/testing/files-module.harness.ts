@@ -1,8 +1,15 @@
-import { assembleFiles, type FilesModuleDependencies } from "../assembly.js";
+import {
+  assembleFiles,
+  type FilesModuleDependencies,
+  type FilesPorts,
+} from "../assembly.js";
 import type { UploadOperations } from "../domain/ports/upload-operations.js";
 import type { ConfirmationModule } from "../application/confirmation.js";
 import { createMemoryUploadOperations } from "./memory-upload-operations.js";
-import { createMemoryDirectories } from "./memory-directories.js";
+import {
+  createMemoryDirectories,
+  type MemoryDirectoryTree,
+} from "./memory-directories.js";
 import { createTestClock } from "../../../testing/clock.js";
 import { createMemoryObjectStore } from "../../../storage/memory-object-store.js";
 import type { MemoryObjectStore } from "../../../storage/memory-object-store.js";
@@ -19,6 +26,7 @@ import type { UploadPolicy } from "../domain/upload-policy.js";
 import type { StoredFile } from "../domain/stored-file.js";
 
 export const MIB = 1024 * 1024;
+export const HARNESS_OWNER = "00000000-0000-4000-8000-0000000000bb";
 const GIB = 1024 * MIB;
 const BUCKET = "test-bucket";
 
@@ -94,6 +102,21 @@ export function buildHarness(
     directories,
     lockWaitMs === undefined ? {} : { lockWaitMs },
   );
+  const trees = new Map<string, MemoryDirectoryTree>();
+  const forOwner = (owner: string): FilesPorts => {
+    const ownRows = fileRows.forOwner(owner);
+    if (!trees.has(owner))
+      trees.set(owner, new Map([["", { parent: null, name: "" }]]));
+    const ownDirectories = createMemoryDirectories(ownRows, trees.get(owner));
+    return {
+      fileRows: ownRows,
+      directories: ownDirectories,
+      operations: operations.forOwner(owner, {
+        fileRows: ownRows,
+        directories: ownDirectories,
+      }),
+    };
+  };
   const dependencies = {
     objectStore,
     fileRows,
@@ -101,9 +124,13 @@ export function buildHarness(
     operations,
     policy,
     clock,
+    forOwner,
   };
-  const { confirmation, uploads, catalog, cleanup } =
-    assembleFiles(dependencies);
+  const { cleanup } = assembleFiles(dependencies);
+  const { confirmation, uploads, catalog } = assembleFiles({
+    ...dependencies,
+    ...forOwner(HARNESS_OWNER),
+  });
 
   return {
     dependencies,

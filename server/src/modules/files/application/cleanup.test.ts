@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { MemoryObjectStore } from "../../../storage/memory-object-store.js";
 import type { UploadedPart } from "../../../storage/object-store.js";
 import {
+  HARNESS_OWNER,
   MIB,
   PENDING_TTL_HOURS,
   THREE_PART_SIZE,
@@ -149,7 +150,7 @@ describe("cleanup", () => {
       const uploadId = await objectStore.beginMultipart(key, {
         contentType: "text/plain",
       });
-      await fileRows.reserveFile({
+      await fileRows.forOwner(HARNESS_OWNER).reserveFile({
         id,
         objectKey: key,
         directory: "docs",

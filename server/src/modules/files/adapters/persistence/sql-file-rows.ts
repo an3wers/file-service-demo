@@ -16,6 +16,10 @@ const SORT_COLUMNS = {
   size_bytes: "size_bytes",
 } as const;
 
+function owned(param: number): string {
+  return `($${param}::uuid is null or owner_id = $${param})`;
+}
+
 /** LIKE считает `%` и `_` шаблонами, хотя оба символа допустимы в именах каталогов. */
 function escapeLike(value: string): string {
   return value.replaceAll(/[\\%_]/g, String.raw`\$&`);
@@ -24,10 +28,11 @@ function escapeLike(value: string): string {
 export async function findFileById(
   id: string,
   execute = query,
+  owner: string | null = null,
 ): Promise<StoredFile | null> {
   const { rows } = await execute<FileRow>(
-    "select * from files where id = $1 and deleted_at is null",
-    [id],
+    `select * from files where id = $1 and deleted_at is null and ${owned(2)}`,
+    [id, owner],
   );
 
   return rows[0] ? toStoredFile(rows[0]) : null;
@@ -37,6 +42,7 @@ export async function markFileReady(
   id: string,
   values: ReadyValues,
   execute = query,
+  owner: string | null = null,
 ): Promise<StoredFile | null> {
   const { rows } = await execute<FileRow>(
     `update files
@@ -48,13 +54,13 @@ export async function markFileReady(
             part_size = null,
             part_count = null,
             updated_at = now()
-      where id = $1 and deleted_at is null
+      where id = $1 and deleted_at is null and ${owned(5)}
         and not exists (
           select 1 from upload_operations o join upload_terminations t on t.operation_id = o.id
           where o.file_id = files.id
         )
       returning *`,
-    [id, values.sizeBytes, values.etag, values.contentType],
+    [id, values.sizeBytes, values.etag, values.contentType, owner],
   );
 
   return rows[0] ? toStoredFile(rows[0]) : null;
@@ -63,19 +69,25 @@ export async function markFileReady(
 export async function markFileFailed(
   id: string,
   execute = query,
+  owner: string | null = null,
 ): Promise<void> {
   await execute(
-    "update files set status = 'failed', upload_id = null, part_size = null, part_count = null, updated_at = now() where id = $1",
-    [id],
+    `update files set status = 'failed', upload_id = null, part_size = null, part_count = null, updated_at = now() where id = $1 and ${owned(2)}`,
+    [id, owner],
   );
 }
 
 /** Слоты, занятые составными загрузками, которые ещё не завершены и не отменены. */
-export async function countActiveMultipart(execute = query): Promise<number> {
+export async function countActiveMultipart(
+  execute = query,
+  owner: string | null = null,
+): Promise<number> {
   const { rows } = await execute<{ count: number }>(
     `select count(*)::int as count
        from files
-      where status = 'pending' and upload_id is not null and deleted_at is null`,
+      where status = 'pending' and upload_id is not null and deleted_at is null
+        and ${owned(1)}`,
+    [owner],
   );
 
   return rows[0]?.count ?? 0;
@@ -84,13 +96,14 @@ export async function countActiveMultipart(execute = query): Promise<number> {
 export async function softDeleteFile(
   id: string,
   execute = query,
+  owner: string | null = null,
 ): Promise<StoredFile | null> {
   const { rows } = await execute<FileRow>(
     `update files
         set deleted_at = now(), updated_at = now()
-      where id = $1 and deleted_at is null
+      where id = $1 and deleted_at is null and ${owned(2)}
       returning *`,
-    [id],
+    [id, owner],
   );
 
   return rows[0] ? toStoredFile(rows[0]) : null;
@@ -106,9 +119,10 @@ export async function hardDeleteFile(
 export async function listFiles(
   params: ListFilesParams,
   execute = query,
+  owner: string | null = null,
 ): Promise<{ items: StoredFile[]; total: number }> {
-  const conditions = ["deleted_at is null"];
-  const values: unknown[] = [];
+  const conditions = ["deleted_at is null", owned(1)];
+  const values: unknown[] = [owner];
 
   const addParam = (value: unknown): string => {
     values.push(value);
@@ -192,6 +206,7 @@ export async function listExpiredPending(
     `select * from files
       where status = 'pending'
         and deleted_at is null
+        and owner_id is not null
         and attempt_started_at < now() - make_interval(hours => $1)
       order by attempt_started_at asc`,
     [ttlHours],
@@ -211,6 +226,7 @@ export async function listExpiredPending(
 export function createSqlFileRows(
   bucket: string,
   execute: Execute = query,
+  owner: string | null = null,
 ): FileRows {
   async function insertFile(
     input: InsertFileInput,
@@ -220,9 +236,9 @@ export function createSqlFileRows(
       `insert into files (
          id, bucket, object_key, directory, original_name, extension,
          content_type, size_bytes, etag, status, upload_source,
-         upload_id, part_size, part_count
+         upload_id, part_size, part_count, owner_id
        )
-       values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+       values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
        ${
          replace
            ? `on conflict (id) do update set
@@ -231,7 +247,8 @@ export function createSqlFileRows(
          upload_id = excluded.upload_id, part_size = excluded.part_size,
          part_count = excluded.part_count, updated_at = now(),
          attempt_started_at = now(), attempt_generation = gen_random_uuid()
-         where files.deleted_at is null and files.status <> 'ready'`
+         where files.deleted_at is null and files.status <> 'ready'
+           and files.owner_id is not distinct from excluded.owner_id`
            : ""
        }
        returning *`,
@@ -250,6 +267,7 @@ export function createSqlFileRows(
         input.uploadId ?? null,
         input.partSize ?? null,
         input.partCount ?? null,
+        owner,
       ],
     );
 
@@ -261,21 +279,21 @@ export function createSqlFileRows(
   return {
     async isFileDeleted(id) {
       const { rows } = await execute<{ deleted: boolean }>(
-        "select deleted_at is not null as deleted from files where id = $1",
-        [id],
+        `select deleted_at is not null as deleted from files where id = $1 and ${owned(2)}`,
+        [id, owner],
       );
       return rows[0]?.deleted ?? false;
     },
     insertFile,
     reserveFile: (input) => insertFile(input, true),
-    findFileById: (id) => findFileById(id, execute),
-    markFileReady: (id, values) => markFileReady(id, values, execute),
-    markFileFailed: (id) => markFileFailed(id, execute),
+    findFileById: (id) => findFileById(id, execute, owner),
+    markFileReady: (id, values) => markFileReady(id, values, execute, owner),
+    markFileFailed: (id) => markFileFailed(id, execute, owner),
     async failFileIfUnchanged(expected) {
       const { rows } = await execute<{ id: string }>(
         `update files set status = 'failed', upload_id = null, part_size = null,
             part_count = null, updated_at = now()
-          where id = $1 and status = 'pending' and deleted_at is null
+          where id = $1 and status = 'pending' and deleted_at is null and ${owned(5)}
             and date_trunc('milliseconds', updated_at) = $2
             and upload_id is not distinct from $3
             and attempt_generation = $4
@@ -288,13 +306,14 @@ export function createSqlFileRows(
           expected.updatedAt,
           expected.kind === "multipart" ? expected.uploadId : null,
           expected.attemptGeneration,
+          owner,
         ],
       );
       return rows.length > 0;
     },
-    countActiveMultipart: () => countActiveMultipart(execute),
-    softDeleteFile: (id) => softDeleteFile(id, execute),
-    listFiles: (params) => listFiles(params, execute),
+    countActiveMultipart: () => countActiveMultipart(execute, owner),
+    softDeleteFile: (id) => softDeleteFile(id, execute, owner),
+    listFiles: (params) => listFiles(params, execute, owner),
     findKnownUploadIds: (ids) => findKnownUploadIds(ids, execute),
     listExpiredPending: (ttlHours) => listExpiredPending(ttlHours, execute),
   };

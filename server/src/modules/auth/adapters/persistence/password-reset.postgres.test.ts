@@ -32,7 +32,7 @@ beforeAll(async () => {
 });
 beforeEach(async () => {
   await pool.query(
-    "truncate login_attempts, auth_sessions, auth_secrets, auth_mail_events, users",
+    "truncate login_attempts, auth_sessions, auth_secrets, auth_mail_events, users cascade",
   );
 });
 afterEach(async () => {

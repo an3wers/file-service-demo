@@ -1,6 +1,7 @@
+import { createHash } from "node:crypto";
 import { Router } from "express";
-import type { RequestHandler } from "express";
-import { ERROR_CODES, badRequest } from "../../../../errors.js";
+import type { RequestHandler, Response } from "express";
+import { ERROR_CODES, badRequest, unauthorized } from "../../../../errors.js";
 import { decodeOriginalName } from "./decode-original-name.js";
 import {
   validateBody,
@@ -32,9 +33,24 @@ import { toFileDto } from "./dto.js";
 import type { UploadsModule } from "../../application/uploads.js";
 import type { CatalogModule } from "../../application/catalog.js";
 
-export interface FilesRouterDeps {
+export type FilesScenarios = (ownerId: string) => {
   uploads: UploadsModule;
   catalog: CatalogModule;
+};
+
+function ownerOf(res: Response): string {
+  const userId: unknown = res.locals.userId;
+  if (typeof userId !== "string") throw unauthorized();
+  return userId;
+}
+
+export function operationIdFor(ownerId: string, id: string): string {
+  const hex = createHash("sha256").update(`${ownerId}:${id}`).digest("hex");
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-8${hex.slice(13, 16)}-8${hex.slice(17, 20)}-${hex.slice(20, 32)}`;
+}
+
+export interface FilesRouterDeps {
+  scenarios: FilesScenarios;
   /**
    * Парсер multipart/form-data для единственного загружаемого поля, уже несущий
    * ограничение размера, заданное в этом развёртывании.
@@ -49,11 +65,14 @@ export interface FilesRouterDeps {
  * выбрать статус.
  */
 export function createFilesRouter({
-  uploads,
-  catalog,
+  scenarios,
   uploadSingleFile,
 }: FilesRouterDeps): Router {
   const filesRouter = Router();
+  const uploadsOf = (res: Response) => scenarios(ownerOf(res)).uploads;
+  const catalogOf = (res: Response) => scenarios(ownerOf(res)).catalog;
+  const operationOf = (res: Response, id: string) =>
+    operationIdFor(ownerOf(res), id);
 
   // Загрузка через сервер как прокси (multipart/form-data).
   filesRouter.post(
@@ -68,8 +87,9 @@ export function createFilesRouter({
         );
       }
 
-      const file = await uploads.uploadThroughServer({
-        operationId: req.body.operationId,
+      const file = await uploadsOf(res).uploadThroughServer({
+        operationId:
+          req.body.operationId && operationOf(res, req.body.operationId),
         filename: decodeOriginalName(req.file.originalname),
         directory: req.body.directory,
         contentType: req.file.mimetype,
@@ -88,7 +108,9 @@ export function createFilesRouter({
     validateParams(idParamsSchema),
     async (_req, res) => {
       const { id } = validatedParams<IdParams>(res);
-      const result = await uploads.getUploadOperation(id);
+      const result = await uploadsOf(res).getUploadOperation(
+        operationOf(res, id),
+      );
       res.json(
         result.status === "succeeded"
           ? { ...result, file: toFileDto(result.file) }
@@ -105,8 +127,8 @@ export function createFilesRouter({
     validateBody(resolveUploadSchema),
     async (req, res) => {
       const { id } = validatedParams<IdParams>(res);
-      const result = await uploads.resolveUploadOperation(
-        id,
+      const result = await uploadsOf(res).resolveUploadOperation(
+        operationOf(res, id),
         req.body.stoppedUploadId,
       );
       res.json(
@@ -124,7 +146,9 @@ export function createFilesRouter({
     validateParams(idParamsSchema),
     async (_req, res) => {
       const { id } = validatedParams<IdParams>(res);
-      const result = await uploads.failUploadOperation(id);
+      const result = await uploadsOf(res).failUploadOperation(
+        operationOf(res, id),
+      );
       res.json(
         result.status === "succeeded"
           ? { ...result, file: toFileDto(result.file) }
@@ -140,7 +164,9 @@ export function createFilesRouter({
     validateParams(idParamsSchema),
     async (_req, res) => {
       const { id } = validatedParams<IdParams>(res);
-      const result = await uploads.cancelUploadOperation(id);
+      const result = await uploadsOf(res).cancelUploadOperation(
+        operationOf(res, id),
+      );
       res.json(
         result.status === "succeeded"
           ? { ...result, file: toFileDto(result.file) }
@@ -156,8 +182,9 @@ export function createFilesRouter({
     "/presign-upload",
     validateBody(presignUploadSchema),
     async (req, res) => {
-      const result = await uploads.createPresignedUpload({
-        operationId: req.body.operationId,
+      const result = await uploadsOf(res).createPresignedUpload({
+        operationId:
+          req.body.operationId && operationOf(res, req.body.operationId),
         filename: req.body.filename,
         directory: req.body.directory,
         contentType: req.body.contentType,
@@ -182,7 +209,9 @@ export function createFilesRouter({
       const { id } = validatedParams<IdParams>(res);
 
       res.json(
-        await uploads.getPartUrls(id, { partNumbers: req.body.partNumbers }),
+        await uploadsOf(res).getPartUrls(id, {
+          partNumbers: req.body.partNumbers,
+        }),
       );
     },
   );
@@ -195,7 +224,7 @@ export function createFilesRouter({
     async (_req, res) => {
       const { id } = validatedParams<IdParams>(res);
 
-      res.json(await uploads.getMultipartStatus(id));
+      res.json(await uploadsOf(res).getMultipartStatus(id));
     },
   );
 
@@ -206,7 +235,7 @@ export function createFilesRouter({
     validateQuery(listFilesQuerySchema),
     async (_req, res) => {
       const query = validatedQuery<ListFilesQuery>(res);
-      const { items, total } = await catalog.listFiles(query);
+      const { items, total } = await catalogOf(res).listFiles(query);
 
       res.json({
         items: items.map((file) => toFileDto(file)),
@@ -229,7 +258,10 @@ export function createFilesRouter({
     async (_req, res) => {
       const { id } = validatedParams<IdParams>(res);
       const { withUrl } = validatedQuery<FileCardQuery>(res);
-      const { file, downloadUrl } = await catalog.getFileCard(id, withUrl);
+      const { file, downloadUrl } = await catalogOf(res).getFileCard(
+        id,
+        withUrl,
+      );
 
       res.json(toFileDto(file, downloadUrl));
     },
@@ -245,7 +277,7 @@ export function createFilesRouter({
     async (_req, res) => {
       const { id } = validatedParams<IdParams>(res);
 
-      res.json(toFileDto(await uploads.completeUpload(id)));
+      res.json(toFileDto(await uploadsOf(res).completeUpload(id)));
     },
   );
 
@@ -259,7 +291,9 @@ export function createFilesRouter({
       const { id } = validatedParams<IdParams>(res);
       const { disposition, expiresIn } = validatedQuery<DownloadUrlQuery>(res);
 
-      res.json(await catalog.getDownloadUrl(id, { disposition, expiresIn }));
+      res.json(
+        await catalogOf(res).getDownloadUrl(id, { disposition, expiresIn }),
+      );
     },
   );
 
@@ -271,7 +305,7 @@ export function createFilesRouter({
     async (_req, res) => {
       const { id } = validatedParams<IdParams>(res);
 
-      await catalog.deleteFile(id);
+      await catalogOf(res).deleteFile(id);
       res.status(204).end();
     },
   );
@@ -279,8 +313,9 @@ export function createFilesRouter({
   return filesRouter;
 }
 
-export function createDirectoriesRouter(catalog: CatalogModule): Router {
+export function createDirectoriesRouter(scenarios: FilesScenarios): Router {
   const directoriesRouter = Router();
+  const catalogOf = (res: Response) => scenarios(ownerOf(res)).catalog;
 
   // Подкаталоги одного уровня: нужны для навигации, поэтому отдаём только
   // детей запрошенного родителя, без рекурсии.
@@ -290,7 +325,7 @@ export function createDirectoriesRouter(catalog: CatalogModule): Router {
     async (_req, res) => {
       const { parent } = validatedQuery<DirectoriesQuery>(res);
 
-      res.json(await catalog.listDirectories(parent));
+      res.json(await catalogOf(res).listDirectories(parent));
     },
   );
 
@@ -301,7 +336,7 @@ export function createDirectoriesRouter(catalog: CatalogModule): Router {
     validateBody(createDirectorySchema),
     async (req, res) => {
       res.status(201).json(
-        await catalog.createDirectory({
+        await catalogOf(res).createDirectory({
           parent: req.body.parent,
           name: req.body.name,
         }),

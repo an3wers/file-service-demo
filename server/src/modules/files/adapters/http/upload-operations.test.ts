@@ -181,7 +181,7 @@ it("HTTP чтение не блокирует и не сверяет, а ком�
   const base = `http://127.0.0.1:${(server!.address() as AddressInfo).port}/api/files/upload-operations`;
   const operationId = randomUUID();
   const reserved = await h.files.createPresignedUpload({
-    operationId,
+    operationId: h.operationId(operationId),
     filename: "a.txt",
     size: 5,
   });
@@ -192,7 +192,7 @@ it("HTTP чтение не блокирует и не сверяет, а ком�
   expect(await (await fetch(path)).json()).toEqual({ status: "pending" });
   expect(head).not.toHaveBeenCalled();
   expect(lock).not.toHaveBeenCalled();
-  await h.operations.exclusive(operationId, async () => {
+  await h.operations.exclusive(h.operationId(operationId), async () => {
     expect(await (await fetch(path)).json()).toEqual({ status: "pending" });
     expect(await (await resolve()).json()).toEqual({ status: "processing" });
   });
@@ -239,7 +239,11 @@ it("HTTP принимает сообщение об остановке толь�
   });
   const base = `http://127.0.0.1:${(server!.address() as AddressInfo).port}/api/files`;
   const operationId = randomUUID();
-  const upload = { operationId, filename: "big.bin", size: THREE_PART_SIZE };
+  const upload = {
+    operationId: h.operationId(operationId),
+    filename: "big.bin",
+    size: THREE_PART_SIZE,
+  };
   const first = await h.files.createPresignedUpload(upload);
   if (first.strategy !== "multipart")
     throw new Error("Ожидалась составная загрузка");
@@ -252,7 +256,7 @@ it("HTTP принимает сообщение об остановке толь�
   expect(await (await resolve("другая загрузка")).json()).toEqual({
     status: "pending",
   });
-  await h.operations.exclusive(operationId, async () => {
+  await h.operations.exclusive(h.operationId(operationId), async () => {
     expect(await (await resolve(first.uploadId)).json()).toEqual({
       status: "processing",
     });
@@ -269,7 +273,7 @@ it("HTTP принимает сообщение об остановке толь�
   expect(await (await resolve()).json()).toEqual({ status: "pending" });
   const singleId = randomUUID();
   await h.files.createPresignedUpload({
-    operationId: singleId,
+    operationId: h.operationId(singleId),
     filename: "a.txt",
     size: 5,
   });

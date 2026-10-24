@@ -416,10 +416,11 @@ export function createAuthRouter(
 const BEARER = /^Bearer ([^\s]+)$/i;
 
 export function createRequireAuth(sessions: SessionsModule): RequestHandler {
-  return async (req, _res, next) => {
+  return async (req, res, next) => {
     const token = BEARER.exec(req.get("authorization") ?? "")?.[1];
     const claims = token ? await sessions.authenticate(token) : null;
 
+    if (claims) res.locals.userId = claims.userId;
     next(claims ? undefined : unauthorized());
   };
 }

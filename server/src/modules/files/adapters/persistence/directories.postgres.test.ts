@@ -4,11 +4,14 @@ import { readFile } from "node:fs/promises";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { pool } from "../../../../db/pool.js";
 import { migrate } from "../../../../db/migrate.js";
+import { createPostgresOwner } from "../../testing/postgres-owner.js";
 import { createSqlDirectories } from "./sql-directories.js";
 import { createSqlFileRows } from "./sql-file-rows.js";
 import { createCatalogModule } from "../../application/catalog.js";
 import { buildHarness } from "../../testing/files-module.harness.js";
 import { systemClock } from "../../domain/ports/clock.js";
+
+let owner: string;
 
 let schemaCreated = false;
 let originalKeys: unknown[] = [];
@@ -48,6 +51,7 @@ beforeAll(async () => {
     await pool.query("select object_key from files order by object_key")
   ).rows;
   await migrate();
+  owner = await createPostgresOwner();
 });
 
 afterAll(async () => {
@@ -64,7 +68,7 @@ describe("постоянные каталоги на PostgreSQL", () => {
     expect(
       (
         await pool.query(
-          'select path from directories order by path collate "C"',
+          'select path from directories where owner_id is null order by path collate "C"',
         )
       ).rows.map((row) => row.path),
     ).toEqual([
@@ -91,10 +95,10 @@ describe("постоянные каталоги на PostgreSQL", () => {
     const harness = buildHarness();
     const catalog = createCatalogModule({
       confirmation: harness.confirmation,
-      operations: createFilesPersistence("test").operations,
+      operations: createFilesPersistence("test").forOwner(owner).operations,
       objectStore: harness.objectStore,
-      fileRows: createSqlFileRows("test"),
-      directories: createSqlDirectories(),
+      fileRows: createSqlFileRows("test", undefined, owner),
+      directories: createSqlDirectories(undefined, owner),
       policy: harness.policy,
       clock: systemClock,
     });
@@ -114,6 +118,7 @@ describe("постоянные каталоги на PostgreSQL", () => {
       ),
     ).toEqual([{ name: "Café", path: "Café", fileCount: 0 }]);
     await catalog.createDirectory({ name: "café" });
+    await catalog.createDirectory({ name: "docs" });
     await catalog.createDirectory({ parent: "docs", name: "Café" });
     expect(await catalog.listDirectories("docs/Café")).toEqual({
       parent: "docs/Café",

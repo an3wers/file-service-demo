@@ -68,6 +68,7 @@ function openSession(
   id: string,
   execute: Execute,
   ports: UploadOperationSessionPorts,
+  owner: string | null,
 ): UploadOperationSession {
   return {
     ...ports,
@@ -93,15 +94,15 @@ function openSession(
     },
     async read() {
       const { rows } = await execute<OperationRow>(
-        "select * from upload_operations where id = $1",
-        [id],
+        "select * from upload_operations where id = $1 and ($2::uuid is null or owner_id = $2)",
+        [id, owner],
       );
       return rows[0] ? toRecord(rows[0]) : null;
     },
     async save(record) {
       await execute(
-        `insert into upload_operations (id, file_id, object_key, directory, original_name, extension, content_type, size_bytes)
-         values ($1, $2, $3, $4, $5, $6, $7, $8)`,
+        `insert into upload_operations (id, file_id, object_key, directory, original_name, extension, content_type, size_bytes, owner_id)
+         values ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
         [
           id,
           record.reservation.id,
@@ -111,6 +112,7 @@ function openSession(
           record.reservation.extension,
           record.reservation.contentType,
           record.size,
+          owner,
         ],
       );
     },
@@ -150,11 +152,13 @@ async function acquire(
 export interface SqlUploadOperationsOptions {
   sessionPorts: (execute: Execute) => UploadOperationSessionPorts;
   lockWaitMs: number;
+  owner?: string | null;
 }
 
 export function createSqlUploadOperations({
   sessionPorts,
   lockWaitMs,
+  owner = null,
 }: SqlUploadOperationsOptions): UploadOperations {
   return {
     async read(id) {
@@ -166,8 +170,9 @@ export function createSqlUploadOperations({
       >(
         `select o.*, t.reason, t.upload_id from upload_operations o
           full join upload_terminations t on t.operation_id = o.id
-          where coalesce(o.id, t.operation_id) = $1`,
-        [id],
+          where coalesce(o.id, t.operation_id) = $1
+            and ($2::uuid is null or o.id is null or o.owner_id = $2)`,
+        [id, owner],
       );
       const row = rows[0];
       return {
@@ -180,14 +185,17 @@ export function createSqlUploadOperations({
     terminate: (id, reason, uploadId) => terminate(id, reason, uploadId, query),
     async listTerminated() {
       const { rows } = await query<{ operation_id: string }>(
-        "select operation_id from upload_terminations order by checked_at nulls first limit 100",
+        `select t.operation_id from upload_terminations t
+          left join upload_operations o on o.id = t.operation_id
+          where o.id is null or o.owner_id is not null
+          order by t.checked_at nulls first limit 100`,
       );
       return rows.map((row) => row.operation_id);
     },
     async findIdByFileId(fileId) {
       const { rows } = await query<{ id: string }>(
-        "select id from upload_operations where file_id = $1",
-        [fileId],
+        "select id from upload_operations where file_id = $1 and ($2::uuid is null or owner_id = $2)",
+        [fileId, owner],
       );
       return rows[0]?.id ?? null;
     },
@@ -219,7 +227,9 @@ export function createSqlUploadOperations({
         if (!locked) return { busy: true };
         return {
           busy: false,
-          value: await run(openSession(id, execute, sessionPorts(execute))),
+          value: await run(
+            openSession(id, execute, sessionPorts(execute), owner),
+          ),
         };
       } finally {
         if (locked) {

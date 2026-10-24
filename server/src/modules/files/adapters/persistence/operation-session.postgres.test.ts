@@ -2,8 +2,11 @@ import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { pool } from "../../../../db/pool.js";
 import { migrate } from "../../../../db/migrate.js";
+import { createPostgresOwner } from "../../testing/postgres-owner.js";
 import { createFilesPersistence } from "../../persistence.js";
 import { FileNotFoundError } from "../../domain/errors.js";
+
+let owner: string;
 
 const schema = `operation_session_test_${randomUUID().replaceAll("-", "")}`;
 let created = false;
@@ -13,6 +16,7 @@ beforeAll(async () => {
   await pool.query(`set search_path to ${schema}`);
   pool.options.options = `-c search_path=${schema}`;
   await migrate();
+  owner = await createPostgresOwner();
 });
 beforeEach(async () => {
   await pool.query("truncate files, upload_operations, upload_terminations");
@@ -70,7 +74,7 @@ function reservation() {
 
 describe("сессия операции загрузки в PostgreSQL", () => {
   it("под блокировкой все обращения к строкам и каталогам идут через одно соединение", async () => {
-    const { operations } = createFilesPersistence("test");
+    const { operations } = createFilesPersistence("test").forOwner(owner);
     const operationId = randomUUID();
     const record = { reservation: reservation(), size: 5 };
     const { id, key, directory, originalName, extension, contentType } =
@@ -125,7 +129,7 @@ describe("сессия операции загрузки в PostgreSQL", () => {
   });
 
   it("ошибка сценария под блокировкой выходит нетронутой, а не как ошибка базы", async () => {
-    const { operations } = createFilesPersistence("test");
+    const { operations } = createFilesPersistence("test").forOwner(owner);
     const network = Object.assign(new Error("socket hang up"), {
       code: "ECONNRESET",
     });
@@ -139,7 +143,9 @@ describe("сессия операции загрузки в PostgreSQL", () => {
   });
 
   it("занятая операция возвращает явный результат, а ожидание блокировки ограничено", async () => {
-    const { operations } = createFilesPersistence("test", { lockWaitMs: 100 });
+    const { operations } = createFilesPersistence("test", {
+      lockWaitMs: 100,
+    }).forOwner(owner);
     const operationId = randomUUID();
     const holder = gate();
     const holding = operations.exclusive(operationId, holder.hold);
@@ -166,7 +172,7 @@ describe("сессия операции загрузки в PostgreSQL", () => {
   it("ожидающее подтверждение получает блокировку, как только её освобождают", async () => {
     const { operations } = createFilesPersistence("test", {
       lockWaitMs: 5_000,
-    });
+    }).forOwner(owner);
     const operationId = randomUUID();
     const holder = gate();
     const holding = operations.exclusive(operationId, holder.hold);

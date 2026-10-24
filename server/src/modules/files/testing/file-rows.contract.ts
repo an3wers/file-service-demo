@@ -142,3 +142,52 @@ export function describeFileRowsPagination(
     });
   });
 }
+
+export function describeFileRowsOwnership(
+  name: string,
+  create: () => Promise<{ mine: FileRows; theirs: FileRows; all: FileRows }>,
+): void {
+  describe(`владение строками метаданных: ${name}`, () => {
+    it("владелец видит и меняет только свои строки, уборка видит строки всех", async () => {
+      const { mine, theirs, all } = await create();
+      const plan = { sizeBytes: 5, partSize: 5, partCount: 1 };
+      const own = reservation({ ...plan, uploadId: "own-upload" });
+      const other = reservation({ ...plan, uploadId: "other-upload" });
+      await mine.insertFile(own);
+      await theirs.insertFile(other);
+      const listAll: ListFilesParams = {
+        recursive: true,
+        directory: "",
+        status: "pending",
+        page: 1,
+        limit: 10,
+        sort: "created_at",
+        order: "asc",
+      };
+
+      expect(await mine.findFileById(other.id)).toBeNull();
+      expect(await mine.isFileDeleted(other.id)).toBe(false);
+      expect(
+        await mine.markFileReady(other.id, {
+          sizeBytes: 5,
+          etag: null,
+          contentType: other.contentType,
+        }),
+      ).toBeNull();
+      await mine.markFileFailed(other.id);
+      expect(await mine.softDeleteFile(other.id)).toBeNull();
+      expect(await mine.countActiveMultipart()).toBe(1);
+      expect((await mine.listFiles(listAll)).items.map((f) => f.id)).toEqual([
+        own.id,
+      ]);
+
+      expect(await theirs.findFileById(other.id)).toMatchObject({
+        kind: "multipart",
+      });
+      expect((await all.listFiles(listAll)).total).toBe(2);
+      expect(
+        await all.findKnownUploadIds(["own-upload", "other-upload"]),
+      ).toEqual(new Set(["own-upload", "other-upload"]));
+    });
+  });
+}

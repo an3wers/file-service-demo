@@ -42,6 +42,7 @@ import { FileNotFoundError } from "../domain/errors.js";
  */
 
 export interface MemoryFileRows extends FileRows {
+  forOwner(owner: string): FileRows;
   setTerminationGuard(guard: (id: string) => boolean): void;
   /** Передвигает часы, чтобы резервирование могло стать просроченным. */
   advance(hours: number): void;
@@ -92,6 +93,7 @@ export function createMemoryFileRows(
   options: { clock?: TestClock; bucket?: string } = {},
 ): MemoryFileRows {
   const rows = new Map<string, FileRow>();
+  const owners = new Map<string, string | null>();
   const clock = options.clock ?? createTestClock();
   const bucket = options.bucket ?? "test-bucket";
   const failures = createFailureSwitch<keyof FileRows>();
@@ -107,292 +109,312 @@ export function createMemoryFileRows(
     row.attempt_started_at.getTime() <
     clock.now().getTime() - ttlHours * HOUR_MS;
 
-  const files: FileRowsForFiles & FileRowsForMultipart & FileRowsForCleanup = {
-    async reserveFile(input) {
-      failures.check("reserveFile");
-      const row = rows.get(input.id);
-      if (!row) return await files.insertFile(input);
-      if (!live(row) || row.status === "ready")
-        throw new FileNotFoundError(
-          `File ${input.id} was deleted or completed`,
-        );
-      row.attempt_started_at = clock.now();
-      row.attempt_generation = randomUUID();
-      row.status = input.status;
-      row.upload_source = input.uploadSource;
-      row.size_bytes = input.sizeBytes;
-      row.etag = input.etag;
-      row.upload_id = input.uploadId ?? null;
-      row.part_size = input.partSize ?? null;
-      row.part_count = input.partCount ?? null;
-      row.updated_at = clock.now();
-      return toStoredFile(copy(row));
-    },
-    async insertFile(input: InsertFileInput): Promise<StoredFile> {
-      failures.check("insertFile");
-
-      if (rows.has(input.id)) {
-        throw conflict(
-          ERROR_CODES.DUPLICATE_RESOURCE,
-          `File ${input.id} already exists`,
-        );
-      }
-
-      const takenKey = [...rows.values()].some(
-        (row) => row.bucket === bucket && row.object_key === input.objectKey,
-      );
-
-      if (takenKey) {
-        throw conflict(
-          ERROR_CODES.DUPLICATE_RESOURCE,
-          `Object key ${input.objectKey} is already reserved`,
-        );
-      }
-
-      const now = clock.now();
-      const row: FileRow = {
-        id: input.id,
-        bucket,
-        object_key: input.objectKey,
-        directory: input.directory,
-        original_name: input.originalName,
-        extension: input.extension,
-        content_type: input.contentType,
-        size_bytes: input.sizeBytes,
-        etag: input.etag,
-        status: input.status,
-        upload_source: input.uploadSource,
-        upload_id: input.uploadId ?? null,
-        part_size: input.partSize ?? null,
-        part_count: input.partCount ?? null,
-        created_at: now,
-        attempt_started_at: now,
-        attempt_generation: randomUUID(),
-        updated_at: now,
-        deleted_at: null,
-      };
-
-      rows.set(row.id, row);
-
-      return toStoredFile(copy(row));
-    },
-
-    async isFileDeleted(id) {
-      return rows.get(id)?.deleted_at != null;
-    },
-
-    async findFileById(id: string): Promise<StoredFile | null> {
-      failures.check("findFileById");
-
+  function view(owner: string | null): FileRows {
+    const visible = (row: FileRow) =>
+      owner === null || owners.get(row.id) === owner;
+    const get = (id: string) => {
       const row = rows.get(id);
+      return row && visible(row) ? row : undefined;
+    };
+    const all = () => [...rows.values()].filter(visible);
+    const files: FileRowsForFiles & FileRowsForMultipart & FileRowsForCleanup =
+      {
+        async reserveFile(input) {
+          failures.check("reserveFile");
+          const row = get(input.id);
+          if (!row) return await files.insertFile(input);
+          if (!live(row) || row.status === "ready")
+            throw new FileNotFoundError(
+              `File ${input.id} was deleted or completed`,
+            );
+          row.attempt_started_at = clock.now();
+          row.attempt_generation = randomUUID();
+          row.status = input.status;
+          row.upload_source = input.uploadSource;
+          row.size_bytes = input.sizeBytes;
+          row.etag = input.etag;
+          row.upload_id = input.uploadId ?? null;
+          row.part_size = input.partSize ?? null;
+          row.part_count = input.partCount ?? null;
+          row.updated_at = clock.now();
+          return toStoredFile(copy(row));
+        },
+        async insertFile(input: InsertFileInput): Promise<StoredFile> {
+          failures.check("insertFile");
 
-      return row && live(row) ? toStoredFile(copy(row)) : null;
-    },
+          if (rows.has(input.id)) {
+            throw conflict(
+              ERROR_CODES.DUPLICATE_RESOURCE,
+              `File ${input.id} already exists`,
+            );
+          }
 
-    async markFileReady(
-      id: string,
-      values: ReadyValues,
-    ): Promise<StoredFile | null> {
-      failures.check("markFileReady");
+          const takenKey = [...rows.values()].some(
+            (row) =>
+              row.bucket === bucket && row.object_key === input.objectKey,
+          );
 
-      const row = rows.get(id);
+          if (takenKey) {
+            throw conflict(
+              ERROR_CODES.DUPLICATE_RESOURCE,
+              `Object key ${input.objectKey} is already reserved`,
+            );
+          }
 
-      if (!row || !live(row) || terminated(id)) {
-        return null;
-      }
+          const now = clock.now();
+          const row: FileRow = {
+            id: input.id,
+            bucket,
+            object_key: input.objectKey,
+            directory: input.directory,
+            original_name: input.originalName,
+            extension: input.extension,
+            content_type: input.contentType,
+            size_bytes: input.sizeBytes,
+            etag: input.etag,
+            status: input.status,
+            upload_source: input.uploadSource,
+            upload_id: input.uploadId ?? null,
+            part_size: input.partSize ?? null,
+            part_count: input.partCount ?? null,
+            created_at: now,
+            attempt_started_at: now,
+            attempt_generation: randomUUID(),
+            updated_at: now,
+            deleted_at: null,
+          };
 
-      row.status = "ready";
-      row.size_bytes = values.sizeBytes;
-      row.etag = values.etag;
-      row.content_type = values.contentType;
-      row.upload_id = null;
-      row.part_size = null;
-      row.part_count = null;
-      row.updated_at = clock.now();
+          rows.set(row.id, row);
+          owners.set(row.id, owner);
 
-      return toStoredFile(copy(row));
-    },
+          return toStoredFile(copy(row));
+        },
 
-    async failFileIfUnchanged(expected) {
-      failures.check("failFileIfUnchanged");
-      if (interleaved) {
-        const run = interleaved;
-        interleaved = null;
-        await run();
-      }
-      const row = rows.get(expected.id);
-      if (
-        !row ||
-        !live(row) ||
-        terminated(expected.id) ||
-        row.status !== "pending" ||
-        row.attempt_generation !== expected.attemptGeneration ||
-        row.updated_at.getTime() !== expected.updatedAt.getTime() ||
-        row.upload_id !==
-          (expected.kind === "multipart" ? expected.uploadId : null)
-      )
-        return false;
-      row.status = "failed";
-      row.upload_id = null;
-      row.part_size = null;
-      row.part_count = null;
-      row.updated_at = clock.now();
-      return true;
-    },
+        async isFileDeleted(id) {
+          return get(id)?.deleted_at != null;
+        },
 
-    /** В этом SQL-запросе, в отличие от остальных, нет проверки `deleted_at`. */
-    async markFileFailed(id: string): Promise<void> {
-      failures.check("markFileFailed");
+        async findFileById(id: string): Promise<StoredFile | null> {
+          failures.check("findFileById");
 
-      const row = rows.get(id);
+          const row = get(id);
 
-      if (!row) {
-        return;
-      }
+          return row && live(row) ? toStoredFile(copy(row)) : null;
+        },
 
-      row.status = "failed";
-      row.upload_id = null;
-      row.part_size = null;
-      row.part_count = null;
-      row.updated_at = clock.now();
-    },
+        async markFileReady(
+          id: string,
+          values: ReadyValues,
+        ): Promise<StoredFile | null> {
+          failures.check("markFileReady");
 
-    async countActiveMultipart(): Promise<number> {
-      failures.check("countActiveMultipart");
+          const row = get(id);
 
-      return [...rows.values()].filter(
-        (row) =>
-          row.status === "pending" && row.upload_id !== null && live(row),
-      ).length;
-    },
+          if (!row || !live(row) || terminated(id)) {
+            return null;
+          }
 
-    async softDeleteFile(id: string): Promise<StoredFile | null> {
-      failures.check("softDeleteFile");
+          row.status = "ready";
+          row.size_bytes = values.sizeBytes;
+          row.etag = values.etag;
+          row.content_type = values.contentType;
+          row.upload_id = null;
+          row.part_size = null;
+          row.part_count = null;
+          row.updated_at = clock.now();
 
-      const row = rows.get(id);
+          return toStoredFile(copy(row));
+        },
 
-      if (!row || !live(row)) {
-        return null;
-      }
+        async failFileIfUnchanged(expected) {
+          failures.check("failFileIfUnchanged");
+          if (interleaved) {
+            const run = interleaved;
+            interleaved = null;
+            await run();
+          }
+          const row = get(expected.id);
+          if (
+            !row ||
+            !live(row) ||
+            terminated(expected.id) ||
+            row.status !== "pending" ||
+            row.attempt_generation !== expected.attemptGeneration ||
+            row.updated_at.getTime() !== expected.updatedAt.getTime() ||
+            row.upload_id !==
+              (expected.kind === "multipart" ? expected.uploadId : null)
+          )
+            return false;
+          row.status = "failed";
+          row.upload_id = null;
+          row.part_size = null;
+          row.part_count = null;
+          row.updated_at = clock.now();
+          return true;
+        },
 
-      row.deleted_at = clock.now();
-      row.updated_at = row.deleted_at;
+        /** В этом SQL-запросе, в отличие от остальных, нет проверки `deleted_at`. */
+        async markFileFailed(id: string): Promise<void> {
+          failures.check("markFileFailed");
 
-      return toStoredFile(copy(row));
-    },
+          const row = get(id);
 
-    async listFiles(
-      params: ListFilesParams,
-    ): Promise<{ items: StoredFile[]; total: number }> {
-      failures.check("listFiles");
+          if (!row) {
+            return;
+          }
 
-      const matched = [...rows.values()].filter((row) => {
-        if (!live(row)) {
-          return false;
-        }
+          row.status = "failed";
+          row.upload_id = null;
+          row.part_size = null;
+          row.part_count = null;
+          row.updated_at = clock.now();
+        },
 
-        if (params.status && row.status !== params.status) {
-          return false;
-        }
+        async countActiveMultipart(): Promise<number> {
+          failures.check("countActiveMultipart");
 
-        if (params.directory !== undefined) {
-          const directory = params.directory;
+          return all().filter(
+            (row) =>
+              row.status === "pending" && row.upload_id !== null && live(row),
+          ).length;
+        },
 
-          if (!params.recursive) {
-            if (row.directory !== directory) {
+        async softDeleteFile(id: string): Promise<StoredFile | null> {
+          failures.check("softDeleteFile");
+
+          const row = get(id);
+
+          if (!row || !live(row)) {
+            return null;
+          }
+
+          row.deleted_at = clock.now();
+          row.updated_at = row.deleted_at;
+
+          return toStoredFile(copy(row));
+        },
+
+        async listFiles(
+          params: ListFilesParams,
+        ): Promise<{ items: StoredFile[]; total: number }> {
+          failures.check("listFiles");
+
+          const matched = all().filter((row) => {
+            if (!live(row)) {
               return false;
             }
-          } else if (
-            // Пустая строка с recursive означает весь бакет, поэтому ничего не исключаем.
-            directory !== "" &&
-            row.directory !== directory &&
-            !row.directory.startsWith(`${directory}/`)
-          ) {
-            return false;
+
+            if (params.status && row.status !== params.status) {
+              return false;
+            }
+
+            if (params.directory !== undefined) {
+              const directory = params.directory;
+
+              if (!params.recursive) {
+                if (row.directory !== directory) {
+                  return false;
+                }
+              } else if (
+                // Пустая строка с recursive означает весь бакет, поэтому ничего не исключаем.
+                directory !== "" &&
+                row.directory !== directory &&
+                !row.directory.startsWith(`${directory}/`)
+              ) {
+                return false;
+              }
+            }
+
+            if (
+              params.search &&
+              !row.original_name
+                .toLowerCase()
+                .includes(params.search.toLowerCase())
+            ) {
+              return false;
+            }
+
+            return true;
+          });
+
+          const direction = params.order === "asc" ? 1 : -1;
+
+          matched.sort((a, b) => {
+            let ordered: number;
+
+            if (params.sort === "created_at") {
+              const ages = a.created_at.getTime() - b.created_at.getTime();
+
+              ordered = direction * (ages === 0 ? 0 : ages < 0 ? -1 : 1);
+            } else if (params.sort === "original_name") {
+              ordered =
+                direction *
+                compareText(
+                  a.original_name.toLowerCase(),
+                  b.original_name.toLowerCase(),
+                );
+            } else {
+              ordered = compareSizes(a.size_bytes, b.size_bytes, params.order);
+            }
+
+            return ordered === 0 ? compareText(a.id, b.id) : ordered;
+          });
+
+          const offset = (params.page - 1) * params.limit;
+          const items = matched.slice(offset, offset + params.limit).map(copy);
+
+          return {
+            items: items.map(toStoredFile),
+            total: matched.length,
+          };
+        },
+
+        async findKnownUploadIds(ids: string[]): Promise<Set<string>> {
+          failures.check("findKnownUploadIds");
+
+          if (ids.length === 0) {
+            return new Set();
           }
-        }
 
-        if (
-          params.search &&
-          !row.original_name.toLowerCase().includes(params.search.toLowerCase())
-        ) {
-          return false;
-        }
+          const wanted = new Set(ids);
 
-        return true;
-      });
+          // Без проверки `deleted_at` и статуса: уборка обращается ко всей таблице.
+          return new Set(
+            [...rows.values()]
+              .map((row) => row.upload_id)
+              .filter(
+                (uploadId): uploadId is string =>
+                  uploadId !== null && wanted.has(uploadId),
+              ),
+          );
+        },
 
-      const direction = params.order === "asc" ? 1 : -1;
+        async listExpiredPending(ttlHours: number): Promise<StoredFile[]> {
+          failures.check("listExpiredPending");
 
-      matched.sort((a, b) => {
-        let ordered: number;
-
-        if (params.sort === "created_at") {
-          const ages = a.created_at.getTime() - b.created_at.getTime();
-
-          ordered = direction * (ages === 0 ? 0 : ages < 0 ? -1 : 1);
-        } else if (params.sort === "original_name") {
-          ordered =
-            direction *
-            compareText(
-              a.original_name.toLowerCase(),
-              b.original_name.toLowerCase(),
-            );
-        } else {
-          ordered = compareSizes(a.size_bytes, b.size_bytes, params.order);
-        }
-
-        return ordered === 0 ? compareText(a.id, b.id) : ordered;
-      });
-
-      const offset = (params.page - 1) * params.limit;
-      const items = matched.slice(offset, offset + params.limit).map(copy);
-
-      return {
-        items: items.map(toStoredFile),
-        total: matched.length,
+          return all()
+            .filter(
+              (row) =>
+                row.status === "pending" &&
+                live(row) &&
+                owners.get(row.id) != null &&
+                expired(row, ttlHours),
+            )
+            .sort(
+              (a, b) =>
+                a.attempt_started_at.getTime() - b.attempt_started_at.getTime(),
+            )
+            .map(copy)
+            .map(toStoredFile);
+        },
       };
-    },
-
-    async findKnownUploadIds(ids: string[]): Promise<Set<string>> {
-      failures.check("findKnownUploadIds");
-
-      if (ids.length === 0) {
-        return new Set();
-      }
-
-      const wanted = new Set(ids);
-
-      // Без проверки `deleted_at` и статуса: уборка обращается ко всей таблице.
-      return new Set(
-        [...rows.values()]
-          .map((row) => row.upload_id)
-          .filter(
-            (uploadId): uploadId is string =>
-              uploadId !== null && wanted.has(uploadId),
-          ),
-      );
-    },
-
-    async listExpiredPending(ttlHours: number): Promise<StoredFile[]> {
-      failures.check("listExpiredPending");
-
-      return [...rows.values()]
-        .filter(
-          (row) =>
-            row.status === "pending" && live(row) && expired(row, ttlHours),
-        )
-        .sort(
-          (a, b) =>
-            a.attempt_started_at.getTime() - b.attempt_started_at.getTime(),
-        )
-        .map(copy)
-        .map(toStoredFile);
-    },
-  };
+    return files;
+  }
+  const files = view(null);
 
   return {
     ...files,
+    forOwner: view,
     setTerminationGuard(guard) {
       terminated = guard;
     },

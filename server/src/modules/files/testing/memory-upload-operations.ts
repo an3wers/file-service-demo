@@ -1,4 +1,5 @@
 import type {
+  UploadOperationSessionPorts,
   UploadTermination,
   UploadTerminationReason,
   UploadOperationFileRows,
@@ -13,8 +14,9 @@ export function createMemoryUploadOperations(
   },
   directories: DirectoriesForUpload,
   { lockWaitMs = 5_000 }: { lockWaitMs?: number } = {},
-): UploadOperations {
+): MemoryUploadOperations {
   const records = new Map<string, UploadOperationRecord>();
+  const owners = new Map<string, string | null>();
   const active = new Map<string, Promise<void>>();
   const terminations = new Map<string, UploadTermination>();
   fileRows.setTerminationGuard?.((fileId) =>
@@ -50,62 +52,81 @@ export function createMemoryUploadOperations(
     }
     return true;
   }
+  function view(
+    owner: string | null,
+    ports: UploadOperationSessionPorts,
+  ): UploadOperations {
+    const visible = (id: string) =>
+      owner === null || !owners.has(id) || owners.get(id) === owner;
+    const recordOf = (id: string) => (visible(id) && records.get(id)) || null;
+    return {
+      async read(id) {
+        if (!visible(id)) return { record: null, termination: null };
+        return {
+          record: recordOf(id),
+          termination: terminations.get(id) ?? null,
+        };
+      },
+      terminate,
+      async listTerminated() {
+        return [...terminations.keys()].filter(
+          (id) => !owners.has(id) || owners.get(id) !== null,
+        );
+      },
+      async findIdByFileId(fileId) {
+        return (
+          [...records].find(
+            ([id, record]) => record.reservation.id === fileId && visible(id),
+          )?.[0] ?? null
+        );
+      },
+      async exclusive(id, run, { wait = false } = {}) {
+        if (!(await waitForRelease(id, wait))) return { busy: true };
+        let release!: () => void;
+        active.set(
+          id,
+          new Promise<void>((resolve) => {
+            release = resolve;
+          }),
+        );
+        try {
+          const value = await run({
+            ...ports,
+            async termination() {
+              return terminations.get(id) ?? null;
+            },
+            terminate: (reason, uploadId) => terminate(id, reason, uploadId),
+            async checked() {},
+            async markMultipartStopped(uploadId) {
+              const record = records.get(id);
+              if (record)
+                records.set(id, {
+                  ...record,
+                  stoppedMultipartUploadId: uploadId,
+                });
+            },
+            async read() {
+              return recordOf(id);
+            },
+            async save(record) {
+              records.set(id, record);
+              owners.set(id, owner);
+            },
+          });
+          return { busy: false, value };
+        } finally {
+          active.delete(id);
+          release();
+        }
+      },
+    };
+  }
   return {
-    async read(id) {
-      return {
-        record: records.get(id) ?? null,
-        termination: terminations.get(id) ?? null,
-      };
-    },
-    terminate,
-    async listTerminated() {
-      return [...terminations.keys()];
-    },
-    async findIdByFileId(fileId) {
-      return (
-        [...records].find(
-          ([, record]) => record.reservation.id === fileId,
-        )?.[0] ?? null
-      );
-    },
-    async exclusive(id, run, { wait = false } = {}) {
-      if (!(await waitForRelease(id, wait))) return { busy: true };
-      let release!: () => void;
-      active.set(
-        id,
-        new Promise<void>((resolve) => {
-          release = resolve;
-        }),
-      );
-      try {
-        const value = await run({
-          fileRows,
-          directories,
-          async termination() {
-            return terminations.get(id) ?? null;
-          },
-          terminate: (reason, uploadId) => terminate(id, reason, uploadId),
-          async checked() {},
-          async markMultipartStopped(uploadId) {
-            const record = records.get(id);
-            if (record)
-              records.set(id, {
-                ...record,
-                stoppedMultipartUploadId: uploadId,
-              });
-          },
-          async read() {
-            return records.get(id) ?? null;
-          },
-          async save(record) {
-            records.set(id, record);
-          },
-        });
-        return { busy: false, value };
-      } finally {
-        active.delete(id);
-        release();
-      }
-    },
+    ...view(null, { fileRows, directories }),
+    forOwner: view,
   };
+}
+
+export interface MemoryUploadOperations extends UploadOperations {
+  forOwner(owner: string, ports: UploadOperationSessionPorts): UploadOperations;
 }

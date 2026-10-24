@@ -14,10 +14,14 @@ import type {
 import { assertValidPlanLimits } from "./domain/upload-plan.js";
 import type { UploadPolicy } from "./domain/upload-policy.js";
 
-export interface FilesPersistence {
+export interface FilesPorts {
   fileRows: FileRows;
   directories: DirectoriesForCatalog;
   operations: UploadOperations;
+}
+
+export interface FilesPersistence extends FilesPorts {
+  forOwner(ownerId: string): FilesPorts;
 }
 
 export interface FilesModuleDependencies extends FilesPersistence {
@@ -28,7 +32,9 @@ export interface FilesModuleDependencies extends FilesPersistence {
   clock?: Clock;
 }
 
-export function assembleFiles(dependencies: FilesModuleDependencies) {
+export function assembleFiles(
+  dependencies: Omit<FilesModuleDependencies, "forOwner">,
+) {
   assertValidPlanLimits(dependencies.policy.planLimits);
   const deps = { ...dependencies, clock: dependencies.clock ?? systemClock };
   const confirmation = createConfirmationModule(deps);

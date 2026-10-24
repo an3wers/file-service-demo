@@ -4,6 +4,7 @@ import { createMemoryFileRows } from "./memory-file-rows.js";
 import type { MemoryFileRows } from "./memory-file-rows.js";
 import {
   describeFileRowsErrors,
+  describeFileRowsOwnership,
   describeFileRowsPagination,
 } from "./file-rows.contract.js";
 import type {
@@ -219,15 +220,17 @@ describe("memory file rows", () => {
   describe("expiry", () => {
     it("lists reserved rows past their ttl, oldest first", async () => {
       const store = createMemoryFileRows();
-      const old = await store.insertFile(reserve());
+      const owned = store.forOwner("owner");
+      const old = await owned.insertFile(reserve());
+      await store.insertFile(reserve());
 
       store.advance(2);
 
-      const recent = await store.insertFile(reserve());
+      const recent = await owned.insertFile(reserve());
 
       store.advance(2);
 
-      const ready = await store.insertFile(reserve());
+      const ready = await owned.insertFile(reserve());
 
       await store.markFileReady(ready.id, {
         sizeBytes: 1,
@@ -344,3 +347,12 @@ describe("memory file rows", () => {
 describeFileRowsErrors("memory", () => createMemoryFileRows());
 
 describeFileRowsPagination("memory", () => createMemoryFileRows());
+
+describeFileRowsOwnership("memory", async () => {
+  const all = createMemoryFileRows();
+  return {
+    all,
+    mine: all.forOwner("owner-a"),
+    theirs: all.forOwner("owner-b"),
+  };
+});

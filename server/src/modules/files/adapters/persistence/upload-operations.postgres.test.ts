@@ -13,6 +13,7 @@ import {
 } from "vitest";
 import { pool } from "../../../../db/pool.js";
 import { migrate } from "../../../../db/migrate.js";
+import { createPostgresOwner } from "../../testing/postgres-owner.js";
 import { createSqlDirectories } from "./sql-directories.js";
 import { createSqlFileRows } from "./sql-file-rows.js";
 import { createFilesPersistence } from "../../persistence.js";
@@ -22,6 +23,8 @@ import {
 } from "../../testing/files-module.harness.js";
 import { systemClock } from "../../domain/ports/clock.js";
 
+let owner: string;
+
 const schema = `operations_test_${randomUUID().replaceAll("-", "")}`;
 let created = false;
 beforeAll(async () => {
@@ -30,6 +33,7 @@ beforeAll(async () => {
   await pool.query(`set search_path to ${schema}`);
   pool.options.options = `-c search_path=${schema}`;
   await migrate();
+  owner = await createPostgresOwner();
 });
 beforeEach(async () => {
   await pool.query("truncate files, upload_operations, upload_terminations");
@@ -41,12 +45,12 @@ afterAll(async () => {
 
 function assemble(objectStore: ReturnType<typeof buildHarness>["objectStore"]) {
   const { policy } = buildHarness();
-  const fileRows = createSqlFileRows("test");
+  const fileRows = createSqlFileRows("test", undefined, owner);
   const deps = {
-    operations: createFilesPersistence("test").operations,
+    operations: createFilesPersistence("test").forOwner(owner).operations,
     objectStore,
     fileRows,
-    directories: createSqlDirectories(),
+    directories: createSqlDirectories(undefined, owner),
     policy,
     clock: systemClock,
   };
@@ -184,7 +188,8 @@ describe("операции загрузки в PostgreSQL", () => {
     await expect(
       assemble(objectStore).uploadThroughServer(upload),
     ).rejects.toThrow("Нет связи");
-    const operations = createFilesPersistence("test").operations;
+    const operations =
+      createFilesPersistence("test").forOwner(owner).operations;
     const { record } = await operations.read(upload.operationId);
     expect(
       await assemble(objectStore).getUploadOperation(upload.operationId),
@@ -353,7 +358,7 @@ it("условная неудача PostgreSQL не перезаписывает
   const { objectStore } = buildHarness();
   const module = assemble(objectStore);
   const reserved = await module.createPresignedUpload(input());
-  const rows = createSqlFileRows("test");
+  const rows = createSqlFileRows("test", undefined, owner);
   const expected = (await rows.findFileById(reserved.id))!;
   objectStore.uploadObject(reserved.key, Buffer.from("hello"), "text/plain");
   await module.completeUpload(reserved.id);
@@ -368,12 +373,11 @@ it("PostgreSQL сохраняет окончательное намерение 
   const { objectStore } = buildHarness();
   const upload = input();
   const reserved = await assemble(objectStore).createPresignedUpload(upload);
-  const rows = createSqlFileRows("test");
+  const rows = createSqlFileRows("test", undefined, owner);
   const expected = (await rows.findFileById(reserved.id))!;
-  await createFilesPersistence("test").operations.terminate(
-    upload.operationId,
-    "cancelled",
-  );
+  await createFilesPersistence("test")
+    .forOwner(owner)
+    .operations.terminate(upload.operationId, "cancelled");
   expect(
     await rows.markFileReady(reserved.id, {
       sizeBytes: 5,
@@ -388,7 +392,7 @@ it("PostgreSQL сохраняет окончательное намерение 
 });
 
 it("PostgreSQL атомарно устанавливает временную неудачу старого файла без операции", async () => {
-  const rows = createSqlFileRows("test");
+  const rows = createSqlFileRows("test", undefined, owner);
   const id = randomUUID();
   const file = await rows.insertFile({
     id,
@@ -412,7 +416,8 @@ it("общая очистка PostgreSQL переживает частичный
     const { objectStore } = buildHarness();
     const upload = { ...input(), size: THREE_PART_SIZE };
     const reserved = await assemble(objectStore).createPresignedUpload(upload);
-    const operations = createFilesPersistence("test").operations;
+    const operations =
+      createFilesPersistence("test").forOwner(owner).operations;
     await operations.terminate(upload.operationId, "failed");
     objectStore.failNext("remove", new Error("Нет связи"));
     await expect(
@@ -423,7 +428,8 @@ it("общая очистка PostgreSQL переживает частичный
     expect(objectStore.openUploads()).toEqual([]);
     objectStore.uploadObject(reserved.key, Buffer.alloc(1), "text/plain");
     const restarted = assemble(objectStore);
-    const restartedOperations = createFilesPersistence("test").operations;
+    const restartedOperations =
+      createFilesPersistence("test").forOwner(owner).operations;
     expect(await restartedOperations.listTerminated()).toContain(
       upload.operationId,
     );
@@ -451,7 +457,7 @@ it("PostgreSQL сохраняет дату создания и полный ср
     text: string,
     values: unknown[] = [],
   ) => await client.query<T>(text, values);
-  const rows = createSqlFileRows("test", execute);
+  const rows = createSqlFileRows("test", execute, owner);
   const id = randomUUID();
   const data = {
     id,
@@ -509,7 +515,7 @@ it("PostgreSQL сохраняет дату создания и полный ср
   }
 });
 
-it("миграция сохраняет историческую дату создания и делает старое резервирование доступным уборке", async () => {
+it("миграция сохраняет историческую дату создания, а уборка не продолжает старое резервирование без владельца", async () => {
   const client = await pool.connect();
   const historicalSchema = `historical_${randomUUID().replaceAll("-", "")}`;
   await client.query("begin");
@@ -517,9 +523,8 @@ it("миграция сохраняет историческую дату соз
     await client.query(`create schema ${historicalSchema}`);
     await client.query(`set local search_path to ${historicalSchema}`);
     const directory = new URL("../../../../db/migrations/", import.meta.url);
-    for (const name of (await readdir(directory))
-      .filter((name) => name < "010")
-      .sort())
+    const names = (await readdir(directory)).sort();
+    for (const name of names.filter((name) => name < "010"))
       await client.query(await readFile(new URL(name, directory), "utf8"));
     const id = randomUUID();
     await client.query(
@@ -527,9 +532,8 @@ it("миграция сохраняет историческую дату соз
       values ($1, 'test', $2, 'a.txt', 'text/plain', 5, 'pending', 'presigned', '2020-01-01Z', '2020-02-01Z')`,
       [id, id],
     );
-    await client.query(
-      await readFile(new URL("010_upload_attempt.sql", directory), "utf8"),
-    );
+    for (const name of names.filter((name) => name >= "010"))
+      await client.query(await readFile(new URL(name, directory), "utf8"));
     const execute = async <T extends QueryResultRow>(
       text: string,
       values: unknown[] = [],
@@ -542,20 +546,7 @@ it("миграция сохраняет историческую дату соз
       attemptStartedAt: new Date("2020-01-01Z"),
       attemptGeneration: expect.any(String),
     });
-    expect((await rows.listExpiredPending(24)).map((file) => file.id)).toEqual([
-      id,
-    ]);
-    const h = buildHarness();
-    const { confirmation } = assembleFiles({
-      ...h.dependencies,
-      fileRows: rows,
-      clock: systemClock,
-    });
-    expect(await confirmation.reconcile(id)).toEqual({ status: "failed" });
-    expect(await rows.findFileById(id)).toMatchObject({
-      kind: "failed",
-      createdAt: new Date("2020-01-01Z"),
-    });
+    expect(await rows.listExpiredPending(24)).toEqual([]);
   } finally {
     await client.query("rollback");
     client.release();
@@ -570,9 +561,9 @@ it("сохраняет остановку составной передачи м
   if (first.strategy !== "multipart")
     throw new Error("Ожидалась составная загрузка");
   objectStore.uploadPart(first.uploadId, 1, Buffer.alloc(first.partSize));
-  const rows = createSqlFileRows("test");
+  const rows = createSqlFileRows("test", undefined, owner);
   const before = await rows.findFileById(first.id);
-  const operations = createFilesPersistence("test").operations;
+  const operations = createFilesPersistence("test").forOwner(owner).operations;
   await operations.exclusive(upload.operationId, async () => {
     expect(
       await assemble(objectStore).resolveUploadOperation(
