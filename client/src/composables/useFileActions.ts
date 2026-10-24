@@ -91,6 +91,7 @@ function remove(file: FileDto): Promise<void> {
 
 async function rename(file: FileDto, name: string): Promise<FileDto> {
   const updated = await updateFile(file.id, { name });
+  useUpload().updateFile(updated);
   toast.success(`Файл «${file.name}» переименован в «${updated.name}»`);
   useFileBrowser().refresh();
   return updated;
@@ -98,6 +99,7 @@ async function rename(file: FileDto, name: string): Promise<FileDto> {
 
 async function move(file: FileDto, directory: string): Promise<FileDto> {
   const updated = await updateFile(file.id, { directory });
+  useUpload().updateFile(updated);
   toast.success(
     `Файл «${updated.name}» перемещён в «${updated.directory || "Корень"}»`,
   );

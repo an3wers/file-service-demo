@@ -539,6 +539,12 @@ function removeFile(id: string): void {
   for (const row of rows.value) if (row.result.value?.id === id) drop(row);
 }
 
+function updateFile(file: FileDto): void {
+  for (const row of rows.value)
+    if (row.result.value?.id === file.id) row.result.value = file;
+  persist();
+}
+
 function setMode(next: UploadMode): void {
   if (uploading.value) return;
   mode.value = next;
@@ -671,6 +677,7 @@ export function useUpload() {
     addFiles,
     remove,
     removeFile,
+    updateFile,
     submit,
     retry,
     cancelRow,
