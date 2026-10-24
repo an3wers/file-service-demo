@@ -6,6 +6,7 @@ import {
   describeFileRowsErrors,
   describeFileRowsOwnership,
   describeFileRowsPagination,
+  describeFileRowsRelocation,
 } from "./file-rows.contract.js";
 import type {
   InsertFileInput,
@@ -347,6 +348,8 @@ describe("memory file rows", () => {
 describeFileRowsErrors("memory", () => createMemoryFileRows());
 
 describeFileRowsPagination("memory", () => createMemoryFileRows());
+
+describeFileRowsRelocation("memory", () => createMemoryFileRows());
 
 describeFileRowsOwnership("memory", async () => {
   const all = createMemoryFileRows();

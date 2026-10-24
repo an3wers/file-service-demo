@@ -431,6 +431,107 @@ describe(
       ).toBe(404);
     });
 
+    it("переименовать и переместить файл может только владелец и только в свой каталог", async () => {
+      const objectStore = createMemoryObjectStore();
+      const h = await start(objectStore);
+      const alice = await h.signUp("alice@example.com");
+      const bob = await h.signUp("bob@example.com");
+      await alice.json("POST", "/directories", { name: "docs" });
+      await bob.json("POST", "/directories", { name: "private" });
+      const aliceFile = await alice.upload("report.txt", "hello");
+      const bobFile = await bob.upload("own.txt", "bob");
+
+      await expectSameAsMissing(
+        bob,
+        "PATCH",
+        "/files/:value",
+        aliceFile.id,
+        randomUUID(),
+        { name: "stolen.txt" },
+      );
+      await expectSameAsMissing(
+        alice,
+        "PATCH",
+        `/files/${aliceFile.id}`,
+        "private",
+        "nothing-here",
+        { directory: ":value" },
+      );
+
+      const moved = await alice.json("PATCH", `/files/${aliceFile.id}`, {
+        name: "Итоги.txt",
+        directory: "docs",
+      });
+      expect(moved).toMatchObject({
+        status: 200,
+        body: {
+          id: aliceFile.id,
+          key: aliceFile.key,
+          name: "Итоги.txt",
+          directory: "docs",
+        },
+      });
+      const link = await alice.json(
+        "GET",
+        `/files/${aliceFile.id}/download-url`,
+      );
+      expect(link.body.name).toBe("Итоги.txt");
+      expect(
+        objectStore.objectAt(
+          decodeURIComponent(new URL(link.body.url).pathname.slice(1)),
+        )!.body,
+      ).toEqual(Buffer.from("hello"));
+      expect((await alice.json("GET", "/directories")).body.items).toEqual([
+        { name: "docs", path: "docs", fileCount: 1 },
+      ]);
+      expect(
+        (await alice.json("PATCH", `/files/${aliceFile.id}`, { directory: "" }))
+          .body,
+      ).toMatchObject({ directory: "", key: aliceFile.key });
+      expect(await bob.json("GET", `/files/${bobFile.id}`)).toEqual({
+        status: 200,
+        body: bobFile,
+      });
+    });
+
+    it("одновременные изменение и удаление файла не оставляют частично изменённых данных", async () => {
+      const objectStore = createMemoryObjectStore();
+      const h = await start(objectStore);
+      const alice = await h.signUp("alice@example.com");
+      await alice.json("POST", "/directories", { name: "docs" });
+      for (let round = 0; round < 5; round += 1) {
+        const file = await alice.upload("report.txt", "hello");
+        const [patched, removed, renamed] = await Promise.all([
+          alice.json("PATCH", `/files/${file.id}`, {
+            name: "a.txt",
+            directory: "docs",
+          }),
+          alice.call("DELETE", `/files/${file.id}`),
+          alice.json("PATCH", `/files/${file.id}`, { name: "b.txt" }),
+        ]);
+        expect(removed.status).toBe(204);
+        for (const response of [patched, renamed])
+          expect([200, 404, 409]).toContain(response.status);
+        expect((await alice.json("GET", `/files/${file.id}`)).status).toBe(404);
+        expect(objectStore.objectAt(file.key)).toBeNull();
+      }
+      const survivor = await alice.upload("report.txt", "hello");
+      const results = await Promise.all([
+        alice.json("PATCH", `/files/${survivor.id}`, {
+          name: "a.txt",
+          directory: "docs",
+        }),
+        alice.json("PATCH", `/files/${survivor.id}`, { name: "b.txt" }),
+      ]);
+      expect(results.map((result) => result.status)).toEqual([200, 200]);
+      const final = (await alice.json("GET", `/files/${survivor.id}`)).body;
+      expect([
+        { name: "b.txt", directory: "docs" },
+        { name: "a.txt", directory: "docs" },
+      ]).toContainEqual({ name: final.name, directory: final.directory });
+      expect(final.key).toBe(survivor.key);
+    });
+
     it("уборка без сессии обрабатывает загрузки всех владельцев с одинаковыми путями независимо", async () => {
       const objectStore = createMemoryObjectStore({
         clock: createTestClock(new Date("2020-01-01T00:00:00Z")),

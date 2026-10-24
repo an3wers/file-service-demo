@@ -11,6 +11,7 @@ import {
   presignUploadSchema,
   uploadFormSchema,
   resolveUploadSchema,
+  updateFileSchema,
 } from "./schemas.js";
 import {
   uploadOperationResponseSchema,
@@ -212,6 +213,24 @@ export const filesPaths: ZodOpenApiPathsObject = {
           content: json(fileDtoSchema),
         },
         ...apiErrors({ 404: FILE_NOT_FOUND }),
+      },
+    },
+    patch: {
+      tags: ["files"],
+      summary: "Переименовать или переместить готовый файл",
+      description:
+        "Меняет только переданные имя и каталог. Идентификатор, объектный ключ и содержимое " +
+        "сохраняются. Целевой каталог ищется в личном пространстве; пустая строка — личный корень.",
+      operationId: "updateFile",
+      requestParams: { path: idParamsSchema },
+      requestBody: { required: true, content: json(updateFileSchema) },
+      responses: {
+        200: { description: "Файл изменён", content: json(fileDtoSchema) },
+        ...apiErrors({
+          400: "Недопустимое имя или каталог",
+          404: "Файла или каталога нет",
+          409: "Файл ещё не готов или удаляется",
+        }),
       },
     },
     delete: {
