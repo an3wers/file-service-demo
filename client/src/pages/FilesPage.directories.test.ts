@@ -323,9 +323,7 @@ describe("доступность каталогов на странице фай
       );
     }
     await flushPromises();
-    expect(screen.getAllByText("Каталог не найден").length).toBeGreaterThan(
-      0,
-    );
+    expect(screen.getAllByText("Каталог не найден").length).toBeGreaterThan(0);
     for (const request of pending.filter(
       (request) => request.directory === "docs",
     ))

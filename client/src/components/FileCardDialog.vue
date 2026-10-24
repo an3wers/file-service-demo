@@ -84,9 +84,7 @@ function download(): void {
         </DialogTitle>
         <DialogDescription>
           {{
-            file?.directory
-              ? `Каталог: ${file.directory}`
-              : "Каталог: корень"
+            file?.directory ? `Каталог: ${file.directory}` : "Каталог: корень"
           }}
         </DialogDescription>
       </DialogHeader>
