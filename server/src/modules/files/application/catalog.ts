@@ -74,6 +74,11 @@ export interface UpdateFileInput {
   directory?: string | undefined;
 }
 
+export interface MoveDirectoryInput {
+  name?: string | undefined;
+  parent?: string | undefined;
+}
+
 export interface ListFilesResult {
   items: StoredFile[];
   total: number;
@@ -95,7 +100,7 @@ export interface CatalogModule {
   deleteDirectory(rawPath: string): Promise<void>;
   moveDirectory(
     rawPath: string,
-    input: { name?: string | undefined; parent?: string | undefined },
+    input: MoveDirectoryInput,
   ): Promise<DirectoryDto>;
   listDirectories(rawParent: string | undefined): Promise<{
     parent: string;
@@ -275,7 +280,7 @@ export function createCatalogModule({
       const path = normalizeDirectory(parent ? `${parent}/${name}` : name);
       await requireDirectory(directories, parent);
       if (!(await directories.create(parent, name))) {
-        throw new DirectoryAlreadyExistsError("Директория уже существует", {
+        throw new DirectoryAlreadyExistsError("Каталог уже существует", {
           path,
         });
       }
@@ -290,7 +295,7 @@ export function createCatalogModule({
         });
       const result = await directories.remove(path);
       if (result === "missing")
-        throw new DirectoryNotFoundError("Директория не найдена", { path });
+        throw new DirectoryNotFoundError("Каталог не найден", { path });
       if (result === "occupied")
         throw new DirectoryNotEmptyError(
           "Каталог не пуст: в нём есть подкаталоги, файлы или незавершённые загрузки",
@@ -323,13 +328,13 @@ export function createCatalogModule({
       if (target !== path) {
         const result = await directories.move(path, parent, name);
         if (result === "missing")
-          throw new DirectoryNotFoundError("Директория не найдена", { path });
+          throw new DirectoryNotFoundError("Каталог не найден", { path });
         if (result === "target-missing")
-          throw new DirectoryNotFoundError("Директория не найдена", {
+          throw new DirectoryNotFoundError("Каталог не найден", {
             path: parent,
           });
         if (result === "exists")
-          throw new DirectoryAlreadyExistsError("Директория уже существует", {
+          throw new DirectoryAlreadyExistsError("Каталог уже существует", {
             path: target,
           });
         if (result === "too-long")
@@ -347,7 +352,7 @@ export function createCatalogModule({
         (item) => item.path === target,
       );
       if (!moved)
-        throw new DirectoryNotFoundError("Директория не найдена", { path });
+        throw new DirectoryNotFoundError("Каталог не найден", { path });
       return moved;
     },
 

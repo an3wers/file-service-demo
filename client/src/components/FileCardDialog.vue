@@ -84,9 +84,7 @@ function download(): void {
         </DialogTitle>
         <DialogDescription>
           {{
-            file?.directory
-              ? `Директория: ${file.directory}`
-              : "Директория: корень"
+            file?.directory ? `Каталог: ${file.directory}` : "Каталог: корень"
           }}
         </DialogDescription>
       </DialogHeader>
@@ -108,7 +106,7 @@ function download(): void {
           {{ fresh.id }}
         </dd>
 
-        <dt class="text-muted-foreground">Директория</dt>
+        <dt class="text-muted-foreground">Каталог</dt>
         <dd class="break-all">
           {{ fresh.directory || "Корень" }}
         </dd>

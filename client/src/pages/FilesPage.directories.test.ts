@@ -315,7 +315,7 @@ describe("доступность каталогов на странице фай
           {
             error: {
               code: "DIRECTORY_NOT_FOUND",
-              message: "Директория не найдена",
+              message: "Каталог не найден",
             },
           },
           404,
@@ -323,9 +323,7 @@ describe("доступность каталогов на странице фай
       );
     }
     await flushPromises();
-    expect(screen.getAllByText("Директория не найдена").length).toBeGreaterThan(
-      0,
-    );
+    expect(screen.getAllByText("Каталог не найден").length).toBeGreaterThan(0);
     for (const request of pending.filter(
       (request) => request.directory === "docs",
     ))

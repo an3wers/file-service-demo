@@ -680,6 +680,22 @@ it("десять входов с корректным email и пустым па
   expect((await h.login("other@example.com", "")).status).toBe(422);
 });
 
+it("варианты написания email находят того же пользователя и расходуют одну квоту входа", async () => {
+  const h = await start();
+  const variants = [
+    ` ${EMAIL.toUpperCase()} `,
+    EMAIL,
+    `\t${EMAIL[0]!.toUpperCase()}${EMAIL.slice(1)}`,
+  ];
+  expect((await h.login(variants[0])).status).toBe(200);
+  for (let i = 1; i < 10; i++)
+    expect((await h.login(variants[i % 3], "wrong")).status).toBe(401);
+  const limited = await h.login(variants[2]);
+  expect(limited.status).toBe(429);
+  expect(limited.headers.get("retry-after")).toBe("900");
+  expect(h.auth.sendEmail).toHaveBeenCalledTimes(1);
+});
+
 it("при IP- и email-лимите входа ответ берёт наибольшее ожидание, а отказ по IP учитывается в квоте email", async () => {
   const h = await start();
   for (let i = 0; i < 45; i++)

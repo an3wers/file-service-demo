@@ -50,7 +50,7 @@ function serve(
             {
               error: {
                 code: "DIRECTORY_NOT_FOUND",
-                message: "Директория не найдена",
+                message: "Каталог не найден",
               },
             },
             404,

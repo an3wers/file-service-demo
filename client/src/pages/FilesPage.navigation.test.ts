@@ -268,7 +268,7 @@ describe("состояние списка файлов в адресе стра�
       "/?directory=missing&search=report&page=2",
     );
     expect(screen.getByRole("alert").textContent).toContain(
-      "Директория не найдена",
+      "Каталог не найден",
     );
     expect(screen.queryByText("Здесь пока пусто")).toBeNull();
     expect(

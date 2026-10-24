@@ -1,9 +1,6 @@
-import {
-  DirectoryNotFoundError,
-  FileNotFoundError,
-} from "../../domain/errors.js";
+import { FileNotFoundError } from "../../domain/errors.js";
 import { query, type Execute } from "../../../../db/pool.js";
-import { violatedForeignKey } from "../../../../db/errors.js";
+import { directoryMissingOn, settledFile } from "./shared-sql.js";
 import type {
   FileRows,
   ReadyValues,
@@ -273,13 +270,7 @@ export function createSqlFileRows(
         input.partCount ?? null,
         owner,
       ],
-    ).catch((error: unknown) => {
-      if (violatedForeignKey(error) === "files_directory_fk")
-        throw new DirectoryNotFoundError("Директория не найдена", {
-          path: input.directory,
-        });
-      throw error;
-    });
+    ).catch(directoryMissingOn("files_directory_fk", input.directory));
 
     if (!rows[0])
       throw new FileNotFoundError(`File ${input.id} was deleted or completed`);
@@ -334,10 +325,7 @@ export function createSqlFileRows(
                where d.owner_id is not distinct from files.owner_id and d.path = $4
                for key share
             ))
-            and not exists (
-              select 1 from upload_operations o join upload_terminations t on t.operation_id = o.id
-              where o.file_id = files.id
-            )
+            and not ${settledFile("files")}
           returning *`,
         [
           id,
@@ -346,13 +334,7 @@ export function createSqlFileRows(
           change.directory ?? null,
           owner,
         ],
-      ).catch((error: unknown) => {
-        if (violatedForeignKey(error) === "files_directory_fk")
-          throw new DirectoryNotFoundError("Директория не найдена", {
-            path: change.directory ?? "",
-          });
-        throw error;
-      });
+      ).catch(directoryMissingOn("files_directory_fk", change.directory ?? ""));
       return rows[0] ? toStoredFile(rows[0]) : null;
     },
     countActiveMultipart: () => countActiveMultipart(execute, owner),

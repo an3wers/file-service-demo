@@ -1,3 +1,4 @@
+import { transactionOn } from "../../db/pool.js";
 import type { FilesPersistence, FilesPorts } from "./assembly.js";
 import { createSqlFileRows } from "./adapters/persistence/sql-file-rows.js";
 import { createSqlDirectories } from "./adapters/persistence/sql-directories.js";
@@ -17,7 +18,11 @@ export function createFilesPersistence(
       // пулу потребовало бы второго соединения и могло бы заблокировать операцию.
       sessionPorts: (execute) => ({
         fileRows: createSqlFileRows(bucket, execute, owner),
-        directories: createSqlDirectories(execute, owner),
+        directories: createSqlDirectories(
+          execute,
+          owner,
+          transactionOn(execute),
+        ),
       }),
     }),
   });

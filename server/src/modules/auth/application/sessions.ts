@@ -1,6 +1,6 @@
 import { createHash, createHmac, randomBytes, randomInt } from "node:crypto";
-import { logger } from "../../../logger.js";
 import type { Notification } from "../../notification/index.js";
+import { logMailAttempt, type MailLog } from "./mail-log.js";
 import type { PasswordHasher } from "../domain/ports/password-hasher.js";
 import type { Tokens } from "../domain/ports/tokens.js";
 import type { SessionStore } from "../domain/ports/session-store.js";
@@ -99,7 +99,7 @@ export function createSessionsModule({
     email: string,
     code: string,
     until: Date,
-    requestId?: string | number,
+    log: MailLog,
   ): Promise<"accepted" | "unconfirmed"> {
     const remaining = until.getTime() - Date.now();
     if (remaining <= 0) return "unconfirmed";
@@ -131,15 +131,11 @@ export function createSessionsModule({
       outcome = "unconfirmed";
     } finally {
       clearTimeout(timer);
-      logger.info(
-        {
-          purpose: "login-code",
-          outcome,
-          durationMs: Date.now() - smtpStarted,
-          requestId,
-        },
-        "Auth mail attempt",
-      );
+      logMailAttempt(log, {
+        purpose: "login-code",
+        outcome,
+        durationMs: Date.now() - smtpStarted,
+      });
     }
     return outcome;
   }
@@ -160,13 +156,13 @@ export function createSessionsModule({
     deadline,
     withinDeadline,
     now: () => clock.now(),
-    consumeLoginIp: (ip: string, until: Date) =>
+    loginIpRetryAfter: (ip: string, until: Date) =>
       retryAfter(`login:ip:${secretDigest("ip", ip)}`, 50, until),
-    consumeLoginEmail: (email: string, until: Date) =>
+    loginEmailRetryAfter: (email: string, until: Date) =>
       retryAfter(`login:email:${secretDigest("email", email)}`, 10, until),
     consumeVerifyIp: (ip: string, until: Date) =>
       consume(`login:verify:ip:${secretDigest("ip", ip)}`, 100, until),
-    consumeMailIp: (ip: string, until: Date) =>
+    mailIpRetryAfter: (ip: string, until: Date) =>
       available(() =>
         store.consume(
           mailIpKey(ip),
@@ -179,7 +175,7 @@ export function createSessionsModule({
       password: string,
       ip: string,
       until: Date,
-      requestId?: string | number,
+      log: MailLog,
     ) {
       const user = await available(() => store.findByEmail(email, until));
       const correct = user
@@ -208,7 +204,7 @@ export function createSessionsModule({
         ),
       );
       if (retry) throw new MailRateLimitedError(retry);
-      const deliveryStatus = await deliver(user.email, code, until, requestId);
+      const deliveryStatus = await deliver(user.email, code, until, log);
       return {
         attemptToken,
         attemptExpiresAt: attempt.expiresAt.toISOString(),
@@ -221,7 +217,7 @@ export function createSessionsModule({
       attemptToken: string,
       ipRetrySeconds: number,
       until: Date,
-      requestId?: string | number,
+      log: MailLog,
     ) {
       const tokenHash = secretDigest("login-attempt", attemptToken);
       const code = newCode();
@@ -242,12 +238,7 @@ export function createSessionsModule({
       if (result.status === "unavailable") throw new LoginAttemptInvalidError();
       if (result.status === "limited")
         throw new MailRateLimitedError(result.retryAfterSeconds);
-      const deliveryStatus = await deliver(
-        result.email,
-        code,
-        until,
-        requestId,
-      );
+      const deliveryStatus = await deliver(result.email, code, until, log);
       return {
         attemptExpiresAt: result.expiresAt.toISOString(),
         codeExpiresAt: result.codeExpiresAt.toISOString(),

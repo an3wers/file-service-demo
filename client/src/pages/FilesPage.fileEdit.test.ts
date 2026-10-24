@@ -6,7 +6,13 @@ import FilesPage from "./FilesPage.vue";
 import { useFileBrowser } from "@/composables/useFileBrowser";
 import { useUpload } from "@/composables/useUpload";
 import { startSession } from "@/api/session";
+import { uploadViaServer } from "@/api/files";
 import type { DirectoryDto, FileDto } from "@/types/api";
+
+vi.mock("@/api/files", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/api/files")>()),
+  uploadViaServer: vi.fn(),
+}));
 
 function json(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), {
@@ -150,6 +156,51 @@ describe("переименование и перемещение файла на
     expect(screen.queryByRole("dialog")).toBeNull();
     expect(within(table()).getByText("Итоги.txt")).toBeTruthy();
     expect(within(table()).queryByText("report.txt")).toBeNull();
+  });
+
+  it("история загрузок показывает новое имя и каталог файла после изменения", async () => {
+    const server: Server = {
+      file: ready(),
+      directories: { "": [{ name: "docs", path: "docs", fileCount: 0 }] },
+      patches: [],
+    };
+    serve(server);
+    vi.mocked(uploadViaServer).mockResolvedValue(ready());
+    await mountPage();
+    useUpload().addFiles([
+      new File(["x"], "report.txt", { type: "text/plain" }),
+    ]);
+    void useUpload().submit("");
+    await flushPromises();
+
+    await fireEvent.click(
+      within(table()).getByRole("button", { name: "Переименовать файл" }),
+    );
+    let dialog = screen.getByRole("dialog");
+    await fireEvent.update(
+      within(dialog).getByLabelText("Новое имя"),
+      "Итоги.txt",
+    );
+    await fireEvent.submit(within(dialog).getByLabelText("Новое имя"));
+    await flushPromises();
+    await fireEvent.click(
+      within(table()).getByRole("button", { name: "Переместить файл" }),
+    );
+    dialog = screen.getByRole("dialog");
+    await flushPromises();
+    await fireEvent.click(within(dialog).getByRole("button", { name: "docs" }));
+    await flushPromises();
+    await fireEvent.click(
+      within(dialog).getByRole("button", { name: "Переместить сюда" }),
+    );
+    await flushPromises();
+
+    await fireEvent.click(screen.getByRole("button", { name: /^Загрузки:/ }));
+    await flushPromises();
+    const row = within(screen.getByTestId("upload-row"));
+    expect(row.getByText("Итоги.txt")).toBeTruthy();
+    expect(row.queryByText("report.txt")).toBeNull();
+    expect(row.getByText(/docs/)).toBeTruthy();
   });
 
   it("показывает понятную ошибку и оставляет диалог открытым", async () => {

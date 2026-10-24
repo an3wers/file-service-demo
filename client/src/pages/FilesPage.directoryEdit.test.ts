@@ -195,6 +195,67 @@ describe("переименование и перемещение каталог�
     ]);
   });
 
+  it("переименовывает открытый каталог из заголовка и переходит по его новому пути", async () => {
+    const server: Server = {
+      paths: new Set([
+        "Документы",
+        "Документы/Отчёты",
+        "Документы/Отчёты/2026",
+      ]),
+      patches: [],
+    };
+    serve(server);
+    const router = await mountPage("/?directory=Документы/Отчёты");
+
+    await fireEvent.click(
+      screen.getByRole("button", { name: "Переименовать этот каталог" }),
+    );
+    const dialog = screen.getByRole("dialog");
+    expect(within(dialog).getByText("Каталог «Отчёты»")).toBeTruthy();
+    const input = within(dialog).getByLabelText("Новое имя");
+    await fireEvent.update(input, "Итоги");
+    await fireEvent.submit(input);
+    await flushPromises();
+
+    expect(server.patches).toEqual([
+      { path: "Документы/Отчёты", body: { name: "Итоги" } },
+    ]);
+    expect(router.currentRoute.value.query.directory).toBe("Документы/Итоги");
+    expect(rowNames()).toEqual(["2026"]);
+  });
+
+  it("перемещает открытый каталог из заголовка и переходит по его новому пути", async () => {
+    const server: Server = {
+      paths: new Set(["Документы", "Документы/Отчёты", "Архив"]),
+      patches: [],
+    };
+    serve(server);
+    const router = await mountPage("/?directory=Документы/Отчёты");
+
+    await fireEvent.click(
+      screen.getByRole("button", { name: "Переместить этот каталог" }),
+    );
+    const dialog = screen.getByRole("dialog");
+    await flushPromises();
+    await fireEvent.click(
+      within(dialog).getByRole("button", { name: "Корень" }),
+    );
+    await flushPromises();
+    await fireEvent.click(
+      within(dialog).getByRole("button", { name: "Архив" }),
+    );
+    await flushPromises();
+    await fireEvent.click(
+      within(dialog).getByRole("button", { name: "Переместить сюда" }),
+    );
+    await flushPromises();
+
+    expect(server.patches).toEqual([
+      { path: "Документы/Отчёты", body: { parent: "Архив" } },
+    ]);
+    expect(router.currentRoute.value.query.directory).toBe("Архив/Отчёты");
+  });
+
   it("показывает отказ сервера и оставляет диалог открытым", async () => {
     const server: Server = {
       paths: new Set(["Документы", "Архив"]),

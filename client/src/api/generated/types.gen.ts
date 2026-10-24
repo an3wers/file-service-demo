@@ -1095,7 +1095,7 @@ export type ListFilesErrors = {
      */
     401: ErrorResponse;
     /**
-     * Директория не найдена
+     * Каталог не найден
      */
     404: ErrorResponse;
     /**
@@ -1144,7 +1144,7 @@ export type UploadFileErrors = {
      */
     401: ErrorResponse;
     /**
-     * Директория не найдена
+     * Каталог не найден
      */
     404: ErrorResponse;
     /**
@@ -1203,7 +1203,7 @@ export type PresignUploadErrors = {
      */
     401: ErrorResponse;
     /**
-     * Директория не найдена
+     * Каталог не найден
      */
     404: ErrorResponse;
     /**
@@ -1598,7 +1598,7 @@ export type DeleteDirectoryErrors = {
      */
     401: ErrorResponse;
     /**
-     * Директория не найдена
+     * Каталог не найден
      */
     404: ErrorResponse;
     /**
@@ -1649,7 +1649,7 @@ export type ListDirectoriesErrors = {
      */
     401: ErrorResponse;
     /**
-     * Директория не найдена
+     * Каталог не найден
      */
     404: ErrorResponse;
     /**
@@ -1745,11 +1745,11 @@ export type CreateDirectoryErrors = {
      */
     401: ErrorResponse;
     /**
-     * Директория не найдена
+     * Каталог не найден
      */
     404: ErrorResponse;
     /**
-     * Директория уже существует
+     * Каталог уже существует
      */
     409: ErrorResponse;
     /**
