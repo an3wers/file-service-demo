@@ -12,7 +12,7 @@ export function settledFile(alias: string): string {
 export function directoryMissingOn(constraint: string, path: string) {
   return (error: unknown): never => {
     if (violatedForeignKey(error) === constraint)
-      throw new DirectoryNotFoundError("Директория не найдена", { path });
+      throw new DirectoryNotFoundError("Каталог не найден", { path });
     throw error;
   };
 }

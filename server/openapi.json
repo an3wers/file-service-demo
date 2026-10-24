@@ -2081,7 +2081,7 @@
             }
           },
           "404": {
-            "description": "Директория не найдена",
+            "description": "Каталог не найден",
             "content": {
               "application/json": {
                 "schema": {
@@ -2256,7 +2256,7 @@
             }
           },
           "404": {
-            "description": "Директория не найдена",
+            "description": "Каталог не найден",
             "content": {
               "application/json": {
                 "schema": {
@@ -2377,7 +2377,7 @@
             }
           },
           "404": {
-            "description": "Директория не найдена",
+            "description": "Каталог не найден",
             "content": {
               "application/json": {
                 "schema": {
@@ -3211,7 +3211,7 @@
             }
           },
           "404": {
-            "description": "Директория не найдена",
+            "description": "Каталог не найден",
             "content": {
               "application/json": {
                 "schema": {
@@ -3221,7 +3221,7 @@
             }
           },
           "409": {
-            "description": "Директория уже существует",
+            "description": "Каталог уже существует",
             "content": {
               "application/json": {
                 "schema": {
@@ -3310,7 +3310,7 @@
             }
           },
           "404": {
-            "description": "Директория не найдена",
+            "description": "Каталог не найден",
             "content": {
               "application/json": {
                 "schema": {
@@ -3394,7 +3394,7 @@
             }
           },
           "404": {
-            "description": "Директория не найдена",
+            "description": "Каталог не найден",
             "content": {
               "application/json": {
                 "schema": {
