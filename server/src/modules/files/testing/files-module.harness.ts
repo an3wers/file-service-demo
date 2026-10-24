@@ -107,7 +107,11 @@ export function buildHarness(
     const ownRows = fileRows.forOwner(owner);
     if (!trees.has(owner))
       trees.set(owner, new Map([["", { parent: null, name: "" }]]));
-    const ownDirectories = createMemoryDirectories(ownRows, trees.get(owner));
+    const ownDirectories = createMemoryDirectories(
+      ownRows,
+      trees.get(owner),
+      fileRows.isTerminated,
+    );
     return {
       fileRows: ownRows,
       directories: ownDirectories,

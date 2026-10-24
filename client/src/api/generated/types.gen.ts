@@ -1518,6 +1518,57 @@ export type GetDownloadUrlResponses = {
 
 export type GetDownloadUrlResponse = GetDownloadUrlResponses[keyof GetDownloadUrlResponses];
 
+export type DeleteDirectoryData = {
+    body?: never;
+    path?: never;
+    query: {
+        path: string;
+    };
+    url: '/api/directories';
+};
+
+export type DeleteDirectoryErrors = {
+    /**
+     * Недопустимый каталог или личный корень
+     */
+    400: ErrorResponse;
+    /**
+     * Нет токена доступа или он недействителен
+     */
+    401: ErrorResponse;
+    /**
+     * Директория не найдена
+     */
+    404: ErrorResponse;
+    /**
+     * Каталог не пуст
+     */
+    409: ErrorResponse;
+    /**
+     * Запрос не прошёл валидацию; details — результат z.flattenError()
+     */
+    422: ErrorResponse;
+    /**
+     * Непредвиденная ошибка сервера
+     */
+    500: ErrorResponse;
+    /**
+     * Хранилище или база данных недоступны
+     */
+    503: ErrorResponse;
+};
+
+export type DeleteDirectoryError = DeleteDirectoryErrors[keyof DeleteDirectoryErrors];
+
+export type DeleteDirectoryResponses = {
+    /**
+     * Каталог удалён
+     */
+    204: void;
+};
+
+export type DeleteDirectoryResponse = DeleteDirectoryResponses[keyof DeleteDirectoryResponses];
+
 export type ListDirectoriesData = {
     body?: never;
     path?: never;

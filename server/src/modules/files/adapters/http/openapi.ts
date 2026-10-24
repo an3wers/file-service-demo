@@ -2,6 +2,7 @@ import type { ZodOpenApiPathsObject } from "zod-openapi";
 import { apiErrors } from "../../../../http-contract.js";
 import {
   createDirectorySchema,
+  deleteDirectoryQuerySchema,
   directoriesQuerySchema,
   downloadUrlQuerySchema,
   fileCardQuerySchema,
@@ -295,6 +296,23 @@ export const directoriesPaths: ZodOpenApiPathsObject = {
         ...apiErrors({
           400: "Недопустимый каталог",
           404: "Директория не найдена",
+        }),
+      },
+    },
+    delete: {
+      tags: ["directories"],
+      summary: "Удалить пустой каталог",
+      description:
+        "Рекурсивного удаления нет: каталог с подкаталогами, файлами или незавершёнными " +
+        "загрузками не удаляется. Личный корень удалить нельзя.",
+      operationId: "deleteDirectory",
+      requestParams: { query: deleteDirectoryQuerySchema },
+      responses: {
+        204: { description: "Каталог удалён" },
+        ...apiErrors({
+          400: "Недопустимый каталог или личный корень",
+          404: "Директория не найдена",
+          409: "Каталог не пуст",
         }),
       },
     },

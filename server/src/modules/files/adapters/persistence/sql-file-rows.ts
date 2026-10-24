@@ -1,5 +1,9 @@
-import { FileNotFoundError } from "../../domain/errors.js";
+import {
+  DirectoryNotFoundError,
+  FileNotFoundError,
+} from "../../domain/errors.js";
 import { query, type Execute } from "../../../../db/pool.js";
+import { violatedForeignKey } from "../../../../db/errors.js";
 import type {
   FileRows,
   ReadyValues,
@@ -269,7 +273,13 @@ export function createSqlFileRows(
         input.partCount ?? null,
         owner,
       ],
-    );
+    ).catch((error: unknown) => {
+      if (violatedForeignKey(error) === "files_directory_fk")
+        throw new DirectoryNotFoundError("Директория не найдена", {
+          path: input.directory,
+        });
+      throw error;
+    });
 
     if (!rows[0])
       throw new FileNotFoundError(`File ${input.id} was deleted or completed`);

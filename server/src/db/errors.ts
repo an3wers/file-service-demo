@@ -62,6 +62,11 @@ function chain(error: unknown): PgErrorShape[] {
   return links;
 }
 
+export function violatedForeignKey(error: unknown): string | undefined {
+  const link = chain(error).find((item) => item.code === "23503");
+  return typeof link?.constraint === "string" ? link.constraint : undefined;
+}
+
 function isUnreachable(links: PgErrorShape[]): boolean {
   return links.some((link) => {
     const code = typeof link.code === "string" ? link.code : "";

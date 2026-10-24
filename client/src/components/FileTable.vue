@@ -11,7 +11,7 @@ import {
   Trash2Icon,
   TriangleAlertIcon,
 } from "@lucide/vue";
-import type { FileDto, SortField } from "@/types/api";
+import type { DirectoryDto, FileDto, SortField } from "@/types/api";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import {
@@ -38,6 +38,7 @@ const emit = defineEmits<{
   open: [file: FileDto];
   download: [file: FileDto];
   remove: [file: FileDto];
+  removeDirectory: [directory: DirectoryDto];
 }>();
 
 const browser = useFileBrowser();
@@ -172,7 +173,19 @@ const skeletonRows = [0, 1, 2, 3, 4];
                 —
               </TableCell>
               <TableCell class="px-4 text-muted-foreground"> — </TableCell>
-              <TableCell />
+              <TableCell class="px-4 text-right">
+                <span class="flex justify-end gap-1">
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    class="text-destructive"
+                    aria-label="Удалить каталог"
+                    @click.stop="emit('removeDirectory', catalog)"
+                  >
+                    <Trash2Icon />
+                  </Button>
+                </span>
+              </TableCell>
             </TableRow>
             <TableRow
               v-for="file in browser.files.value"

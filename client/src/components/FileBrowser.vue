@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from "vue";
-import { SearchIcon, UploadIcon } from "@lucide/vue";
-import type { FileDto } from "@/types/api";
+import { SearchIcon, Trash2Icon, UploadIcon } from "@lucide/vue";
+import type { DirectoryDto, FileDto } from "@/types/api";
 import {
   Card,
   CardContent,
@@ -33,6 +33,7 @@ import {
 } from "@/components/ui/select";
 import { Separator } from "@/components/ui/separator";
 import { Button } from "@/components/ui/button";
+import DeleteDirectoryDialog from "./DeleteDirectoryDialog.vue";
 import DeleteFileDialog from "./DeleteFileDialog.vue";
 import DirectoryBreadcrumbs from "./DirectoryBreadcrumbs.vue";
 import FileCardDialog from "./FileCardDialog.vue";
@@ -56,6 +57,8 @@ const fileToDelete = ref<FileDto | null>(null);
 const deleteOpen = ref(false);
 const uploadOpen = ref(false);
 const createOpen = ref(false);
+const directoryToDelete = ref<Pick<DirectoryDto, "name" | "path"> | null>(null);
+const deleteDirectoryOpen = ref(false);
 
 const limitValue = computed({
   get: () => String(browser.limit.value),
@@ -76,6 +79,16 @@ function askDelete(file: FileDto): void {
   deleteOpen.value = true;
 }
 
+function askDeleteDirectory(directory: Pick<DirectoryDto, "name" | "path">) {
+  directoryToDelete.value = directory;
+  deleteDirectoryOpen.value = true;
+}
+
+function askDeleteCurrentDirectory(): void {
+  const path = browser.directory.value;
+  askDeleteDirectory({ path, name: path.split("/").at(-1) ?? path });
+}
+
 function onDeleted(file: FileDto): void {
   if (selectedFile.value?.id === file.id) {
     cardOpen.value = false;
@@ -91,6 +104,16 @@ function onDeleted(file: FileDto): void {
         Найдено: {{ total }}. Поиск идёт по текущей папке и её подпапкам.
       </CardDescription>
       <CardAction class="flex flex-wrap gap-2">
+        <Button
+          v-if="browser.directory.value"
+          variant="outline"
+          class="text-destructive"
+          :disabled="browser.loading.value || !!browser.error.value"
+          @click="askDeleteCurrentDirectory"
+        >
+          <Trash2Icon data-icon="inline-start" />
+          Удалить этот каталог
+        </Button>
         <Button
           variant="outline"
           :disabled="browser.loading.value || !!browser.error.value"
@@ -152,6 +175,7 @@ function onDeleted(file: FileDto): void {
         @open="openCard"
         @download="actions.download"
         @remove="askDelete"
+        @remove-directory="askDeleteDirectory"
       />
 
       <Pagination
@@ -188,6 +212,10 @@ function onDeleted(file: FileDto): void {
   </Card>
 
   <CreateDirectoryDialog v-model:open="createOpen" />
+  <DeleteDirectoryDialog
+    v-model:open="deleteDirectoryOpen"
+    :directory="directoryToDelete"
+  />
   <UploadPanel v-model:open="uploadOpen" />
 
   <FileCardDialog

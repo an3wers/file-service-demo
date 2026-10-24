@@ -11,4 +11,5 @@ export interface DirectoriesForUpload {
 export interface DirectoriesForCatalog extends DirectoriesForUpload {
   create(parent: string, name: string): Promise<boolean>;
   listChildren(parent: string): Promise<DirectoryDto[]>;
+  remove(path: string): Promise<"removed" | "missing" | "occupied">;
 }

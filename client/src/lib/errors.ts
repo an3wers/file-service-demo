@@ -31,6 +31,8 @@ const MESSAGES: Record<string, string> = {
   PAYLOAD_TOO_LARGE: "Файл слишком большой для выбранного способа загрузки",
   DIRECTORY_NOT_FOUND: "Директория не найдена",
   DIRECTORY_ALREADY_EXISTS: "Директория уже существует",
+  DIRECTORY_NOT_EMPTY:
+    "Каталог не пуст: удалите подкаталоги, файлы и незавершённые загрузки",
   INVALID_DIRECTORY: "Недопустимый путь директории",
   INVALID_FILE_NAME: "Недопустимое имя файла",
 

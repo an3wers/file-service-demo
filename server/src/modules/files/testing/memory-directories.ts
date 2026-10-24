@@ -7,8 +7,9 @@ export type MemoryDirectoryTree = Map<
 >;
 
 export function createMemoryDirectories(
-  fileRows: Pick<FileRowsForFiles, "listFiles">,
+  fileRows: Pick<FileRowsForFiles, "listFiles" | "softDeleteFile">,
   paths: MemoryDirectoryTree = new Map([["", { parent: null, name: "" }]]),
+  settled: (fileId: string) => boolean = () => false,
 ): DirectoriesForCatalog {
   return {
     async exists(path) {
@@ -19,6 +20,23 @@ export function createMemoryDirectories(
       if (paths.has(path)) return false;
       paths.set(path, { parent, name });
       return true;
+    },
+    async remove(path) {
+      if (!paths.has(path)) return "missing";
+      if ([...paths.values()].some((entry) => entry.parent === path))
+        return "occupied";
+      const { items } = await fileRows.listFiles({
+        directory: path,
+        recursive: false,
+        page: 1,
+        limit: Number.MAX_SAFE_INTEGER,
+        sort: "created_at",
+        order: "asc",
+      });
+      if (items.some((file) => !settled(file.id))) return "occupied";
+      for (const file of items) await fileRows.softDeleteFile(file.id);
+      paths.delete(path);
+      return "removed";
     },
     async listChildren(parent) {
       const children = [...paths.entries()].filter(
