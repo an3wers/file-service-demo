@@ -29,6 +29,8 @@ async function start(
   const store: RegistrationStore = {
     consume: vi.fn().mockResolvedValue(0),
     save: vi.fn().mockResolvedValue(true),
+    requestActivation: vi.fn().mockResolvedValue(true),
+    confirmActivation: vi.fn().mockResolvedValue(true),
   };
   const sendEmail = vi.fn().mockResolvedValue({ messageId: "accepted" });
   const auth = createAuthHarness();

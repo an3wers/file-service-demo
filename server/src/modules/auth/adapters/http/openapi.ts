@@ -7,6 +7,9 @@ import {
   sessionResponseSchema,
   registrationBodySchema,
   registrationResponseSchema,
+  activationRequestSchema,
+  activationConfirmSchema,
+  activationResponseSchema,
 } from "./schemas.js";
 
 const json = <T>(schema: T) => ({ "application/json": { schema } });
@@ -25,6 +28,66 @@ const refreshCookie = z.object({
 });
 
 export const authPaths: ZodOpenApiPathsObject = {
+  "/activation/request": {
+    post: {
+      tags: ["auth"],
+      summary: "Повтор письма активации",
+      operationId: "requestActivation",
+      security: [],
+      description:
+        "Нейтральный ответ через общий бюджет 15 секунд. Новая ссылка на 24 часа заменяет прежнюю до SMTP только у неактивного пользователя. Квоты общие с регистрацией.",
+      requestParams: { header: z.object({ Origin: z.string() }) },
+      requestBody: { required: true, content: json(activationRequestSchema) },
+      responses: {
+        202: {
+          description: "Запрос обработан",
+          headers: z.object({ "Cache-Control": z.literal("no-store") }),
+          content: json(registrationResponseSchema),
+        },
+        ...apiErrors({
+          400: "BAD_REQUEST",
+          403: "ORIGIN_NOT_ALLOWED",
+          413: "PAYLOAD_TOO_LARGE",
+          415: "UNSUPPORTED_MEDIA_TYPE",
+          503: "SERVICE_UNAVAILABLE",
+        }),
+        429: {
+          ...errorResponse("RATE_LIMITED: details.retryAfterSeconds"),
+          headers: z.object({ "Retry-After": z.string() }),
+        },
+      },
+    },
+  },
+  "/activation/confirm": {
+    post: {
+      tags: ["auth"],
+      summary: "Подтверждение email",
+      operationId: "confirmActivation",
+      security: [],
+      description:
+        "Одноразовое подтверждение кнопкой. Атомарно погашает действующую ссылку и активирует пользователя без создания или переключения сессии. Не более 20 запросов за 15 минут с IP, включая ошибочные тела.",
+      requestParams: { header: z.object({ Origin: z.string() }) },
+      requestBody: { required: true, content: json(activationConfirmSchema) },
+      responses: {
+        200: {
+          description: "Email подтверждён",
+          headers: z.object({ "Cache-Control": z.literal("no-store") }),
+          content: json(activationResponseSchema),
+        },
+        ...apiErrors({
+          400: "ACTIVATION_LINK_INVALID или BAD_REQUEST",
+          403: "ORIGIN_NOT_ALLOWED",
+          413: "PAYLOAD_TOO_LARGE",
+          415: "UNSUPPORTED_MEDIA_TYPE",
+          503: "SERVICE_UNAVAILABLE",
+        }),
+        429: {
+          ...errorResponse("RATE_LIMITED: details.retryAfterSeconds"),
+          headers: z.object({ "Retry-After": z.string() }),
+        },
+      },
+    },
+  },
   "/register": {
     post: {
       tags: ["auth"],

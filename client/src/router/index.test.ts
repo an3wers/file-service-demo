@@ -83,9 +83,27 @@ beforeEach(() => {
 
 afterEach(() => {
   onSessionExpired(null);
+  sessionStorage.clear();
 });
 
 describe("роутер", () => {
+  it.each([false, true])(
+    "активация доступна при наличии сессии %s без продления или смены пользователя",
+    async (signedInBefore) => {
+      const fetch = respondWith(signedIn);
+      const { router, auth } = setup();
+      if (signedInBefore) await auth.ensureSession();
+      fetch.mockClear();
+      await router.push("/activation#token=private-token");
+      expect(router.currentRoute.value.name).toBe("activation");
+      expect(router.currentRoute.value.hash).toBe("");
+      expect(sessionStorage.getItem("file-service-activation-token")).toBe(
+        "private-token",
+      );
+      expect(auth.signedIn.value).toBe(signedInBefore);
+      expect(fetch).not.toHaveBeenCalled();
+    },
+  );
   it("перебрасывает гостя с / на /login", async () => {
     respondWith(guest);
 

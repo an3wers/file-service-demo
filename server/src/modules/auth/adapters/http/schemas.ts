@@ -36,6 +36,14 @@ export const registrationBodySchema = z.object({
   email: registrationEmailSchema,
   password: codePoints(12, 128),
 });
+export const activationRequestSchema = z.object({
+  email: registrationEmailSchema,
+});
+export const activationConfirmSchema = z.object({ token: z.string() });
+export const activationResponseSchema = z
+  .object({ message: z.literal("Email подтверждён. Теперь можно войти") })
+  .meta({ id: "ActivationResult" });
+export type ActivationResponse = z.infer<typeof activationResponseSchema>;
 export const registrationResponseSchema = z
   .object({
     message: z.string(),

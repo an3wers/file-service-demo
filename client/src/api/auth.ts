@@ -2,6 +2,8 @@ import type {
   AuthSession,
   RegistrationResult,
   RegisterData,
+  RequestActivationData,
+  ActivationResult,
 } from "@/api/generated";
 import { sendAuthRequest, sendRequest } from "./client";
 import { clearSession, startSession } from "./session";
@@ -29,6 +31,30 @@ export function register(
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(input),
+    signal,
+  });
+}
+
+export function requestActivation(
+  input: RequestActivationData["body"],
+  signal: AbortSignal,
+): Promise<RegistrationResult> {
+  return sendRequest<RegistrationResult>("/auth/activation/request", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+    signal,
+  });
+}
+
+export function confirmActivation(
+  token: string,
+  signal: AbortSignal,
+): Promise<ActivationResult> {
+  return sendRequest<ActivationResult>("/auth/activation/confirm", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ token }),
     signal,
   });
 }

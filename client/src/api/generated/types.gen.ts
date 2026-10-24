@@ -48,6 +48,10 @@ export type ErrorResponse = {
     };
 };
 
+export type ActivationResult = {
+    message: 'Email подтверждён. Теперь можно войти';
+};
+
 export type AuthSession = {
     accessToken: string;
     /**
@@ -241,6 +245,130 @@ export type GetReadinessResponses = {
 };
 
 export type GetReadinessResponse = GetReadinessResponses[keyof GetReadinessResponses];
+
+export type RequestActivationData = {
+    body: {
+        email: string;
+    };
+    headers: {
+        Origin: string;
+    };
+    path?: never;
+    query?: never;
+    url: '/api/auth/activation/request';
+};
+
+export type RequestActivationErrors = {
+    /**
+     * BAD_REQUEST
+     */
+    400: ErrorResponse;
+    /**
+     * Нет токена доступа или он недействителен
+     */
+    401: ErrorResponse;
+    /**
+     * ORIGIN_NOT_ALLOWED
+     */
+    403: ErrorResponse;
+    /**
+     * PAYLOAD_TOO_LARGE
+     */
+    413: ErrorResponse;
+    /**
+     * UNSUPPORTED_MEDIA_TYPE
+     */
+    415: ErrorResponse;
+    /**
+     * Запрос не прошёл валидацию; details — результат z.flattenError()
+     */
+    422: ErrorResponse;
+    /**
+     * RATE_LIMITED: details.retryAfterSeconds
+     */
+    429: ErrorResponse;
+    /**
+     * Непредвиденная ошибка сервера
+     */
+    500: ErrorResponse;
+    /**
+     * Хранилище или база данных недоступны
+     */
+    503: ErrorResponse;
+};
+
+export type RequestActivationError = RequestActivationErrors[keyof RequestActivationErrors];
+
+export type RequestActivationResponses = {
+    /**
+     * Запрос обработан
+     */
+    202: RegistrationResult;
+};
+
+export type RequestActivationResponse = RequestActivationResponses[keyof RequestActivationResponses];
+
+export type ConfirmActivationData = {
+    body: {
+        token: string;
+    };
+    headers: {
+        Origin: string;
+    };
+    path?: never;
+    query?: never;
+    url: '/api/auth/activation/confirm';
+};
+
+export type ConfirmActivationErrors = {
+    /**
+     * ACTIVATION_LINK_INVALID или BAD_REQUEST
+     */
+    400: ErrorResponse;
+    /**
+     * Нет токена доступа или он недействителен
+     */
+    401: ErrorResponse;
+    /**
+     * ORIGIN_NOT_ALLOWED
+     */
+    403: ErrorResponse;
+    /**
+     * PAYLOAD_TOO_LARGE
+     */
+    413: ErrorResponse;
+    /**
+     * UNSUPPORTED_MEDIA_TYPE
+     */
+    415: ErrorResponse;
+    /**
+     * Запрос не прошёл валидацию; details — результат z.flattenError()
+     */
+    422: ErrorResponse;
+    /**
+     * RATE_LIMITED: details.retryAfterSeconds
+     */
+    429: ErrorResponse;
+    /**
+     * Непредвиденная ошибка сервера
+     */
+    500: ErrorResponse;
+    /**
+     * Хранилище или база данных недоступны
+     */
+    503: ErrorResponse;
+};
+
+export type ConfirmActivationError = ConfirmActivationErrors[keyof ConfirmActivationErrors];
+
+export type ConfirmActivationResponses = {
+    /**
+     * Email подтверждён
+     */
+    200: ActivationResult;
+};
+
+export type ConfirmActivationResponse = ConfirmActivationResponses[keyof ConfirmActivationResponses];
 
 export type RegisterData = {
     body: {

@@ -136,6 +136,9 @@ onBeforeUnmount(() => {
             class="space-y-4"
           >
             <p>{{ result }}</p>
+            <a href="/activation" class="block text-sm underline"
+              >Запросить письмо активации повторно</a
+            >
             <Button
               type="button"
               variant="outline"

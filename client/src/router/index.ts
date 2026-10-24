@@ -12,6 +12,11 @@ declare module "vue-router" {
 
 const routes: RouteRecordRaw[] = [
   {
+    path: "/activation",
+    name: "activation",
+    component: () => import("@/pages/ActivationPage.vue"),
+  },
+  {
     path: "/register",
     name: "register",
     component: () => import("@/pages/RegisterPage.vue"),
@@ -55,6 +60,22 @@ export function createAppRouter({
   const router = createRouter({ history, routes });
 
   router.beforeEach(async (to) => {
+    if (to.name === "activation" && to.hash) {
+      const token = new URLSearchParams(to.hash.slice(1)).get("token");
+      router.options.history.replace(
+        router.resolve({ path: to.path, query: to.query, hash: "" }).fullPath,
+      );
+      try {
+        sessionStorage.removeItem("file-service-activation-token");
+        sessionStorage.removeItem("file-service-activation-form");
+        if (token)
+          sessionStorage.setItem("file-service-activation-token", token);
+      } catch {
+        return { path: to.path, query: to.query, hash: "", replace: true };
+      }
+      return { path: to.path, query: to.query, hash: "", replace: true };
+    }
+    if (to.name === "activation") return true;
     await auth.ensureSession();
 
     if (auth.status.value === "failed") {
@@ -82,7 +103,8 @@ export function createAppRouter({
       notify(notice);
     }
 
-    void router.push({ name: "login" });
+    if (router.currentRoute.value.name !== "activation")
+      void router.push({ name: "login" });
   });
 
   auth.onSignInElsewhere(async () => {

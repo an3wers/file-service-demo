@@ -6,6 +6,7 @@ import type { Registration } from "../../application/registration.js";
 import {
   MailRateLimitedError,
   RegistrationUnavailableError,
+  ActivationLinkInvalidError,
 } from "../../domain/registration-errors.js";
 import { validateBody } from "../../../../middleware/validate.js";
 import type { Session, SessionsModule } from "../../application/sessions.js";
@@ -16,8 +17,10 @@ import {
   loginBodySchema,
   registrationBodySchema,
   registrationEmailSchema,
+  activationRequestSchema,
+  activationConfirmSchema,
 } from "./schemas.js";
-import type { SessionResponse } from "./schemas.js";
+import type { ActivationResponse, SessionResponse } from "./schemas.js";
 
 export interface AuthRouterSettings {
   cookieSecure: boolean;
@@ -84,34 +87,73 @@ export function createAuthRouter(
     next();
   };
 
-  router.post("/register", prepareRegistration, parseBody, async (req, res) => {
-    if (!registration) throw new RegistrationUnavailableError();
-    const email = registrationEmailSchema.safeParse(req.body?.email);
-    const emailAdmission = email.success
-      ? await registration.consumeEmail(
-          email.data,
-          res.locals.registrationDeadline,
-        )
-      : undefined;
-    const retry = Math.max(
-      res.locals.ipRetry ?? 0,
-      emailAdmission?.retryAfterSeconds ?? 0,
-    );
-    if (retry > 0) throw new MailRateLimitedError(retry);
-    const input = registrationBodySchema.parse(req.body);
-    res
-      .status(202)
-      .json(
-        await registration.register(
-          input,
-          res.locals.registrationDeadline,
-          emailAdmission!.requestedAt,
-          typeof req.id === "string" || typeof req.id === "number"
-            ? req.id
-            : undefined,
-        ),
+  const requestMail =
+    (activation: boolean): RequestHandler =>
+    async (req, res) => {
+      if (!registration) throw new RegistrationUnavailableError();
+      const email = registrationEmailSchema.safeParse(req.body?.email);
+      const emailAdmission = email.success
+        ? await registration.consumeEmail(
+            email.data,
+            res.locals.registrationDeadline,
+          )
+        : undefined;
+      const retry = Math.max(
+        res.locals.ipRetry ?? 0,
+        emailAdmission?.retryAfterSeconds ?? 0,
       );
-  });
+      if (retry > 0) throw new MailRateLimitedError(retry);
+      const deadline = res.locals.registrationDeadline;
+      const requestId =
+        typeof req.id === "string" || typeof req.id === "number"
+          ? req.id
+          : undefined;
+      const result = activation
+        ? await registration.requestActivation(
+            activationRequestSchema.parse(req.body).email,
+            deadline,
+            emailAdmission!.requestedAt,
+            requestId,
+          )
+        : await registration.register(
+            registrationBodySchema.parse(req.body),
+            deadline,
+            emailAdmission!.requestedAt,
+            requestId,
+          );
+      res.status(202).json(result);
+    };
+  router.post("/register", prepareRegistration, parseBody, requestMail(false));
+  router.post(
+    "/activation/request",
+    prepareRegistration,
+    parseBody,
+    requestMail(true),
+  );
+  router.post(
+    "/activation/confirm",
+    async (req, res, next) => {
+      if (!registration) throw new RegistrationUnavailableError();
+      res.locals.registrationDeadline = registration.deadline();
+      res.locals.ipRetry = await registration.consumeConfirmationIp(
+        req.ip ?? req.socket.remoteAddress ?? "unknown",
+        res.locals.registrationDeadline,
+      );
+      if (res.locals.ipRetry > 0)
+        throw new MailRateLimitedError(res.locals.ipRetry);
+      next();
+    },
+    parseBody,
+    async (req, res) => {
+      if (!registration) throw new RegistrationUnavailableError();
+      const { token } = activationConfirmSchema.parse(req.body);
+      const response: ActivationResponse = await registration.confirmActivation(
+        token,
+        res.locals.registrationDeadline,
+      );
+      res.json(response);
+    },
+  );
   router.use(parseBody);
 
   function respond(res: Response, session: Session): void {
@@ -154,6 +196,10 @@ export function createAuthRouter(
   });
 
   const sanitizeError: ErrorRequestHandler = (error, req, res, next) => {
+    if (error instanceof ActivationLinkInvalidError)
+      return next(
+        new AppError(400, ERROR_CODES.ACTIVATION_LINK_INVALID, error.message),
+      );
     if (error instanceof RegistrationUnavailableError) {
       if (!req.complete) res.set("Connection", "close");
       return next(

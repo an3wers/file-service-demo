@@ -3,6 +3,33 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="referrer" content="no-referrer" />
+    <script>
+      (() => {
+        const activation = /^\/activation\/?$/i.test(location.pathname);
+        const fragment = activation && !!location.hash;
+        const token =
+          activation &&
+          new URLSearchParams(location.hash.slice(1)).get("token");
+        if (fragment)
+          history.replaceState(
+            history.state,
+            "",
+            location.pathname + location.search,
+          );
+        try {
+          if (
+            !activation ||
+            fragment ||
+            performance.getEntriesByType("navigation")[0]?.type !== "reload"
+          ) {
+            sessionStorage.removeItem("file-service-activation-token");
+            sessionStorage.removeItem("file-service-activation-form");
+          }
+          if (token)
+            sessionStorage.setItem("file-service-activation-token", token);
+        } catch {}
+      })();
+    </script>
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <script>

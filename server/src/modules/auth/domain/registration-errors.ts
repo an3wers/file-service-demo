@@ -9,3 +9,9 @@ export class RegistrationUnavailableError extends Error {
     super("Сервис временно недоступен. Попробуйте позже");
   }
 }
+
+export class ActivationLinkInvalidError extends Error {
+  constructor() {
+    super("Ссылка недействительна. Запросите новое письмо активации");
+  }
+}

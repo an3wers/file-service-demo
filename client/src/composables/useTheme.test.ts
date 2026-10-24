@@ -109,7 +109,9 @@ describe("тема оформления", () => {
 });
 
 describe("тема до запуска приложения", () => {
-  const script = html.match(/<script>([\s\S]*?)<\/script>/)![1]!;
+  const script = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)].find(
+    (match) => match[1]!.includes('let mode = "system"'),
+  )![1]!;
 
   it.each([
     ["dark", false, "dark"],

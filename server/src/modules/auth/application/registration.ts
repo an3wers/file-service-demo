@@ -7,7 +7,10 @@ import type {
   MailLimit,
   RegistrationStore,
 } from "../domain/ports/registration-store.js";
-import { RegistrationUnavailableError } from "../domain/registration-errors.js";
+import {
+  ActivationLinkInvalidError,
+  RegistrationUnavailableError,
+} from "../domain/registration-errors.js";
 
 export interface RegistrationInput {
   name: string;
@@ -77,6 +80,74 @@ export function createRegistration({
     }
     return { retryAfterSeconds: retry, requestedAt: now };
   }
+  async function sendActivation(
+    email: string,
+    save: (tokenHash: string, expiresAt: Date) => Promise<boolean>,
+    deadline: Date,
+    mailRequestedAt: Date,
+    requestId?: string | number,
+  ) {
+    try {
+      const token = randomBytes(32).toString("base64url");
+      const send = await withinDeadline(deadline, () =>
+        save(digest(token), new Date(clock.now().getTime() + 86400000)),
+      );
+      const remaining = deadline.getTime() - clock.now().getTime();
+      if (send && remaining > 0) {
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), remaining);
+        const link = new URL("/activation", publicUrl);
+        link.hash = `token=${token}`;
+        const smtpStarted = clock.now().getTime();
+        let outcome = "unconfirmed";
+        try {
+          await Promise.race([
+            notification
+              .sendEmail(
+                {
+                  to: email,
+                  subject: "Подтверждение email",
+                  text: `Подтвердите email: ${link.href}\nСсылка действует 24 часа.`,
+                },
+                { signal: controller.signal },
+              )
+              .then(() => {
+                outcome = "accepted";
+              }),
+            new Promise<void>((resolve) =>
+              controller.signal.addEventListener("abort", () => resolve(), {
+                once: true,
+              }),
+            ),
+          ]).catch(() => undefined);
+        } finally {
+          clearTimeout(timer);
+          logger.info(
+            {
+              purpose: "activation",
+              outcome,
+              durationMs: clock.now().getTime() - smtpStarted,
+              requestId,
+            },
+            "Auth mail attempt",
+          );
+        }
+      }
+    } catch {
+      throw new RegistrationUnavailableError();
+    }
+    while (clock.now() < deadline)
+      await wait(deadline.getTime() - clock.now().getTime());
+    return {
+      message: REGISTRATION_MESSAGE,
+      retryAfterSeconds: Math.max(
+        0,
+        Math.ceil(
+          (mailRequestedAt.getTime() + 60000 - clock.now().getTime()) / 1000,
+        ),
+      ),
+    };
+  }
   return {
     deadline: () => new Date(clock.now().getTime() + deadlineMs),
     withinDeadline,
@@ -97,6 +168,40 @@ export function createRegistration({
         ],
         deadline,
       ),
+    consumeConfirmationIp: async (ip: string, deadline: Date) =>
+      (
+        await consume(
+          `activation:confirm:ip:${digest(ip)}`,
+          [{ windowMs: 900000, maximum: 20 }],
+          deadline,
+        )
+      ).retryAfterSeconds,
+    requestActivation: (
+      email: string,
+      deadline: Date,
+      mailRequestedAt: Date,
+      requestId?: string | number,
+    ) =>
+      sendActivation(
+        email,
+        (tokenHash, expiresAt) =>
+          store.requestActivation(email, tokenHash, expiresAt, deadline),
+        deadline,
+        mailRequestedAt,
+        requestId,
+      ),
+    async confirmActivation(token: string, deadline: Date) {
+      let confirmed: boolean;
+      try {
+        confirmed = await withinDeadline(deadline, () =>
+          store.confirmActivation(digest(token), deadline),
+        );
+      } catch {
+        throw new RegistrationUnavailableError();
+      }
+      if (!confirmed) throw new ActivationLinkInvalidError();
+      return { message: "Email подтверждён. Теперь можно войти" as const };
+    },
     async register(
       input: RegistrationInput,
       deadline: Date,
@@ -107,75 +212,27 @@ export function createRegistration({
         const passwordHash = await withinDeadline(deadline, () =>
           hasher.hash(input.password),
         );
-        const token = randomBytes(32).toString("base64url");
-        const send = await withinDeadline(deadline, () =>
-          store.save(
-            {
-              id: randomUUID(),
-              name: input.name,
-              email: input.email,
-              passwordHash,
-              tokenHash: digest(token),
-              expiresAt: new Date(clock.now().getTime() + 86400000),
-            },
-            deadline,
-          ),
-        );
-        const remaining = deadline.getTime() - clock.now().getTime();
-        if (send && remaining > 0) {
-          const controller = new AbortController();
-          const timer = setTimeout(() => controller.abort(), remaining);
-          const link = new URL("/activation", publicUrl);
-          link.hash = `token=${token}`;
-          const smtpStarted = clock.now().getTime();
-          let outcome = "unconfirmed";
-          try {
-            await Promise.race([
-              notification
-                .sendEmail(
-                  {
-                    to: input.email,
-                    subject: "Подтверждение email",
-                    text: `Подтвердите email: ${link.href}\nСсылка действует 24 часа.`,
-                  },
-                  { signal: controller.signal },
-                )
-                .then(() => {
-                  outcome = "accepted";
-                }),
-              new Promise<void>((resolve) =>
-                controller.signal.addEventListener("abort", () => resolve(), {
-                  once: true,
-                }),
-              ),
-            ]).catch(() => undefined);
-          } finally {
-            clearTimeout(timer);
-            logger.info(
+        return await sendActivation(
+          input.email,
+          (tokenHash, expiresAt) =>
+            store.save(
               {
-                purpose: "activation",
-                outcome,
-                durationMs: clock.now().getTime() - smtpStarted,
-                requestId,
+                id: randomUUID(),
+                name: input.name,
+                email: input.email,
+                passwordHash,
+                tokenHash,
+                expiresAt,
               },
-              "Auth mail attempt",
-            );
-          }
-        }
+              deadline,
+            ),
+          deadline,
+          mailRequestedAt,
+          requestId,
+        );
       } catch {
         throw new RegistrationUnavailableError();
       }
-      while (clock.now() < deadline)
-        await wait(deadline.getTime() - clock.now().getTime());
-      return {
-        message: REGISTRATION_MESSAGE,
-        retryAfterSeconds: Math.max(
-          0,
-          Math.ceil(
-            (mailRequestedAt.getTime() + 60000 - clock.now().getTime()) / 1000,
-          ),
-        ),
-      };
     },
   };
 }

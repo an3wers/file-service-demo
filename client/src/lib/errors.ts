@@ -10,6 +10,8 @@ const MESSAGES: Record<string, string> = {
   UNAUTHORIZED: "Сессия истекла — войдите снова",
   SESSION_EXPIRED: "Сессия истекла — войдите снова",
   INVALID_CREDENTIALS: "Неверный логин или пароль",
+  ACTIVATION_LINK_INVALID:
+    "Ссылка недействительна. Запросите новое письмо активации",
   ROUTE_NOT_FOUND: "Метод API не найден — клиент и сервер разошлись по версиям",
   VALIDATION_ERROR: "Некорректные параметры запроса",
   INTERNAL_SERVER_ERROR: "Внутренняя ошибка сервера",

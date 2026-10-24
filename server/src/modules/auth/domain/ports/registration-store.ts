@@ -20,6 +20,13 @@ export interface RegistrationStore {
     deadline: Date,
   ): Promise<number>;
   save(record: RegistrationRecord, deadline: Date): Promise<boolean>;
+  requestActivation(
+    email: string,
+    tokenHash: string,
+    expiresAt: Date,
+    deadline: Date,
+  ): Promise<boolean>;
+  confirmActivation(tokenHash: string, deadline: Date): Promise<boolean>;
 }
 
 export interface MailEventCleanup {

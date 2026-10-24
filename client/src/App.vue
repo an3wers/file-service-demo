@@ -31,14 +31,14 @@ function retry(): void {
 
 <template>
   <div
-    v-if="auth.status.value === 'booting'"
+    v-if="auth.status.value === 'booting' && route.name !== 'activation'"
     class="flex min-h-svh items-center justify-center bg-background"
   >
     <Spinner class="size-8 text-muted-foreground" />
   </div>
 
   <div
-    v-else-if="auth.status.value === 'failed'"
+    v-else-if="auth.status.value === 'failed' && route.name !== 'activation'"
     class="flex min-h-svh items-center justify-center bg-background p-6"
   >
     <Empty>
