@@ -1,4 +1,5 @@
 import { createHash, createHmac, randomBytes, randomInt } from "node:crypto";
+import { logger } from "../../../logger.js";
 import type { Notification } from "../../notification/index.js";
 import type { PasswordHasher } from "../domain/ports/password-hasher.js";
 import type { Tokens } from "../domain/ports/tokens.js";
@@ -83,10 +84,10 @@ export function createSessionsModule({
       clearTimeout(timer);
     }
   }
+  const retryAfter = (key: string, maximum: number, until: Date) =>
+    available(() => store.consume(key, [{ windowMs: 900000, maximum }], until));
   async function consume(key: string, maximum: number, until: Date) {
-    const retry = await available(() =>
-      store.consume(key, [{ windowMs: 900000, maximum }], until),
-    );
+    const retry = await retryAfter(key, maximum, until);
     if (retry) throw new MailRateLimitedError(retry);
   }
   const mailIpKey = (ip: string) =>
@@ -98,13 +99,16 @@ export function createSessionsModule({
     email: string,
     code: string,
     until: Date,
+    requestId?: string | number,
   ): Promise<"accepted" | "unconfirmed"> {
     const remaining = until.getTime() - Date.now();
     if (remaining <= 0) return "unconfirmed";
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), remaining);
+    const smtpStarted = Date.now();
+    let outcome: "accepted" | "unconfirmed" = "unconfirmed";
     try {
-      return await Promise.race([
+      outcome = await Promise.race([
         notification
           .sendEmail(
             {
@@ -124,10 +128,20 @@ export function createSessionsModule({
         ),
       ]);
     } catch {
-      return "unconfirmed";
+      outcome = "unconfirmed";
     } finally {
       clearTimeout(timer);
+      logger.info(
+        {
+          purpose: "login-code",
+          outcome,
+          durationMs: Date.now() - smtpStarted,
+          requestId,
+        },
+        "Auth mail attempt",
+      );
     }
+    return outcome;
   }
   async function issueSession(
     user: User,
@@ -147,7 +161,9 @@ export function createSessionsModule({
     withinDeadline,
     now: () => clock.now(),
     consumeLoginIp: (ip: string, until: Date) =>
-      consume(`login:ip:${secretDigest("ip", ip)}`, 50, until),
+      retryAfter(`login:ip:${secretDigest("ip", ip)}`, 50, until),
+    consumeLoginEmail: (email: string, until: Date) =>
+      retryAfter(`login:email:${secretDigest("email", email)}`, 10, until),
     consumeVerifyIp: (ip: string, until: Date) =>
       consume(`login:verify:ip:${secretDigest("ip", ip)}`, 100, until),
     consumeMailIp: (ip: string, until: Date) =>
@@ -158,8 +174,13 @@ export function createSessionsModule({
           until,
         ),
       ),
-    async login(email: string, password: string, ip: string, until: Date) {
-      await consume(`login:email:${secretDigest("email", email)}`, 10, until);
+    async login(
+      email: string,
+      password: string,
+      ip: string,
+      until: Date,
+      requestId?: string | number,
+    ) {
       const user = await available(() => store.findByEmail(email, until));
       const correct = user
         ? await available(() => hasher.verify(password, user.passwordHash))
@@ -187,7 +208,7 @@ export function createSessionsModule({
         ),
       );
       if (retry) throw new MailRateLimitedError(retry);
-      const deliveryStatus = await deliver(user.email, code, until);
+      const deliveryStatus = await deliver(user.email, code, until, requestId);
       return {
         attemptToken,
         attemptExpiresAt: attempt.expiresAt.toISOString(),
@@ -196,7 +217,12 @@ export function createSessionsModule({
         deliveryStatus,
       };
     },
-    async resend(attemptToken: string, ipRetrySeconds: number, until: Date) {
+    async resend(
+      attemptToken: string,
+      ipRetrySeconds: number,
+      until: Date,
+      requestId?: string | number,
+    ) {
       const tokenHash = secretDigest("login-attempt", attemptToken);
       const code = newCode();
       const now = clock.now().getTime();
@@ -216,7 +242,12 @@ export function createSessionsModule({
       if (result.status === "unavailable") throw new LoginAttemptInvalidError();
       if (result.status === "limited")
         throw new MailRateLimitedError(result.retryAfterSeconds);
-      const deliveryStatus = await deliver(result.email, code, until);
+      const deliveryStatus = await deliver(
+        result.email,
+        code,
+        until,
+        requestId,
+      );
       return {
         attemptExpiresAt: result.expiresAt.toISOString(),
         codeExpiresAt: result.codeExpiresAt.toISOString(),

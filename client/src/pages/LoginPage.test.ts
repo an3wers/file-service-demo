@@ -413,3 +413,68 @@ it("лимит повтора не мешает вводу кода, остав�
   expect(last.find("input[name=email]").exists()).toBe(true);
   expect(sessionStorage.getItem("file-service-login-attempt")).toBeNull();
 });
+
+const notVerified = () =>
+  json(
+    { error: { code: "EMAIL_NOT_VERIFIED", message: "Email не подтверждён" } },
+    403,
+  );
+const invalidCredentials = () =>
+  json(
+    {
+      error: {
+        code: "INVALID_CREDENTIALS",
+        message: "Неверный email или пароль",
+      },
+    },
+    401,
+  );
+
+it("неподтверждённый email показывает объявленный переход к запросу активации без сессии и без отправки письма", async () => {
+  const fetch = vi.fn().mockResolvedValue(notVerified());
+  vi.stubGlobal("fetch", fetch);
+  const wrapper = mountPage();
+  await credentials(wrapper);
+  const alert = wrapper.get("[role=alert]");
+  expect(alert.text()).toContain("Подтвердите email, чтобы войти");
+  expect(alert.text()).toContain("письмо активации");
+  const link = alert.get("a[href='/activation']");
+  expect(link.text()).toBe("Запросить письмо активации");
+  expect(link.attributes("tabindex")).toBeUndefined();
+  expect(
+    wrapper.get<HTMLInputElement>("input[name=password]").element.value,
+  ).toBe("");
+  expect(JSON.stringify({ ...sessionStorage })).not.toContain(
+    "secret password",
+  );
+  expect(getAccessToken()).toBeNull();
+  expect(fetch).toHaveBeenCalledTimes(1);
+  expect(fetch.mock.calls[0]![0]).toBe("/api/auth/login");
+  expect(push).not.toHaveBeenCalled();
+});
+
+it("неверный пароль или неизвестный email не показывает переход к активации", async () => {
+  vi.stubGlobal("fetch", vi.fn().mockResolvedValue(invalidCredentials()));
+  const wrapper = mountPage();
+  await credentials(wrapper);
+  expect(wrapper.get("[role=alert]").text()).toContain(
+    "Неверный email или пароль",
+  );
+  expect(wrapper.find("a[href='/activation']").exists()).toBe(false);
+  expect(wrapper.text()).not.toContain("письмо активации");
+});
+
+it("после отказа неподтверждённому email следующий неверный пароль убирает переход к активации", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi
+      .fn()
+      .mockResolvedValueOnce(notVerified())
+      .mockResolvedValueOnce(invalidCredentials()),
+  );
+  const wrapper = mountPage();
+  await credentials(wrapper);
+  expect(wrapper.find("a[href='/activation']").exists()).toBe(true);
+  await credentials(wrapper);
+  expect(wrapper.find("a[href='/activation']").exists()).toBe(false);
+});
