@@ -36,8 +36,13 @@ export interface AuthRouterSettings {
   allowedOrigins?: string[];
 }
 
-const requestIdOf = (req: Request) =>
-  typeof req.id === "string" || typeof req.id === "number" ? req.id : undefined;
+const mailLogOf = (req: Request) =>
+  req.log.child({
+    requestId:
+      typeof req.id === "string" || typeof req.id === "number"
+        ? req.id
+        : undefined,
+  });
 
 export function createAuthRouter(
   sessions: SessionsModule,
@@ -120,14 +125,14 @@ export function createAuthRouter(
       );
       if (retry > 0) throw new MailRateLimitedError(retry);
       const deadline = res.locals.registrationDeadline;
-      const requestId = requestIdOf(req);
+      const log = mailLogOf(req);
       const result =
         kind === "register"
           ? await registration.register(
               registrationBodySchema.parse(req.body),
               deadline,
               emailAdmission!.requestedAt,
-              requestId,
+              log,
             )
           : await registration[
               kind === "activation"
@@ -137,7 +142,7 @@ export function createAuthRouter(
               activationRequestSchema.parse(req.body).email,
               deadline,
               emailAdmission!.requestedAt,
-              requestId,
+              log,
             );
       res.status(202).json(result);
     };
@@ -185,9 +190,7 @@ export function createAuthRouter(
           token,
           password,
           res.locals.registrationDeadline,
-          typeof req.id === "string" || typeof req.id === "number"
-            ? req.id
-            : undefined,
+          mailLogOf(req),
         ),
       );
     },
@@ -260,7 +263,7 @@ export function createAuthRouter(
         password,
         req.ip ?? req.socket.remoteAddress ?? "unknown",
         res.locals.authDeadline,
-        requestIdOf(req),
+        mailLogOf(req),
       );
       res.set("Date", sessions.now().toUTCString());
       res.json(attempt);
@@ -283,7 +286,7 @@ export function createAuthRouter(
         attemptToken,
         res.locals.ipRetry,
         res.locals.authDeadline,
-        requestIdOf(req),
+        mailLogOf(req),
       );
       res.set("Date", sessions.now().toUTCString());
       res.json(result);
