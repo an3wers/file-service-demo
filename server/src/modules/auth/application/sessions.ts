@@ -20,7 +20,7 @@ import {
   RegistrationUnavailableError,
 } from "../domain/registration-errors.js";
 
-const REFRESH_TTL_SECONDS = 604800;
+const SESSION_TTL_SECONDS = 14 * 24 * 3600;
 const secretDigest = (purpose: string, value: string) =>
   createHash("sha256").update(`${purpose}\0${value}`).digest("hex");
 
@@ -37,9 +37,12 @@ export interface SessionsDeps {
 export interface Session {
   accessToken: string;
   expiresIn: number;
+  user: { id: string; name: string; email: string };
+}
+
+export interface StartedSession extends Session {
   refreshToken: string;
   refreshExpiresIn: number;
-  user: { id: string; name: string; email: string };
 }
 
 export function createSessionsModule({
@@ -139,16 +142,11 @@ export function createSessionsModule({
     }
     return outcome;
   }
-  async function issueSession(
-    user: User,
-    refreshToken: string,
-  ): Promise<Session> {
+  async function issueSession(user: User): Promise<Session> {
     const access = await available(() => tokens.issueAccess(user.id));
     return {
       accessToken: access.token,
       expiresIn: access.expiresIn,
-      refreshToken,
-      refreshExpiresIn: REFRESH_TTL_SECONDS,
       user: { id: user.id, name: user.name, email: user.email },
     };
   }
@@ -246,7 +244,11 @@ export function createSessionsModule({
         deliveryStatus,
       };
     },
-    async verify(attemptToken: string, code: string | null, until: Date) {
+    async verify(
+      attemptToken: string,
+      code: string | null,
+      until: Date,
+    ): Promise<StartedSession> {
       const refreshToken = randomBytes(32).toString("base64url");
       const tokenHash = secretDigest("login-attempt", attemptToken);
       const result = await available(() =>
@@ -255,7 +257,7 @@ export function createSessionsModule({
           code === null ? null : codeDigest(tokenHash, code),
           {
             tokenHash: secretDigest("refresh-session", refreshToken),
-            ttlSeconds: REFRESH_TTL_SECONDS,
+            ttlSeconds: SESSION_TTL_SECONDS,
           },
           until,
         ),
@@ -269,20 +271,20 @@ export function createSessionsModule({
         throw new MailRateLimitedError(result.retryAfterSeconds);
       if (result.status !== "verified")
         throw new RegistrationUnavailableError();
-      return issueSession(result.user, refreshToken);
+      return {
+        ...(await issueSession(result.user)),
+        refreshToken,
+        refreshExpiresIn: SESSION_TTL_SECONDS,
+      };
     },
     async refresh(refreshToken: string | undefined, until: Date) {
       const user = refreshToken
         ? await available(() =>
-            store.refresh(
-              secretDigest("refresh-session", refreshToken),
-              REFRESH_TTL_SECONDS,
-              until,
-            ),
+            store.refresh(secretDigest("refresh-session", refreshToken), until),
           )
         : null;
       if (!user || !refreshToken) throw new SessionExpiredError();
-      return issueSession(user, refreshToken);
+      return issueSession(user);
     },
     async logout(refreshToken: string | undefined, until: Date) {
       if (refreshToken)

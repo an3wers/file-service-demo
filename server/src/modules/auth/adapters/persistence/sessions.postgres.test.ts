@@ -28,6 +28,7 @@ import { createAuthRouter, createRequireAuth } from "../http/routes.js";
 import { createSqlRegistrationStore } from "./sql-registration-store.js";
 import { createSqlSessionStore } from "./sql-session-store.js";
 
+const SESSION_MS = 14 * 24 * 3600 * 1000;
 const schema = `sessions_test_${randomUUID().replaceAll("-", "")}`;
 let created = false;
 const servers: Server[] = [];
@@ -257,11 +258,11 @@ it("срок кода перепроверяется после ожидания
   expect((await response.json()).error.code).toBe("LOGIN_CODE_EXPIRED");
 });
 
-it("продление перепроверяет срок после блокировки и не воскрешает истёкшую сессию", async () => {
+it("refresh перепроверяет границу 14 суток после ожидания блокировки и не воскрешает истёкшую сессию", async () => {
   const h = await start();
   await h.activate();
   const cookie = cookieOf(await h.enter());
-  h.clock.advance((604800000 - 1) / 3600000);
+  h.clock.advance((SESSION_MS - 1) / 3600000);
   const held = await pool.connect();
   await held.query("begin");
   await held.query("select * from auth_sessions for update");
@@ -285,29 +286,130 @@ it("продление перепроверяет срок после блоки
   expect((await h.post("refresh", undefined, cookie)).status).toBe(401);
 });
 
-it("параллельное продление постоянно сохраняет токен и отзыв запрещает дальнейшее продление", async () => {
+const sessionRows = async () =>
+  (
+    await pool.query<{
+      token_hash: string;
+      created_at: Date;
+      expires_at: Date;
+      revoked_at: Date | null;
+    }>("select * from auth_sessions order by created_at")
+  ).rows;
+
+it("вход назначает срок ровно 14 суток от проверки кода, а refresh не меняет строку сессии", async () => {
+  const h = await start();
+  await h.activate();
+  const attempt = await (await h.login()).json();
+  h.clock.advance(4 / 60);
+  const entered = await h.verify(attempt.attemptToken);
+  const cookie = cookieOf(entered);
+  expect(entered.headers.getSetCookie()[0]).toContain("Max-Age=1209600");
+  const [created] = await sessionRows();
+  expect(created!.expires_at.getTime() - created!.created_at.getTime()).toBe(
+    SESSION_MS,
+  );
+  expect(created!.created_at).toEqual(h.clock.now());
+  const other = await start(h.clock);
+  h.clock.advance(13 * 24);
+  const responses = await Promise.all(
+    Array.from({ length: 10 }, (_, index) =>
+      (index % 2 ? h : other).post("refresh", undefined, cookie),
+    ),
+  );
+  for (const response of responses) {
+    expect(response.status).toBe(200);
+    const set = response.headers.getSetCookie()[0];
+    if (set) expect(cookieOf(response)).toBe(cookie);
+  }
+  expect(await sessionRows()).toEqual([created]);
+});
+
+it("refresh на границе 14 суток отклоняется независимо от числа прежних refresh, перезапуска и экземпляра", async () => {
   const h = await start();
   await h.activate();
   const cookie = cookieOf(await h.enter());
-  const other = await start(h.clock);
+  const [created] = await sessionRows();
   for (let i = 0; i < 6; i++) {
-    h.clock.advance(6 * 24);
-    const responses = await Promise.all(
-      Array.from({ length: 10 }, (_, index) =>
-        (index % 2 ? h : other).post("refresh", undefined, cookie),
-      ),
-    );
-    for (const response of responses) {
-      expect(response.status).toBe(200);
-      expect(cookieOf(response)).toBe(cookie);
-    }
+    h.clock.advance(2 * 24);
+    expect((await h.post("refresh", undefined, cookie)).status).toBe(200);
   }
+  h.clock.advance((2 * 24 * 3600000 - 1) / 3600000);
+  const restarted = await start(h.clock);
+  expect((await restarted.post("refresh", undefined, cookie)).status).toBe(200);
+  expect(await sessionRows()).toEqual([created]);
+  h.clock.advance(1 / 3600000);
+  for (const instance of [h, restarted]) {
+    const expired = await instance.post("refresh", undefined, cookie);
+    expect(expired.status).toBe(401);
+    expect((await expired.json()).error.code).toBe("SESSION_EXPIRED");
+    expect(cookieOf(expired)).toBe("refresh_token=");
+  }
+});
+
+it("повтор refresh после потерянного ответа возможен до исходной границы и не создаёт сессию", async () => {
+  const h = await start();
+  await h.activate();
+  const cookie = cookieOf(await h.enter());
+  h.clock.advance(10 * 24);
+  const lost = await h.post("refresh", undefined, cookie);
+  expect(lost.status).toBe(200);
+  h.clock.advance(3 * 24);
+  const retry = await h.post("refresh", undefined, cookie);
+  expect(retry.status).toBe(200);
+  expect(await sessionRows()).toHaveLength(1);
+});
+
+it("сессия со старым назначенным сроком работает до него, не продлевается и не получает 14 суток", async () => {
+  const h = await start();
+  await h.activate();
+  const cookie = cookieOf(await h.enter());
+  const legacyEnd = new Date(h.clock.now().getTime() + 7 * 24 * 3600000);
+  await pool.query("update auth_sessions set expires_at = $1", [legacyEnd]);
+  for (let i = 0; i < 3; i++) {
+    h.clock.advance(2 * 24);
+    expect((await h.post("refresh", undefined, cookie)).status).toBe(200);
+  }
+  expect((await sessionRows())[0]!.expires_at).toEqual(legacyEnd);
+  h.clock.advance((24 * 3600000 - 1) / 3600000);
+  expect((await h.post("refresh", undefined, cookie)).status).toBe(200);
+  h.clock.advance(1 / 3600000);
+  expect((await h.post("refresh", undefined, cookie)).status).toBe(401);
+  h.clock.advance(1 / 60);
+  const fresh = await h.enter();
+  expect(fresh.status).toBe(200);
+  const [, current] = await sessionRows();
+  expect(current!.expires_at.getTime() - current!.created_at.getTime()).toBe(
+    SESSION_MS,
+  );
+});
+
+it("отсутствующая cookie, неизвестный секрет и отозванная сессия не восстанавливаются; выход не затрагивает другой браузер", async () => {
+  const h = await start();
+  await h.activate();
+  const first = await h.enter();
+  const cookie = cookieOf(first);
+  const access = (await first.json()).accessToken;
+  h.clock.advance(1 / 60);
+  const other = cookieOf(await h.enter());
+  expect((await h.post("refresh")).status).toBe(401);
+  expect(
+    (await h.post("refresh", undefined, "refresh_token=unknown")).status,
+  ).toBe(401);
+  const other2 = await start(h.clock);
   const logout = h.post("logout", undefined, cookie);
   await Promise.all(
-    Array.from({ length: 10 }, () => other.post("refresh", undefined, cookie)),
+    Array.from({ length: 10 }, () => other2.post("refresh", undefined, cookie)),
   );
   expect((await logout).status).toBe(204);
-  expect((await other.post("refresh", undefined, cookie)).status).toBe(401);
+  expect((await other2.post("refresh", undefined, cookie)).status).toBe(401);
+  expect((await h.post("refresh", undefined, other)).status).toBe(200);
+  expect(
+    (
+      await fetch(`${h.base}/api/files`, {
+        headers: { Authorization: `Bearer ${access}` },
+      })
+    ).status,
+  ).toBe(200);
 });
 
 it("лимиты писем и первого шага общие после перезапуска, конкурентный пароль не создаёт лишних попыток, а отказы расходуют часовую квоту назначения", async () => {

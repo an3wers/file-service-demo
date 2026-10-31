@@ -69,10 +69,6 @@ export interface SessionStore {
     session: StoredSession,
     deadline: Date,
   ): Promise<VerificationResult>;
-  refresh(
-    tokenHash: string,
-    ttlSeconds: number,
-    deadline: Date,
-  ): Promise<User | null>;
+  refresh(tokenHash: string, deadline: Date): Promise<User | null>;
   revoke(tokenHash: string, deadline: Date): Promise<void>;
 }

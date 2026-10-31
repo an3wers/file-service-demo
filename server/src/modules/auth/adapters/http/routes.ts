@@ -14,7 +14,11 @@ import {
   ActivationLinkInvalidError,
   PasswordResetLinkInvalidError,
 } from "../../domain/registration-errors.js";
-import type { Session, SessionsModule } from "../../application/sessions.js";
+import type {
+  Session,
+  SessionsModule,
+  StartedSession,
+} from "../../application/sessions.js";
 import { SessionExpiredError } from "../../domain/errors.js";
 import { mapAuthError } from "./error-map.js";
 import { REFRESH_COOKIE, readCookie, refreshCookieOptions } from "./cookie.js";
@@ -223,12 +227,13 @@ export function createAuthRouter(
       next();
     };
 
-  function respond(res: Response, session: Session): void {
+  function respond(res: Response, session: Session | StartedSession): void {
     res.set("Date", sessions.now().toUTCString());
-    res.cookie(REFRESH_COOKIE, session.refreshToken, {
-      ...cookieOptions,
-      maxAge: session.refreshExpiresIn * 1000,
-    });
+    if ("refreshToken" in session)
+      res.cookie(REFRESH_COOKIE, session.refreshToken, {
+        ...cookieOptions,
+        maxAge: session.refreshExpiresIn * 1000,
+      });
 
     const body: SessionResponse = {
       accessToken: session.accessToken,
