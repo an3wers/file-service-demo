@@ -210,7 +210,7 @@ export function createSqlSessionStore(
         );
         return { status: "verified", user };
       }),
-    refresh: (tokenHash, ttlSeconds, deadline) =>
+    refresh: (tokenHash, deadline) =>
       authTransaction(deadline, async (client) => {
         const { rows } = await client.query<{
           user_id: string;
@@ -228,10 +228,6 @@ export function createSqlSessionStore(
           [session.user_id],
         );
         if (!users.rows[0]) return null;
-        await client.query(
-          "update auth_sessions set expires_at = $2 where token_hash = $1",
-          [tokenHash, new Date(now.getTime() + ttlSeconds * 1000)],
-        );
         return userFrom(users.rows[0]);
       }),
     revoke: (tokenHash, deadline) =>

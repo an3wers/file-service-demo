@@ -131,7 +131,7 @@ export function createMemorySessionStore(clock: Clock) {
       });
       return { status: "verified", user };
     },
-    async refresh(hash, ttlSeconds) {
+    async refresh(hash) {
       const session = sessions.get(hash);
       const user = session ? users.get(session.userId) : undefined;
       if (
@@ -142,7 +142,6 @@ export function createMemorySessionStore(clock: Clock) {
         user.state !== "active"
       )
         return null;
-      session.expiresAt = new Date(clock.now().getTime() + ttlSeconds * 1000);
       return user;
     },
     async revoke(hash) {

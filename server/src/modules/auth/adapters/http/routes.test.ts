@@ -125,7 +125,7 @@ it("после пароля создаёт попытку без сессии и
     "Secure",
     "SameSite=Strict",
     "Path=/api/auth",
-    "Max-Age=604800",
+    "Max-Age=1209600",
   ])
     expect(cookie).toContain(attribute);
   expect(cookie).not.toContain("Domain=");
@@ -403,31 +403,91 @@ it("параллельные проверки создают одну сесси
   );
 });
 
-it("продление сохраняет refresh-токен и сдвигает семь дней дольше месяца; выход отзывает только текущую сессию", async () => {
+const DAY_HOURS = 24;
+const SESSION_HOURS = 14 * DAY_HOURS;
+const MS_HOUR = 3600000;
+const maxAgeOf = (response: Response) => {
+  const header = response.headers.getSetCookie()[0];
+  return header ? Number(header.match(/Max-Age=(\d+)/)?.[1]) : undefined;
+};
+
+it("refresh через 13 суток без активности успешен, сохраняет токен и не даёт cookie новый отсчёт", async () => {
   const h = await start();
-  const first = await h.enter();
-  const cookie = cookieOf(first);
-  const access = (await first.json()).accessToken;
-  h.auth.clock.advance(1 / 60);
-  const other = cookieOf(await h.enter());
+  const cookie = cookieOf(await h.enter());
+  h.auth.clock.advance(13 * DAY_HOURS);
+  const refreshed = await h.post("refresh", undefined, cookie);
+  expect(refreshed.status).toBe(200);
+  const set = refreshed.headers.getSetCookie()[0];
+  if (set) {
+    expect(cookieOf(refreshed)).toBe(cookie);
+    expect(maxAgeOf(refreshed)).toBeLessThanOrEqual(24 * 3600);
+  }
+  expect((await h.files((await refreshed.json()).accessToken)).status).toBe(
+    200,
+  );
+});
+
+it("частые и параллельные refresh не сдвигают границу 14 суток: за миллисекунду до неё успех, на границе 401 с очисткой cookie", async () => {
+  const h = await start();
+  const cookie = cookieOf(await h.enter());
   for (let i = 0; i < 6; i++) {
-    h.auth.clock.advance(6 * 24);
+    h.auth.clock.advance(2 * DAY_HOURS);
     const results = await Promise.all(
       Array.from({ length: 4 }, () => h.post("refresh", undefined, cookie)),
     );
-    for (const response of results) {
-      expect(response.status).toBe(200);
-      expect(cookieOf(response)).toBe(cookie);
-    }
+    for (const response of results) expect(response.status).toBe(200);
   }
+  h.auth.clock.advance((2 * DAY_HOURS * MS_HOUR - 1) / MS_HOUR);
+  expect((await h.post("refresh", undefined, cookie)).status).toBe(200);
+  h.auth.clock.advance(1 / MS_HOUR);
+  const expired = await h.post("refresh", undefined, cookie);
+  expect(expired.status).toBe(401);
+  expect((await errorOf(expired)).code).toBe("SESSION_EXPIRED");
+  expect(cookieOf(expired)).toBe("refresh_token=");
+  h.auth.clock.advance(SESSION_HOURS);
+  expect((await h.post("refresh", undefined, cookie)).status).toBe(401);
+});
+
+it("срок отсчитывается от проверки кода, а не от пароля и отправки письма", async () => {
+  const h = await start();
+  const attempt = await (await h.login()).json();
+  h.auth.clock.advance(4 / 60);
+  const cookie = cookieOf(await h.verify(attempt.attemptToken));
+  h.auth.clock.advance(SESSION_HOURS - 1 / MS_HOUR);
+  expect((await h.post("refresh", undefined, cookie)).status).toBe(200);
+  h.auth.clock.advance(1 / MS_HOUR);
+  expect((await h.post("refresh", undefined, cookie)).status).toBe(401);
+});
+
+it("JWT, выданный за минуту до конца сессии, работает до своего exp, а refresh в это время запрещён", async () => {
+  const h = await start();
+  const cookie = cookieOf(await h.enter());
+  h.auth.clock.advance(SESSION_HOURS - 1 / 60);
+  const refreshed = await h.post("refresh", undefined, cookie);
+  expect(refreshed.status).toBe(200);
+  const access = (await refreshed.json()).accessToken;
+  h.auth.clock.advance(1 / 60);
+  expect((await h.post("refresh", undefined, cookie)).status).toBe(401);
+  expect((await h.files(access)).status).toBe(200);
+  h.auth.clock.advance(13 / 60);
+  expect((await h.files(access)).status).toBe(200);
+  h.auth.clock.advance(1 / 60);
   expect((await h.files(access)).status).toBe(401);
+});
+
+it("выход отзывает только текущую сессию и запрещает её refresh", async () => {
+  const h = await start();
+  const first = await h.enter();
+  const cookie = cookieOf(first);
+  h.auth.clock.advance(1 / 60);
+  const other = cookieOf(await h.enter());
   const logout = await h.post("logout", undefined, cookie);
   expect(logout.status).toBe(204);
   expect(cookieOf(logout)).toBe("refresh_token=");
   expect((await h.post("refresh", undefined, cookie)).status).toBe(401);
   expect((await h.post("logout", undefined, cookie)).status).toBe(204);
   expect((await h.post("logout")).status).toBe(204);
-  expect((await h.post("refresh", undefined, other)).status).toBe(401);
+  expect((await h.post("refresh", undefined, other)).status).toBe(200);
 });
 
 it("выход сохраняет доступ JWT до 15 минут и не отзывает другой браузер", async () => {
@@ -448,7 +508,7 @@ it("выход сохраняет доступ JWT до 15 минут и не о
 it("истёкшая сессия не восстанавливается; временный сбой refresh и logout сохраняет cookie", async () => {
   const h = await start();
   const cookie = cookieOf(await h.enter());
-  h.auth.clock.advance(7 * 24);
+  h.auth.clock.advance(14 * 24);
   const expired = await h.post("refresh", undefined, cookie);
   expect(expired.status).toBe(401);
   expect(cookieOf(expired)).toBe("refresh_token=");
