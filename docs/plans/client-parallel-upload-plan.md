@@ -7,7 +7,7 @@
 с меткой `ready-for-agent`.
 
 Доменный язык — в [CONTEXT.md](../../CONTEXT.md), архитектурное решение о повторе —
-в [ADR-0008](../adr/0008-povtor-zagruzki-bez-dublikatov.md).
+в [ADR-0008](../adr/0008-upload-retries-without-duplicate-files.md).
 
 ## Согласованные решения
 

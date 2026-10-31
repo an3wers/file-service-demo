@@ -149,7 +149,7 @@ Cookie refresh_token: HttpOnly, Secure, SameSite=Strict, Path=/api/auth, без 
 HTTP и COOKIE_SECURE=false допустимы только локально; рабочие AUTH_ALLOWED_ORIGINS должны
 быть HTTPS. Все auth-маршруты требуют разрешённый Origin и возвращают Cache-Control: no-store.
 Секреты, cookie и адреса получателей не журналируются. Решение —
-[ADR-0007](../docs/adr/0007-autentifikatsiya-polzovatelya-iz-okruzheniya.md).
+[ADR-0007](../docs/adr/0007-registration-email-codes-and-server-sessions.md).
 
 Полная координация вкладок, владение файлами и чистый переход — соседние задачи #75.
 До итоговой проверки перехода сервис нельзя открывать: файлы пока общие.
@@ -157,7 +157,7 @@ HTTP и COOKIE_SECURE=false допустимы только локально; р
 Контракт описан в `openapi.json` — он собирается из Zod-схем запросов и ответов
 (`src/modules/files/adapters/http/schemas.ts`, `responses.ts`, `openapi.ts`) командой
 `npm run openapi` и коммитится; клиент генерирует из него типы. Тест `src/openapi.test.ts` падает,
-если файл устарел или маршрут не описан. Почему так — [ADR-0006](../docs/adr/0006-kontrakt-api-iz-zod-shem.md).
+если файл устарел или маршрут не описан. Почему так — [ADR-0006](../docs/adr/0006-api-contract-from-zod-schemas.md).
 
 Swagger UI — `/api/docs` (через vite-прокси: `http://localhost:5173/api/docs`). Токен доступа из
 ответа `POST /api/auth/login/verify` вводится в **Authorize** и переживает перезагрузку страницы. Включается `API_DOCS_ENABLED`.
