@@ -4,6 +4,12 @@ const booleanish = z
   .enum(["true", "false", "1", "0"])
   .transform((value) => value === "true" || value === "1");
 
+const LOCAL_HOSTS = ["localhost", "127.0.0.1", "[::1]"];
+
+const isSecureOrLocal = (url: URL) =>
+  url.protocol === "https:" ||
+  (url.protocol === "http:" && LOCAL_HOSTS.includes(url.hostname));
+
 const envSchema = z.object({
   NODE_ENV: z
     .enum(["development", "test", "production"])
@@ -26,14 +32,14 @@ const envSchema = z.object({
   AUTH_PUBLIC_URL: z.url().refine((value) => {
     const url = new URL(value);
     return (
-      url.protocol === "https:" &&
+      isSecureOrLocal(url) &&
       !url.username &&
       !url.password &&
       url.pathname === "/" &&
       !url.search &&
       !url.hash
     );
-  }, "Expected a public HTTPS origin"),
+  }, "Expected a public HTTPS origin or a local HTTP origin"),
   AUTH_RESPONSE_DEADLINE_MS: z.coerce
     .number()
     .int()
@@ -133,14 +139,7 @@ const notificationEnvSchema = envSchema.superRefine((value, context) => {
     origins.some((origin) => {
       try {
         const url = new URL(origin);
-        return (
-          url.origin !== origin ||
-          (url.protocol !== "https:" &&
-            !(
-              url.protocol === "http:" &&
-              ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname)
-            ))
-        );
+        return url.origin !== origin || !isSecureOrLocal(url);
       } catch {
         return true;
       }
@@ -155,9 +154,7 @@ const notificationEnvSchema = envSchema.superRefine((value, context) => {
     !value.COOKIE_SECURE &&
     origins.some((origin) => {
       try {
-        return !["localhost", "127.0.0.1", "[::1]"].includes(
-          new URL(origin).hostname,
-        );
+        return !LOCAL_HOSTS.includes(new URL(origin).hostname);
       } catch {
         return true;
       }
