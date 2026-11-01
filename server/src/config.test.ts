@@ -75,3 +75,34 @@ describe("конфигурация email-уведомлений", () => {
     },
   );
 });
+
+describe("публичный адрес ссылок в письмах", () => {
+  it.each([
+    "https://files.example.com",
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+    "http://[::1]:5173",
+  ])("принимает %s", async (value) => {
+    vi.stubEnv("AUTH_PUBLIC_URL", value);
+    const { config } = await import("./config.js");
+    expect(config.registration.publicUrl).toBe(value);
+  });
+
+  it.each([
+    "http://files.example.com",
+    "https://files.example.com/app",
+    "https://user:pass@files.example.com",
+    "https://files.example.com?x=1",
+    "ftp://localhost",
+  ])("отклоняет %s", async (value) => {
+    vi.stubEnv("AUTH_PUBLIC_URL", value);
+    const exit = vi.spyOn(process, "exit").mockImplementation(() => {
+      throw new Error("invalid configuration");
+    });
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    await expect(import("./config.js")).rejects.toThrow(
+      "invalid configuration",
+    );
+    expect(exit).toHaveBeenCalledWith(1);
+  });
+});
