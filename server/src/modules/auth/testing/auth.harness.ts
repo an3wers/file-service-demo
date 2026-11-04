@@ -9,6 +9,7 @@ import { createMemorySessionStore } from "./memory-session-store.js";
 
 export const EMAIL = "user@example.com";
 export const PASSWORD = "correct horse battery";
+export const CODE_SECRET = "code-secret-0123456789abcdef0123456789";
 export function createAuthHarness(
   clock: TestClock = createTestClock(new Date("2026-01-01T00:00:00Z")),
 ) {
@@ -26,7 +27,7 @@ export function createAuthHarness(
     tokens,
     clock,
     notification: { sendEmail },
-    codeSecret: "code-secret-0123456789abcdef0123456789",
+    codeSecret: CODE_SECRET,
   };
   return {
     ...memory,

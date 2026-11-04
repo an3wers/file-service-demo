@@ -66,19 +66,24 @@ export type PasswordResetResult = {
     message: 'Пароль изменён. Теперь можно войти';
 };
 
-export type LoginAttempt = {
+export type RegistrationAttempt = {
+    message: string;
+    retryAfterSeconds: number;
+    /**
+     * Непрозрачный секрет контекста регистрации
+     */
     attemptToken: string;
     attemptExpiresAt: string;
     codeExpiresAt: string;
     resendAvailableAt: string;
-    deliveryStatus: 'accepted' | 'unconfirmed';
 };
 
-export type LoginResend = {
+export type RegistrationResend = {
+    message: string;
+    retryAfterSeconds: number;
     attemptExpiresAt: string;
     codeExpiresAt: string;
     resendAvailableAt: string;
-    deliveryStatus: 'accepted' | 'unconfirmed';
 };
 
 export type AuthSession = {
@@ -92,6 +97,21 @@ export type AuthSession = {
         name: string;
         email: string;
     };
+};
+
+export type LoginAttempt = {
+    attemptToken: string;
+    attemptExpiresAt: string;
+    codeExpiresAt: string;
+    resendAvailableAt: string;
+    deliveryStatus: 'accepted' | 'unconfirmed';
+};
+
+export type LoginResend = {
+    attemptExpiresAt: string;
+    codeExpiresAt: string;
+    resendAvailableAt: string;
+    deliveryStatus: 'accepted' | 'unconfirmed';
 };
 
 export type UploadOperationResponse = {
@@ -584,12 +604,145 @@ export type RegisterError = RegisterErrors[keyof RegisterErrors];
 
 export type RegisterResponses = {
     /**
-     * Запрос обработан
+     * Запрос обработан; даты UTC ISO 8601
      */
-    202: RegistrationResult;
+    202: RegistrationAttempt;
 };
 
 export type RegisterResponse = RegisterResponses[keyof RegisterResponses];
+
+export type ResendRegistrationData = {
+    body: {
+        attemptToken: string;
+    };
+    headers: {
+        Origin: string;
+    };
+    path?: never;
+    query?: never;
+    url: '/api/auth/registration/resend';
+};
+
+export type ResendRegistrationErrors = {
+    /**
+     * BAD_REQUEST
+     */
+    400: ErrorResponse;
+    /**
+     * Нет токена доступа или он недействителен
+     */
+    401: ErrorResponse;
+    /**
+     * ORIGIN_NOT_ALLOWED
+     */
+    403: ErrorResponse;
+    /**
+     * LOGIN_ATTEMPT_INVALID: контекст неизвестен, завершён, изменён или истёк
+     */
+    410: ErrorResponse;
+    /**
+     * PAYLOAD_TOO_LARGE
+     */
+    413: ErrorResponse;
+    /**
+     * UNSUPPORTED_MEDIA_TYPE
+     */
+    415: ErrorResponse;
+    /**
+     * Запрос не прошёл валидацию; details — результат z.flattenError()
+     */
+    422: ErrorResponse;
+    /**
+     * RATE_LIMITED: details.retryAfterSeconds; прежний код сохраняется
+     */
+    429: ErrorResponse;
+    /**
+     * Непредвиденная ошибка сервера
+     */
+    500: ErrorResponse;
+    /**
+     * Хранилище или база данных недоступны
+     */
+    503: ErrorResponse;
+};
+
+export type ResendRegistrationError = ResendRegistrationErrors[keyof ResendRegistrationErrors];
+
+export type ResendRegistrationResponses = {
+    /**
+     * Запрос обработан; даты UTC ISO 8601
+     */
+    200: RegistrationResend;
+};
+
+export type ResendRegistrationResponse = ResendRegistrationResponses[keyof ResendRegistrationResponses];
+
+export type VerifyRegistrationData = {
+    body: {
+        attemptToken: string;
+        code: string;
+    };
+    headers: {
+        Origin: string;
+    };
+    path?: never;
+    query?: never;
+    url: '/api/auth/registration/verify';
+};
+
+export type VerifyRegistrationErrors = {
+    /**
+     * LOGIN_CODE_INVALID: details.remainingAttempts; LOGIN_CODE_EXPIRED или BAD_REQUEST
+     */
+    400: ErrorResponse;
+    /**
+     * Нет токена доступа или он недействителен
+     */
+    401: ErrorResponse;
+    /**
+     * ORIGIN_NOT_ALLOWED
+     */
+    403: ErrorResponse;
+    /**
+     * LOGIN_ATTEMPT_INVALID: контекст неизвестен, завершён или истёк
+     */
+    410: ErrorResponse;
+    /**
+     * PAYLOAD_TOO_LARGE
+     */
+    413: ErrorResponse;
+    /**
+     * UNSUPPORTED_MEDIA_TYPE
+     */
+    415: ErrorResponse;
+    /**
+     * Запрос не прошёл валидацию; details — результат z.flattenError()
+     */
+    422: ErrorResponse;
+    /**
+     * RATE_LIMITED: details.retryAfterSeconds
+     */
+    429: ErrorResponse;
+    /**
+     * Непредвиденная ошибка сервера
+     */
+    500: ErrorResponse;
+    /**
+     * Хранилище или база данных недоступны
+     */
+    503: ErrorResponse;
+};
+
+export type VerifyRegistrationError = VerifyRegistrationErrors[keyof VerifyRegistrationErrors];
+
+export type VerifyRegistrationResponses = {
+    /**
+     * Email подтверждён, сессия создана
+     */
+    200: AuthSession;
+};
+
+export type VerifyRegistrationResponse = VerifyRegistrationResponses[keyof VerifyRegistrationResponses];
 
 export type LoginData = {
     body: {

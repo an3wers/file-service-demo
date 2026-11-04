@@ -1,6 +1,10 @@
 import { createHash, createHmac, randomBytes, randomInt } from "node:crypto";
 import type { Notification } from "../../notification/index.js";
 import { logMailAttempt, type MailLog } from "./mail-log.js";
+import {
+  registrationAttemptDigest,
+  registrationCodeDigest,
+} from "./attempt-secrets.js";
 import type { PasswordHasher } from "../domain/ports/password-hasher.js";
 import type { Tokens } from "../domain/ports/tokens.js";
 import type { SessionStore } from "../domain/ports/session-store.js";
@@ -14,6 +18,9 @@ import {
   LoginCodeExpiredError,
   LoginCodeInvalidError,
   LoginCodeFormatError,
+  RegistrationAttemptInvalidError,
+  RegistrationCodeExpiredError,
+  RegistrationCodeInvalidError,
 } from "../domain/errors.js";
 import {
   MailRateLimitedError,
@@ -267,6 +274,42 @@ export function createSessionsModule({
       if (result.status === "expired") throw new LoginCodeExpiredError();
       if (result.status === "invalid")
         throw new LoginCodeInvalidError(result.remainingAttempts);
+      if (result.status === "limited")
+        throw new MailRateLimitedError(result.retryAfterSeconds);
+      if (result.status !== "verified")
+        throw new RegistrationUnavailableError();
+      return {
+        ...(await issueSession(result.user)),
+        refreshToken,
+        refreshExpiresIn: SESSION_TTL_SECONDS,
+      };
+    },
+    async verifyRegistration(
+      attemptToken: string,
+      code: string | null,
+      until: Date,
+    ): Promise<StartedSession> {
+      const refreshToken = randomBytes(32).toString("base64url");
+      const tokenHash = registrationAttemptDigest(attemptToken);
+      const result = await available(() =>
+        store.verifyRegistration(
+          tokenHash,
+          code === null
+            ? null
+            : registrationCodeDigest(codeSecret, tokenHash, code),
+          {
+            tokenHash: secretDigest("refresh-session", refreshToken),
+            ttlSeconds: SESSION_TTL_SECONDS,
+          },
+          until,
+        ),
+      );
+      if (result.status === "unavailable")
+        throw new RegistrationAttemptInvalidError();
+      if (result.status === "format") throw new LoginCodeFormatError();
+      if (result.status === "expired") throw new RegistrationCodeExpiredError();
+      if (result.status === "invalid")
+        throw new RegistrationCodeInvalidError(result.remainingAttempts);
       if (result.status === "limited")
         throw new MailRateLimitedError(result.retryAfterSeconds);
       if (result.status !== "verified")

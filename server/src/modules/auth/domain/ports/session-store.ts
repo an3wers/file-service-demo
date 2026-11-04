@@ -69,6 +69,12 @@ export interface SessionStore {
     session: StoredSession,
     deadline: Date,
   ): Promise<VerificationResult>;
+  verifyRegistration(
+    tokenHash: string,
+    codeHash: string | null,
+    session: StoredSession,
+    deadline: Date,
+  ): Promise<VerificationResult>;
   refresh(tokenHash: string, deadline: Date): Promise<User | null>;
   revoke(tokenHash: string, deadline: Date): Promise<void>;
 }

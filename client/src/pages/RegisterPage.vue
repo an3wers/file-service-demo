@@ -1,8 +1,30 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, ref, useTemplateRef } from "vue";
+import {
+  computed,
+  nextTick,
+  onBeforeUnmount,
+  ref,
+  useTemplateRef,
+  watch,
+} from "vue";
+import { useRoute, useRouter } from "vue-router";
 import { EyeIcon, EyeOffIcon, HardDriveIcon } from "@lucide/vue";
-import { register } from "@/api/auth";
-import { isApiError } from "@/api/client";
+import type { RegistrationAttempt } from "@/api/generated";
+import { register, resendRegistration } from "@/api/auth";
+import {
+  isApiError,
+  restoreServerClockOffset,
+  serverClockOffsetMs,
+  serverNow,
+} from "@/api/client";
+import {
+  clearStoredRegistration,
+  readStoredRegistration,
+  writeStoredRegistration,
+} from "@/lib/registrationAttempt";
+import { readSharedAuth } from "@/api/sharedAuth";
+import { useAuth } from "@/composables/useAuth";
+import { safeReturnTo } from "@/lib/returnTo";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -28,17 +50,109 @@ import { Spinner } from "@/components/ui/spinner";
 import ThemeSelect from "@/components/ThemeSelect.vue";
 import { errorMessage } from "@/lib/errors";
 
+interface ErrorDetails {
+  fieldErrors?: Record<string, string[]>;
+  remainingAttempts?: number;
+  retryAfterSeconds?: number;
+}
+const detailsOf = (error: { details?: unknown }) =>
+  (error.details ?? {}) as ErrorDetails;
+
+const auth = useAuth();
+const router = useRouter();
+const route = useRoute();
+const attempt = ref<RegistrationAttempt | null>(null);
+const submittedEmail = ref("");
+const code = ref("");
+const remainingAttempts = ref<number | null>(null);
+const ended = ref(false);
+let generation = readSharedAuth().generation;
+
+// Восстановление выполняется до первого чтения серверного времени: смещение
+// часов устройства переживает обновление, а сроки попытки остаются прежними.
+function restoreAttempt() {
+  const stored = readStoredRegistration();
+  if (!stored) return;
+  restoreServerClockOffset(stored.clockOffset);
+  submittedEmail.value = stored.email;
+  const shared = readSharedAuth();
+  const sameLogin = !shared.signedIn && shared.generation === stored.generation;
+  if (
+    !sameLogin ||
+    Date.parse(stored.attempt.attemptExpiresAt) <= serverNow()
+  ) {
+    ended.value = true;
+    clearStoredRegistration();
+    return;
+  }
+  generation = stored.generation;
+  attempt.value = stored.attempt;
+  remainingAttempts.value = stored.remainingAttempts;
+}
+restoreAttempt();
+const now = ref(serverNow());
+const secondsLeft = (until: string | undefined) =>
+  Math.max(0, Math.ceil((Date.parse(until ?? "") - now.value) / 1000));
+const codeRemaining = computed(() => secondsLeft(attempt.value?.codeExpiresAt));
+const attemptRemaining = computed(() =>
+  secondsLeft(attempt.value?.attemptExpiresAt),
+);
+const clock = setInterval(() => {
+  now.value = serverNow();
+}, 1000);
+
+function saveAttempt() {
+  if (!attempt.value) return;
+  writeStoredRegistration({
+    attempt: attempt.value,
+    email: submittedEmail.value,
+    generation,
+    remainingAttempts: remainingAttempts.value,
+    clockOffset: serverClockOffsetMs(),
+  });
+}
+function forgetAttempt() {
+  code.value = "";
+  clearStoredRegistration();
+}
+function endAttempt() {
+  ended.value = true;
+  attempt.value = null;
+  forgetAttempt();
+}
+watch(attemptRemaining, (left) => {
+  if (attempt.value && left === 0) endAttempt();
+});
+watch(codeRemaining, (left) => {
+  if (attempt.value && left === 0) code.value = "";
+});
+const stopWatchingSignIn = auth.onSignInElsewhere(() => {
+  if (attempt.value) endAttempt();
+});
+function onCodeInput(event: Event) {
+  const input = event.target as HTMLInputElement;
+  code.value = input.value.replace(/\D/g, "").slice(0, 6);
+  input.value = code.value;
+}
+
 const name = ref("");
 const email = ref("");
 const password = ref("");
 const visible = ref(false);
 const pending = ref(false);
-const result = ref("");
 const failure = ref("");
 const fieldErrors = ref<Record<string, string[]>>({});
 const retryAfterSeconds = ref(0);
 const form = useTemplateRef<HTMLFormElement>("form");
 const resultElement = useTemplateRef<HTMLDivElement>("resultElement");
+const canVerify = computed(
+  () =>
+    !pending.value &&
+    !ended.value &&
+    /^[0-9]{6}$/.test(code.value) &&
+    codeRemaining.value > 0 &&
+    attemptRemaining.value > 0,
+);
 const controller = new AbortController();
 let timer: ReturnType<typeof setInterval> | undefined;
 const canSubmit = computed(
@@ -65,6 +179,7 @@ async function submit() {
   failure.value = "";
   fieldErrors.value = {};
   try {
+    const started = readSharedAuth().generation;
     const response = await register(
       { name: name.value, email: email.value, password: password.value },
       controller.signal,
@@ -72,7 +187,13 @@ async function submit() {
     if (controller.signal.aborted) return;
     password.value = "";
     visible.value = false;
-    result.value = response.message;
+    generation = started;
+    now.value = serverNow();
+    submittedEmail.value = email.value.trim();
+    remainingAttempts.value = null;
+    ended.value = false;
+    attempt.value = response;
+    saveAttempt();
     await nextTick();
     resultElement.value?.focus();
   } catch (error) {
@@ -80,11 +201,9 @@ async function submit() {
     pending.value = false;
     failure.value = errorMessage(error, "Не удалось выполнить регистрацию");
     if (isApiError(error)) {
-      const details = error.details as
-        | { fieldErrors?: Record<string, string[]>; retryAfterSeconds?: number }
-        | undefined;
-      fieldErrors.value = details?.fieldErrors ?? {};
-      if (error.status === 429 && details?.retryAfterSeconds)
+      const details = detailsOf(error);
+      fieldErrors.value = details.fieldErrors ?? {};
+      if (error.status === 429 && details.retryAfterSeconds)
         countdown(details.retryAfterSeconds);
     }
     await nextTick();
@@ -101,8 +220,121 @@ async function submit() {
   }
 }
 
+async function finishRegistration() {
+  attempt.value = null;
+  forgetAttempt();
+  await router.push(safeReturnTo(route.query.returnTo));
+}
+
+async function verify() {
+  if (!attempt.value || !canVerify.value) return;
+  pending.value = true;
+  failure.value = "";
+  try {
+    await auth.verifyRegistration(
+      attempt.value.attemptToken,
+      code.value,
+      generation,
+    );
+    if (controller.signal.aborted) return;
+    await finishRegistration();
+  } catch (error) {
+    if (controller.signal.aborted) return;
+    failure.value = errorMessage(error, "Не удалось подтвердить код");
+    if (isApiError(error) && (error.status === 0 || error.status >= 500)) {
+      // Ответ мог потеряться уже после создания сессии, поэтому сначала
+      // пробуем получить её по refresh-cookie; код при этом не считаем неверным.
+      const recovered = await auth.recoverRegistrationSession(generation);
+      if (controller.signal.aborted) return;
+      if (recovered === "restored") {
+        failure.value = "";
+        await finishRegistration();
+        return;
+      }
+      // Временный сбой не означает неверный код: попытку завершаем, только
+      // если общий вход сменился и секрет уже непригоден.
+      if (
+        recovered === "absent" &&
+        readSharedAuth().generation !== generation
+      ) {
+        failure.value = "";
+        endAttempt();
+      }
+    } else if (isApiError(error)) {
+      const details = detailsOf(error);
+      if (details.remainingAttempts !== undefined) {
+        remainingAttempts.value = details.remainingAttempts;
+        saveAttempt();
+      }
+      if (
+        error.code === "LOGIN_ATTEMPT_INVALID" ||
+        error.code === "SESSION_CHANGED" ||
+        details.remainingAttempts === 0
+      ) {
+        ended.value = true;
+        forgetAttempt();
+      }
+      if (error.status === 429 && details.retryAfterSeconds)
+        countdown(details.retryAfterSeconds);
+    }
+    await nextTick();
+    resultElement.value?.focus();
+  } finally {
+    pending.value = false;
+  }
+}
+
+const resendRemaining = computed(() =>
+  secondsLeft(attempt.value?.resendAvailableAt),
+);
+async function resend() {
+  if (!attempt.value || pending.value || resendRemaining.value > 0) return;
+  pending.value = true;
+  failure.value = "";
+  try {
+    const response = await resendRegistration(
+      attempt.value.attemptToken,
+      controller.signal,
+    );
+    if (controller.signal.aborted || !attempt.value) return;
+    now.value = serverNow();
+    attempt.value = { ...attempt.value, ...response };
+    code.value = "";
+    saveAttempt();
+  } catch (error) {
+    if (controller.signal.aborted) return;
+    failure.value = errorMessage(error, "Не удалось запросить письмо");
+    if (isApiError(error)) {
+      const details = detailsOf(error);
+      if (error.code === "LOGIN_ATTEMPT_INVALID") {
+        endAttempt();
+      } else if (
+        error.status === 429 &&
+        details.retryAfterSeconds &&
+        attempt.value
+      ) {
+        now.value = serverNow();
+        attempt.value = {
+          ...attempt.value,
+          resendAvailableAt: new Date(
+            now.value + details.retryAfterSeconds * 1000,
+          ).toISOString(),
+        };
+        saveAttempt();
+      }
+    }
+    await nextTick();
+    resultElement.value?.focus();
+  } finally {
+    pending.value = false;
+  }
+}
+
 async function changeEmail() {
-  result.value = "";
+  attempt.value = null;
+  ended.value = false;
+  failure.value = "";
+  forgetAttempt();
   password.value = "";
   await nextTick();
   form.value?.querySelector<HTMLInputElement>("[name=email]")?.focus();
@@ -112,6 +344,8 @@ onBeforeUnmount(() => {
   password.value = "";
   controller.abort();
   clearInterval(timer);
+  clearInterval(clock);
+  stopWatchingSignIn();
 });
 </script>
 
@@ -129,16 +363,76 @@ onBeforeUnmount(() => {
         </CardHeader>
         <CardContent>
           <div
-            v-if="result"
+            v-if="attempt || ended"
             ref="resultElement"
             tabindex="-1"
-            role="status"
             class="space-y-4"
           >
-            <p>{{ result }}</p>
-            <a href="/activation" class="block text-sm underline"
-              >Запросить письмо активации повторно</a
+            <h2 class="text-base font-semibold">Проверьте почту</h2>
+            <p>
+              Для продолжения следуйте инструкциям в письме на
+              <strong>{{ submittedEmail }}</strong
+              >.
+            </p>
+            <p>Если в письме есть код подтверждения, введите его ниже.</p>
+            <p v-if="ended" role="status">
+              Попытка завершена. Войдите или восстановите доступ.
+            </p>
+            <p v-else-if="attempt && codeRemaining === 0" role="status">
+              Срок действия кода истёк. Войдите или восстановите доступ.
+            </p>
+            <form novalidate :aria-busy="pending" @submit.prevent="verify">
+              <FieldGroup>
+                <Field>
+                  <FieldLabel for="registration-code"
+                    >Код подтверждения</FieldLabel
+                  >
+                  <Input
+                    id="registration-code"
+                    :value="code"
+                    name="code"
+                    type="text"
+                    inputmode="numeric"
+                    autocomplete="one-time-code"
+                    maxlength="12"
+                    :disabled="pending || ended"
+                    :aria-invalid="!!failure"
+                    aria-describedby="registration-feedback"
+                    @input="onCodeInput"
+                  />
+                </Field>
+                <div id="registration-feedback" role="status">
+                  <FieldError v-if="failure" role="alert">{{
+                    failure
+                  }}</FieldError>
+                  <p v-if="remainingAttempts !== null">
+                    Осталось проверок: {{ remainingAttempts }}
+                  </p>
+                  <p v-if="retryAfterSeconds">
+                    Повторить можно через {{ retryAfterSeconds }} с
+                  </p>
+                </div>
+                <Button type="submit" :disabled="!canVerify">
+                  <Spinner v-if="pending" data-icon="inline-start" />
+                  {{ pending ? "Проверяем…" : "Продолжить" }}
+                </Button>
+              </FieldGroup>
+            </form>
+            <p class="text-sm text-muted-foreground">
+              Письмо не пришло? Проверьте папку «Спам» или запросите его
+              повторно после окончания ожидания.
+            </p>
+            <Button
+              type="button"
+              variant="outline"
+              data-action="resend"
+              :disabled="pending || ended || resendRemaining > 0"
+              @click="resend"
+              >Отправить письмо повторно</Button
             >
+            <p v-if="!ended && resendRemaining > 0" role="status">
+              Письмо можно запросить повторно через {{ resendRemaining }} с
+            </p>
             <Button
               type="button"
               variant="outline"
@@ -146,9 +440,13 @@ onBeforeUnmount(() => {
               @click="changeEmail"
               >Изменить email</Button
             >
-            <a href="/login" class="block text-sm underline"
-              >Перейти ко входу</a
-            >
+            <p class="text-sm">
+              Уже пользовались сервисом?
+              <a href="/login" class="underline">Войти</a> ·
+              <a href="/password-reset" class="underline"
+                >Восстановить доступ</a
+              >
+            </p>
           </div>
           <form
             v-else
@@ -158,6 +456,12 @@ onBeforeUnmount(() => {
             @submit.prevent="submit"
           >
             <FieldGroup>
+              <p data-lost-attempt class="text-sm text-muted-foreground">
+                Если вы уже начинали регистрацию, но эта страница была закрыта
+                или данные вкладки потеряны, продолжить ввод кода здесь
+                нельзя. Войдите или восстановите доступ либо заполните форму
+                заново.
+              </p>
               <Field>
                 <FieldLabel for="name">Имя</FieldLabel>
                 <Input
@@ -236,6 +540,9 @@ onBeforeUnmount(() => {
               </Button>
               <a href="/login" class="text-center text-sm underline"
                 >Перейти ко входу</a
+              >
+              <a href="/password-reset" class="text-center text-sm underline"
+                >Восстановить доступ</a
               >
             </FieldGroup>
           </form>

@@ -43,3 +43,23 @@ export class LoginCodeFormatError extends AuthDomainError {
     super("Введите шесть цифр");
   }
 }
+
+export class RegistrationAttemptInvalidError extends LoginAttemptInvalidError {
+  constructor() {
+    super();
+    this.message =
+      "Попытка регистрации завершена. Войдите или восстановите доступ";
+  }
+}
+export class RegistrationCodeExpiredError extends LoginCodeExpiredError {
+  constructor() {
+    super();
+    this.message = "Срок кода истёк. Войдите или восстановите доступ";
+  }
+}
+export class RegistrationCodeInvalidError extends LoginCodeInvalidError {
+  constructor(remainingAttempts: number) {
+    super(remainingAttempts);
+    this.message = "Неверный код подтверждения";
+  }
+}

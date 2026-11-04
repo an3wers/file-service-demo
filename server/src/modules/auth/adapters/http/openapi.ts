@@ -11,6 +11,10 @@ import {
   sessionResponseSchema,
   registrationBodySchema,
   registrationResponseSchema,
+  registrationAttemptSchema,
+  registrationVerifySchema,
+  registrationResendBodySchema,
+  registrationResendResponseSchema,
   activationRequestSchema,
   activationConfirmSchema,
   activationResponseSchema,
@@ -165,18 +169,85 @@ export const authPaths: ZodOpenApiPathsObject = {
       operationId: "register",
       security: [],
       description:
-        "Нейтральный результат через 15 секунд; принятие SMTP не означает доставку. Повтор не меняет имя и пароль.",
+        "Нейтральный результат через 15 секунд; принятие SMTP не означает доставку. Для нового, активного и неактивного email структура и сроки ответа одинаковы: непрозрачный attemptToken, попытка на 15 минут, код на пять минут, повтор не раньше resendAvailableAt. Новому адресу уходит код без секрета попытки; владельцу существующего адреса — письмо с инструкциями входа и восстановления, а его attemptToken не даёт права войти. Повтор не меняет имя, пароль, состояние, ссылки и сессии.",
       requestParams: { header: z.object({ Origin: z.string() }) },
       requestBody: { required: true, content: json(registrationBodySchema) },
       responses: {
         202: {
-          description: "Запрос обработан",
+          description: "Запрос обработан; даты UTC ISO 8601",
           headers: z.object({ "Cache-Control": z.literal("no-store") }),
-          content: json(registrationResponseSchema),
+          content: json(registrationAttemptSchema),
         },
         ...apiErrors({
           400: "BAD_REQUEST",
           403: "ORIGIN_NOT_ALLOWED",
+          413: "PAYLOAD_TOO_LARGE",
+          415: "UNSUPPORTED_MEDIA_TYPE",
+          503: "SERVICE_UNAVAILABLE",
+        }),
+        429: {
+          ...errorResponse("RATE_LIMITED: details.retryAfterSeconds"),
+          headers: z.object({ "Retry-After": z.string() }),
+        },
+      },
+    },
+  },
+  "/registration/resend": {
+    post: {
+      tags: ["auth"],
+      summary: "Повтор письма регистрации",
+      operationId: "resendRegistration",
+      security: [],
+      description:
+        "Требует секрет действующего контекста регистрации; адрес определяет сервер. Доступен не раньше resendAvailableAt (иначе 429 с серверным ожиданием). Для нового email заменяет код своей попытки до SMTP, для существующего отправляет письмо с инструкциями без кода и без изменения аккаунта; ответ одинаков по структуре и не раскрывает ветку и результат SMTP. Срок попытки (15 минут) и число неверных проверок не меняются, новый код живёт пять минут, но не дольше попытки. Письма делят квоты адреса (одно в минуту, пять в час) и IP (20 в час) с регистрацией и повторной активацией. Любой отказ до замены оставляет прежний код действующим; сбой SMTP после замены прежний код не восстанавливает.",
+      requestParams: { header: z.object({ Origin: z.string() }) },
+      requestBody: {
+        required: true,
+        content: json(registrationResendBodySchema),
+      },
+      responses: {
+        200: {
+          description: "Запрос обработан; даты UTC ISO 8601",
+          headers: z.object({ "Cache-Control": z.literal("no-store") }),
+          content: json(registrationResendResponseSchema),
+        },
+        ...apiErrors({
+          400: "BAD_REQUEST",
+          403: "ORIGIN_NOT_ALLOWED",
+          410: "LOGIN_ATTEMPT_INVALID: контекст неизвестен, завершён, изменён или истёк",
+          413: "PAYLOAD_TOO_LARGE",
+          415: "UNSUPPORTED_MEDIA_TYPE",
+          503: "SERVICE_UNAVAILABLE",
+        }),
+        429: {
+          ...errorResponse(
+            "RATE_LIMITED: details.retryAfterSeconds; прежний код сохраняется",
+          ),
+          headers: z.object({ "Retry-After": z.string() }),
+        },
+      },
+    },
+  },
+  "/registration/verify": {
+    post: {
+      tags: ["auth"],
+      summary: "Проверка кода регистрации",
+      operationId: "verifyRegistration",
+      security: [],
+      description:
+        "Требует секрет попытки и код; адрес и пользователя определяет сервер. Атомарно активирует пользователя, погашает попытку и создаёт одну серверную сессию с фиксированным сроком 14 суток от проверки. Пятая неверная проверка завершает попытку, ошибка формата не расходует проверки. Контекст существующего email отвечает как неверный код и сессию не выдаёт. Код входа не подходит для регистрации и наоборот.",
+      requestParams: { header: z.object({ Origin: z.string() }) },
+      requestBody: { required: true, content: json(registrationVerifySchema) },
+      responses: {
+        200: {
+          description: "Email подтверждён, сессия создана",
+          headers: setsRefreshCookie,
+          content: json(sessionResponseSchema),
+        },
+        ...apiErrors({
+          400: "LOGIN_CODE_INVALID: details.remainingAttempts; LOGIN_CODE_EXPIRED или BAD_REQUEST",
+          403: "ORIGIN_NOT_ALLOWED",
+          410: "LOGIN_ATTEMPT_INVALID: контекст неизвестен, завершён или истёк",
           413: "PAYLOAD_TOO_LARGE",
           415: "UNSUPPORTED_MEDIA_TYPE",
           503: "SERVICE_UNAVAILABLE",

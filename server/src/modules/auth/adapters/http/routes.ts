@@ -28,6 +28,7 @@ import {
   loginResendSchema,
   registrationBodySchema,
   registrationEmailSchema,
+  registrationResendBodySchema,
   activationRequestSchema,
   activationConfirmSchema,
   passwordResetConfirmSchema,
@@ -160,6 +161,24 @@ export function createAuthRouter(
     requestMail("register"),
   );
   router.post(
+    "/registration/resend",
+    prepareRegistration,
+    parseBody,
+    async (req, res) => {
+      if (!registration) throw new RegistrationUnavailableError();
+      if (res.locals.ipRetry > 0)
+        throw new MailRateLimitedError(res.locals.ipRetry);
+      const { attemptToken } = registrationResendBodySchema.parse(req.body);
+      res.json(
+        await registration.resendRegistration(
+          attemptToken,
+          res.locals.registrationDeadline,
+          mailLogOf(req),
+        ),
+      );
+    },
+  );
+  router.post(
     "/activation/request",
     prepareRegistration,
     parseBody,
@@ -288,10 +307,8 @@ export function createAuthRouter(
       res.json(result);
     },
   );
-  router.post(
-    "/login/verify",
-    prepareSession(sessions.consumeVerifyIp),
-    parseBody,
+  const verifyHandler =
+    (kind: "verify" | "verifyRegistration"): RequestHandler =>
     async (req, res) => {
       const parsed = loginVerifySchema.safeParse(req.body);
       if (!parsed.success) {
@@ -299,7 +316,7 @@ export function createAuthRouter(
           .pick({ attemptToken: true })
           .safeParse(req.body);
         if (token.success)
-          await sessions.verify(
+          await sessions[kind](
             token.data.attemptToken,
             null,
             res.locals.authDeadline,
@@ -309,9 +326,20 @@ export function createAuthRouter(
       const { attemptToken, code } = parsed.data;
       respond(
         res,
-        await sessions.verify(attemptToken, code, res.locals.authDeadline),
+        await sessions[kind](attemptToken, code, res.locals.authDeadline),
       );
-    },
+    };
+  router.post(
+    "/login/verify",
+    prepareSession(sessions.consumeVerifyIp),
+    parseBody,
+    verifyHandler("verify"),
+  );
+  router.post(
+    "/registration/verify",
+    prepareSession(sessions.consumeVerifyIp),
+    parseBody,
+    verifyHandler("verifyRegistration"),
   );
 
   router.post("/refresh", parseBody, async (req, res) => {

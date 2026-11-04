@@ -87,13 +87,18 @@ async function start(objectStore: MemoryObjectStore) {
   const lastMail = () => sendEmail.mock.calls.at(-1)![0].text as string;
 
   async function signUp(email: string) {
-    expect(
-      (await post("register", { name: "Имя", email, password: PASSWORD }))
-        .status,
-    ).toBe(202);
-    const token = new URL(lastMail().match(/https:\/\/\S+/)![0]).hash.slice(7);
-    expect((await post("activation/confirm", { token })).status).toBe(200);
-    return await signIn(email);
+    const registered = await post("register", {
+      name: "Имя",
+      email,
+      password: PASSWORD,
+    });
+    expect(registered.status).toBe(202);
+    const verified = await post("registration/verify", {
+      attemptToken: (await registered.json()).attemptToken,
+      code: lastMail().match(/[0-9]{6}/)![0],
+    });
+    expect(verified.status).toBe(200);
+    return client((await verified.json()).accessToken);
   }
 
   async function signIn(email: string) {

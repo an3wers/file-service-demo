@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from "node:crypto";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
 import type { Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { setTimeout as wait } from "node:timers/promises";
@@ -17,7 +17,7 @@ import { migrate } from "../../../../db/migrate.js";
 import { createApp } from "../../../../app.js";
 import { createTestClock } from "../../../../testing/clock.js";
 import type { TestClock } from "../../../../testing/clock.js";
-import { createAuthHarness } from "../../testing/auth.harness.js";
+import { createAuthHarness, CODE_SECRET } from "../../testing/auth.harness.js";
 import { createRegistration } from "../../application/registration.js";
 import { createAuthRouter, createRequireAuth } from "../http/routes.js";
 import { mapAuthError } from "../http/error-map.js";
@@ -35,7 +35,7 @@ beforeAll(async () => {
 });
 beforeEach(async () => {
   await pool.query(
-    "truncate login_attempts, auth_sessions, auth_secrets, auth_mail_events, users cascade",
+    "truncate registration_attempts, login_attempts, auth_sessions, auth_secrets, auth_mail_events, users cascade",
   );
 });
 afterEach(async () => {
@@ -62,6 +62,7 @@ async function start(
   const sendEmail = vi.fn().mockResolvedValue({ messageId: "accepted" });
   const store = createSqlRegistrationStore(clock);
   const registration = createRegistration({
+    codeSecret: CODE_SECRET,
     store,
     hasher: auth.hasher,
     notification: { sendEmail },
@@ -100,12 +101,32 @@ async function start(
       },
       body: JSON.stringify(body),
     });
-  const register = (email = "user@example.com") =>
-    post("register", { name: "Имя", email, password: "password 12345" });
-  const token = () =>
-    new URL(
-      sendEmail.mock.calls.at(-1)![0].text.match(/https:\/\/\S+/)![0],
-    ).hash.slice(7);
+  let issued = "";
+  const register = async (email = "user@example.com") => {
+    const response = await post("register", {
+      name: "Имя",
+      email,
+      password: "password 12345",
+    });
+    const message = sendEmail.mock.calls.at(-1)?.[0];
+    if (message?.text.startsWith("Код подтверждения")) {
+      issued = randomBytes(32).toString("base64url");
+      await store.requestActivation(
+        email,
+        createHash("sha256").update(issued).digest("hex"),
+        new Date(
+          clock.now().getTime() - (realTime ? 0 : deadlineMs) + 86400000,
+        ),
+        new Date(Date.now() + 15000),
+      );
+      message.text = `Подтвердите email: https://files.example.com/activation#token=${issued}`;
+    }
+    return response;
+  };
+  const token = () => {
+    const link = sendEmail.mock.calls.at(-1)?.[0].text.match(/https:\/\/\S+/);
+    return link ? new URL(link[0]).hash.slice(7) : issued;
+  };
   const confirm = (value: string) =>
     post("activation/confirm", { token: value });
   const request = (email = "user@example.com") =>

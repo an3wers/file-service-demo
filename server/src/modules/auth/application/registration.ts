@@ -1,4 +1,8 @@
-import { createHash, randomBytes, randomUUID } from "node:crypto";
+import { createHash, randomBytes, randomInt, randomUUID } from "node:crypto";
+import {
+  registrationAttemptDigest,
+  registrationCodeDigest,
+} from "./attempt-secrets.js";
 import type { Notification } from "../../notification/index.js";
 import { logMailAttempt, type MailLog } from "./mail-log.js";
 import type { Clock } from "../domain/ports/clock.js";
@@ -6,8 +10,17 @@ import type { PasswordHasher } from "../domain/ports/password-hasher.js";
 import type {
   MailLimit,
   RegistrationStore,
+  SaveOutcome,
 } from "../domain/ports/registration-store.js";
 import {
+  CONFIRMATION_IP_WINDOW_MS,
+  REGISTRATION_ATTEMPT_TTL_MS,
+  REGISTRATION_CODE_TTL_MS,
+  REGISTRATION_RESEND_WAIT_MS,
+} from "../domain/registration-policy.js";
+import { RegistrationAttemptInvalidError } from "../domain/errors.js";
+import {
+  MailRateLimitedError,
   ActivationLinkInvalidError,
   PasswordResetLinkInvalidError,
   RegistrationUnavailableError,
@@ -26,6 +39,7 @@ export interface RegistrationDeps {
   wait(ms: number): Promise<void>;
   publicUrl: string;
   deadlineMs: number;
+  codeSecret: string;
 }
 
 type LinkPurpose = "activation" | "password-reset";
@@ -46,8 +60,20 @@ const LINKS = {
   },
 } as const;
 
+const ACCESS_INSTRUCTIONS = {
+  active: (login: string, reset: string) =>
+    `На этот адрес уже зарегистрирован аккаунт.\n\nЧтобы продолжить, войдите в него: ${login}\nЕсли не помните пароль, восстановите доступ: ${reset}\n\nЕсли вы не начинали регистрацию, можете проигнорировать письмо. Этот запрос не изменил данные вашего аккаунта.`,
+  inactive: (login: string, reset: string) =>
+    `На этот адрес уже зарегистрирован аккаунт.\n\nЕсли вы не завершили регистрацию, восстановите доступ и задайте собственный пароль: ${reset}\nЕсли аккаунт уже подтверждён, войдите в него: ${login}\n\nЕсли вы не начинали регистрацию, можете проигнорировать письмо. Этот запрос не изменил данные вашего аккаунта.`,
+} as const;
+
 export const REGISTRATION_MESSAGE =
   "Если требуется письмо, инструкции придут на email";
+
+const EMAIL_MAIL_LIMITS: readonly MailLimit[] = [
+  { windowMs: REGISTRATION_RESEND_WAIT_MS, maximum: 1 },
+  { windowMs: 3600000, maximum: 5 },
+];
 
 export function createRegistration({
   store,
@@ -57,6 +83,7 @@ export function createRegistration({
   wait,
   publicUrl,
   deadlineMs,
+  codeSecret,
 }: RegistrationDeps) {
   const digest = (value: string) =>
     createHash("sha256").update(value).digest("hex");
@@ -167,11 +194,28 @@ export function createRegistration({
       retryAfterSeconds: Math.max(
         0,
         Math.ceil(
-          (mailRequestedAt.getTime() + 60000 - clock.now().getTime()) / 1000,
+          (mailRequestedAt.getTime() + REGISTRATION_RESEND_WAIT_MS - clock.now().getTime()) / 1000,
         ),
       ),
     };
   }
+  const outcomeMail = (outcome: SaveOutcome, email: string, code: string) =>
+    outcome === "created"
+      ? {
+          to: email,
+          subject: "Код подтверждения",
+          text: `Код подтверждения: ${code}\nКод действует 5 минут.`,
+        }
+      : {
+          to: email,
+          subject: "Продолжение регистрации",
+          text: ACCESS_INSTRUCTIONS[outcome](
+            new URL("/login", publicUrl).href,
+            new URL("/password-reset", publicUrl).href,
+          ),
+        };
+  const outcomePurpose = (outcome: SaveOutcome) =>
+    outcome === "created" ? "registration-code" : "registration-instructions";
   return {
     deadline: () => new Date(clock.now().getTime() + deadlineMs),
     withinDeadline,
@@ -188,14 +232,7 @@ export function createRegistration({
       deadline: Date,
       purpose: LinkPurpose = "activation",
     ) =>
-      consume(
-        `mail:${purpose}:${digest(email)}`,
-        [
-          { windowMs: 60000, maximum: 1 },
-          { windowMs: 3600000, maximum: 5 },
-        ],
-        deadline,
-      ),
+      consume(`mail:${purpose}:${digest(email)}`, EMAIL_MAIL_LIMITS, deadline),
     consumeConfirmationIp: async (
       ip: string,
       deadline: Date,
@@ -204,7 +241,7 @@ export function createRegistration({
       (
         await consume(
           `${purpose}:confirm:ip:${digest(ip)}`,
-          [{ windowMs: 900000, maximum: 20 }],
+          [{ windowMs: CONFIRMATION_IP_WINDOW_MS, maximum: 20 }],
           deadline,
         )
       ).retryAfterSeconds,
@@ -280,38 +317,114 @@ export function createRegistration({
       if (!confirmed) throw new ActivationLinkInvalidError();
       return { message: "Email подтверждён. Теперь можно войти" as const };
     },
+    async resendRegistration(
+      attemptToken: string,
+      deadline: Date,
+      log: MailLog,
+    ) {
+      const now = clock.now();
+      const requested = now.getTime();
+      const tokenHash = registrationAttemptDigest(attemptToken);
+      const code = randomInt(1000000).toString().padStart(6, "0");
+      let result;
+      try {
+        result = await withinDeadline(deadline, () =>
+          store.resendRegistration(
+            tokenHash,
+            {
+              codeHash: registrationCodeDigest(codeSecret, tokenHash, code),
+              codeExpiresAt: new Date(requested + REGISTRATION_CODE_TTL_MS),
+              resendAvailableAt: new Date(requested + REGISTRATION_RESEND_WAIT_MS),
+            },
+            {
+              key: (email) => `mail:activation:${digest(email)}`,
+              limits: EMAIL_MAIL_LIMITS,
+            },
+            now,
+            deadline,
+          ),
+        );
+      } catch {
+        throw new RegistrationUnavailableError();
+      }
+      if (result.status === "unavailable")
+        throw new RegistrationAttemptInvalidError();
+      if (result.status === "limited")
+        throw new MailRateLimitedError(result.retryAfterSeconds);
+      await deliver(
+        outcomeMail(result.outcome, result.email, code),
+        deadline,
+        outcomePurpose(result.outcome),
+        log,
+      );
+      while (clock.now() < deadline)
+        await wait(deadline.getTime() - clock.now().getTime());
+      return {
+        message: REGISTRATION_MESSAGE,
+        retryAfterSeconds: Math.max(
+          0,
+          Math.ceil((requested + REGISTRATION_RESEND_WAIT_MS - clock.now().getTime()) / 1000),
+        ),
+        attemptExpiresAt: result.expiresAt.toISOString(),
+        codeExpiresAt: result.codeExpiresAt.toISOString(),
+        resendAvailableAt: result.resendAvailableAt.toISOString(),
+      };
+    },
     async register(
       input: RegistrationInput,
       deadline: Date,
       mailRequestedAt: Date,
       log: MailLog,
     ) {
+      const attemptToken = randomBytes(32).toString("base64url");
+      const tokenHash = registrationAttemptDigest(attemptToken);
+      const code = randomInt(1000000).toString().padStart(6, "0");
+      const requested = mailRequestedAt.getTime();
+      const attempt = {
+        tokenHash,
+        codeHash: registrationCodeDigest(codeSecret, tokenHash, code),
+        expiresAt: new Date(requested + REGISTRATION_ATTEMPT_TTL_MS),
+        codeExpiresAt: new Date(requested + REGISTRATION_CODE_TTL_MS),
+        resendAvailableAt: new Date(requested + REGISTRATION_RESEND_WAIT_MS),
+      };
       try {
         const passwordHash = await withinDeadline(deadline, () =>
           hasher.hash(input.password),
         );
-        return await sendLink(
-          "activation",
-          input.email,
-          (tokenHash, expiresAt) =>
-            store.save(
-              {
-                id: randomUUID(),
-                name: input.name,
-                email: input.email,
-                passwordHash,
-                tokenHash,
-                expiresAt,
-              },
-              deadline,
-            ),
+        const outcome = await withinDeadline(deadline, () =>
+          store.save(
+            {
+              id: randomUUID(),
+              name: input.name,
+              email: input.email,
+              passwordHash,
+              attempt,
+            },
+            deadline,
+          ),
+        );
+        await deliver(
+          outcomeMail(outcome, input.email, code),
           deadline,
-          mailRequestedAt,
+          outcomePurpose(outcome),
           log,
         );
       } catch {
         throw new RegistrationUnavailableError();
       }
+      while (clock.now() < deadline)
+        await wait(deadline.getTime() - clock.now().getTime());
+      return {
+        message: REGISTRATION_MESSAGE,
+        retryAfterSeconds: Math.max(
+          0,
+          Math.ceil((requested + REGISTRATION_RESEND_WAIT_MS - clock.now().getTime()) / 1000),
+        ),
+        attemptToken,
+        attemptExpiresAt: attempt.expiresAt.toISOString(),
+        codeExpiresAt: attempt.codeExpiresAt.toISOString(),
+        resendAvailableAt: attempt.resendAvailableAt.toISOString(),
+      };
     },
   };
 }

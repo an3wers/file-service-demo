@@ -59,6 +59,23 @@ export const registrationResponseSchema = z
     retryAfterSeconds: z.number().int().nonnegative(),
   })
   .meta({ id: "RegistrationResult" });
+export const registrationAttemptSchema = registrationResponseSchema
+  .extend({
+    attemptToken: z
+      .string()
+      .meta({ description: "Непрозрачный секрет контекста регистрации" }),
+    attemptExpiresAt: z.iso.datetime(),
+    codeExpiresAt: z.iso.datetime(),
+    resendAvailableAt: z.iso.datetime(),
+  })
+  .meta({ id: "RegistrationAttempt" });
+
+export const registrationResendBodySchema = z.object({
+  attemptToken: z.string().min(1).max(256),
+});
+export const registrationResendResponseSchema = registrationAttemptSchema
+  .omit({ attemptToken: true })
+  .meta({ id: "RegistrationResend" });
 
 export const loginBodySchema = z.object({
   email: registrationEmailSchema,
@@ -68,6 +85,7 @@ export const loginVerifySchema = z.object({
   attemptToken: z.string().min(1).max(256),
   code: z.string().regex(/^[0-9]{6}$/, "Введите шесть цифр"),
 });
+export const registrationVerifySchema = loginVerifySchema;
 export const loginResendSchema = loginVerifySchema.pick({ attemptToken: true });
 export const loginAttemptSchema = z
   .object({

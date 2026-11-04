@@ -1,3 +1,4 @@
+import { MAX_CODE_FAILURES } from "../../domain/registration-policy.js";
 import type { PoolClient } from "pg";
 import type { SessionStore } from "../../domain/ports/session-store.js";
 import { LOGIN_MAIL_LIMITS } from "../../domain/ports/session-store.js";
@@ -188,10 +189,10 @@ export function createSqlSessionStore(
         if (attempt.code_expires_at <= clock.now())
           return { status: "expired" };
         if (attempt.code_hash !== codeHash) {
-          const remainingAttempts = Math.max(0, 4 - attempt.failures);
+          const remainingAttempts = Math.max(0, MAX_CODE_FAILURES - 1 - attempt.failures);
           await client.query(
-            "update login_attempts set failures = failures + 1, consumed_at = case when failures >= 4 then $2::timestamptz else null end where token_hash = $1",
-            [tokenHash, clock.now()],
+            "update login_attempts set failures = failures + 1, consumed_at = case when failures >= $3 then $2::timestamptz else null end where token_hash = $1",
+            [tokenHash, clock.now(), MAX_CODE_FAILURES - 1],
           );
           return { status: "invalid", remainingAttempts };
         }
@@ -209,6 +210,62 @@ export function createSqlSessionStore(
           ],
         );
         return { status: "verified", user };
+      }),
+    verifyRegistration: (tokenHash, codeHash, session, deadline) =>
+      authTransaction(deadline, async (client) => {
+        const { rows } = await client.query<{
+          user_id: string | null;
+          password_hash: string | null;
+          token_version: number | null;
+          expires_at: Date;
+          code_expires_at: Date;
+          code_hash: string;
+          failures: number;
+          consumed_at: Date | null;
+        }>(
+          "select * from registration_attempts where token_hash = $1 for update",
+          [tokenHash],
+        );
+        const attempt = rows[0];
+        const now = clock.now();
+        if (!attempt || attempt.consumed_at || attempt.expires_at <= now)
+          return { status: "unavailable" };
+        const user = attempt.user_id
+          ? await userById(client, attempt.user_id)
+          : null;
+        const usable =
+          !!user &&
+          user.state === "inactive" &&
+          user.passwordHash === attempt.password_hash &&
+          user.tokenVersion === attempt.token_version;
+        if (attempt.user_id && !usable) return { status: "unavailable" };
+        if (codeHash === null) return { status: "format" };
+        if (attempt.code_expires_at <= now) return { status: "expired" };
+        if (!usable || attempt.code_hash !== codeHash) {
+          const remainingAttempts = Math.max(0, MAX_CODE_FAILURES - 1 - attempt.failures);
+          await client.query(
+            "update registration_attempts set failures = failures + 1, consumed_at = case when failures >= $3 then $2::timestamptz else null end where token_hash = $1",
+            [tokenHash, now, MAX_CODE_FAILURES - 1],
+          );
+          return { status: "invalid", remainingAttempts };
+        }
+        await client.query(
+          "update registration_attempts set consumed_at = $2 where token_hash = $1",
+          [tokenHash, now],
+        );
+        await client.query("update users set state = 'active' where id = $1", [
+          user.id,
+        ]);
+        await client.query(
+          "insert into auth_sessions (token_hash, user_id, created_at, expires_at) values ($1, $2, $3, $4)",
+          [
+            session.tokenHash,
+            user.id,
+            now,
+            new Date(now.getTime() + session.ttlSeconds * 1000),
+          ],
+        );
+        return { status: "verified", user: { ...user, state: "active" } };
       }),
     refresh: (tokenHash, deadline) =>
       authTransaction(deadline, async (client) => {

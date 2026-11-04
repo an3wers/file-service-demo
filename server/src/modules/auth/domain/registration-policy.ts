@@ -1,0 +1,5 @@
+export const REGISTRATION_CODE_TTL_MS = 5 * 60 * 1000;
+export const REGISTRATION_ATTEMPT_TTL_MS = 15 * 60 * 1000;
+export const REGISTRATION_RESEND_WAIT_MS = 60 * 1000;
+export const CONFIRMATION_IP_WINDOW_MS = 15 * 60 * 1000;
+export const MAX_CODE_FAILURES = 5;
