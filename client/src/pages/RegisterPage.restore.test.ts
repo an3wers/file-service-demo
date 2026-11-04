@@ -187,6 +187,9 @@ it("потеря вкладки с секретом даёт форму со с�
   expect(wrapper.find("input[name=password]").exists()).toBe(true);
   expect(wrapper.find("a[href='/login']").exists()).toBe(true);
   expect(wrapper.find("a[href='/password-reset']").exists()).toBe(true);
+  expect(wrapper.find("[data-lost-attempt]").text()).toContain(
+    "Если вы уже начинали регистрацию",
+  );
   wrapper.unmount();
 });
 
@@ -262,10 +265,10 @@ it("потерянный ответ проверки: refresh-cookie возвр�
   wrapper.unmount();
 });
 
-it("потерянный ответ проверки без cookie предлагает обычный вход и очищает секрет", async () => {
+it("сбой проверки без refresh-cookie сохраняет попытку и поле кода и показывает ошибку со ссылками ко входу и восстановлению", async () => {
   const fetch = vi
     .fn()
-    .mockRejectedValueOnce(new TypeError("offline"))
+    .mockResolvedValueOnce(apiError("INTERNAL", 503))
     .mockResolvedValueOnce(apiError("SESSION_EXPIRED", 401));
   vi.stubGlobal("fetch", fetch);
   seed();
@@ -274,10 +277,31 @@ it("потерянный ответ проверки без cookie предла�
   await wrapper.get("form").trigger("submit");
   await flushPromises();
   expect(push).not.toHaveBeenCalled();
-  expect(sessionStorage.getItem(ATTEMPT_KEY)).toBeNull();
-  expect(wrapper.text()).toContain("Попытка завершена");
+  expect(sessionStorage.getItem(ATTEMPT_KEY)).not.toBeNull();
+  expect(wrapper.text()).not.toContain("Попытка завершена");
+  expect(wrapper.find("[role=alert]").exists()).toBe(true);
+  expect(wrapper.get<HTMLInputElement>("input[name=code]").element.value).toBe(
+    "012345",
+  );
+  expect(wrapper.get("input[name=code]").attributes("disabled")).toBeUndefined();
   expect(wrapper.find("a[href='/login']").exists()).toBe(true);
   expect(wrapper.find("a[href='/password-reset']").exists()).toBe(true);
+  wrapper.unmount();
+});
+
+it("сбой проверки при смене общего входа завершает попытку", async () => {
+  const fetch = vi.fn().mockImplementationOnce(async () => {
+    writeSharedAuth({ generation: 5, signedIn: false });
+    return apiError("INTERNAL", 503);
+  });
+  vi.stubGlobal("fetch", fetch);
+  seed();
+  const wrapper = await open();
+  await wrapper.get("input[name=code]").setValue("012345");
+  await wrapper.get("form").trigger("submit");
+  await flushPromises();
+  expect(sessionStorage.getItem(ATTEMPT_KEY)).toBeNull();
+  expect(wrapper.text()).toContain("Попытка завершена");
   wrapper.unmount();
 });
 

@@ -50,6 +50,14 @@ import { Spinner } from "@/components/ui/spinner";
 import ThemeSelect from "@/components/ThemeSelect.vue";
 import { errorMessage } from "@/lib/errors";
 
+interface ErrorDetails {
+  fieldErrors?: Record<string, string[]>;
+  remainingAttempts?: number;
+  retryAfterSeconds?: number;
+}
+const detailsOf = (error: { details?: unknown }) =>
+  (error.details ?? {}) as ErrorDetails;
+
 const auth = useAuth();
 const router = useRouter();
 const route = useRoute();
@@ -193,11 +201,9 @@ async function submit() {
     pending.value = false;
     failure.value = errorMessage(error, "Не удалось выполнить регистрацию");
     if (isApiError(error)) {
-      const details = error.details as
-        | { fieldErrors?: Record<string, string[]>; retryAfterSeconds?: number }
-        | undefined;
-      fieldErrors.value = details?.fieldErrors ?? {};
-      if (error.status === 429 && details?.retryAfterSeconds)
+      const details = detailsOf(error);
+      fieldErrors.value = details.fieldErrors ?? {};
+      if (error.status === 429 && details.retryAfterSeconds)
         countdown(details.retryAfterSeconds);
     }
     await nextTick();
@@ -214,6 +220,12 @@ async function submit() {
   }
 }
 
+async function finishRegistration() {
+  attempt.value = null;
+  forgetAttempt();
+  await router.push(safeReturnTo(route.query.returnTo));
+}
+
 async function verify() {
   if (!attempt.value || !canVerify.value) return;
   pending.value = true;
@@ -225,9 +237,7 @@ async function verify() {
       generation,
     );
     if (controller.signal.aborted) return;
-    attempt.value = null;
-    forgetAttempt();
-    await router.push(safeReturnTo(route.query.returnTo));
+    await finishRegistration();
   } catch (error) {
     if (controller.signal.aborted) return;
     failure.value = errorMessage(error, "Не удалось подтвердить код");
@@ -238,31 +248,33 @@ async function verify() {
       if (controller.signal.aborted) return;
       if (recovered === "restored") {
         failure.value = "";
-        attempt.value = null;
-        forgetAttempt();
-        await router.push(safeReturnTo(route.query.returnTo));
+        await finishRegistration();
         return;
       }
-      if (recovered === "absent") {
+      // Временный сбой не означает неверный код: попытку завершаем, только
+      // если общий вход сменился и секрет уже непригоден.
+      if (
+        recovered === "absent" &&
+        readSharedAuth().generation !== generation
+      ) {
         failure.value = "";
         endAttempt();
       }
     } else if (isApiError(error)) {
-      const details = error.details as
-        { remainingAttempts?: number; retryAfterSeconds?: number } | undefined;
-      if (details?.remainingAttempts !== undefined) {
+      const details = detailsOf(error);
+      if (details.remainingAttempts !== undefined) {
         remainingAttempts.value = details.remainingAttempts;
         saveAttempt();
       }
       if (
         error.code === "LOGIN_ATTEMPT_INVALID" ||
         error.code === "SESSION_CHANGED" ||
-        details?.remainingAttempts === 0
+        details.remainingAttempts === 0
       ) {
         ended.value = true;
         forgetAttempt();
       }
-      if (error.status === 429 && details?.retryAfterSeconds)
+      if (error.status === 429 && details.retryAfterSeconds)
         countdown(details.retryAfterSeconds);
     }
     await nextTick();
@@ -293,13 +305,12 @@ async function resend() {
     if (controller.signal.aborted) return;
     failure.value = errorMessage(error, "Не удалось запросить письмо");
     if (isApiError(error)) {
-      const details = error.details as
-        { retryAfterSeconds?: number } | undefined;
+      const details = detailsOf(error);
       if (error.code === "LOGIN_ATTEMPT_INVALID") {
         endAttempt();
       } else if (
         error.status === 429 &&
-        details?.retryAfterSeconds &&
+        details.retryAfterSeconds &&
         attempt.value
       ) {
         now.value = serverNow();
@@ -445,6 +456,12 @@ onBeforeUnmount(() => {
             @submit.prevent="submit"
           >
             <FieldGroup>
+              <p data-lost-attempt class="text-sm text-muted-foreground">
+                Если вы уже начинали регистрацию, но эта страница была закрыта
+                или данные вкладки потеряны, продолжить ввод кода здесь
+                нельзя. Войдите или восстановите доступ либо заполните форму
+                заново.
+              </p>
               <Field>
                 <FieldLabel for="name">Имя</FieldLabel>
                 <Input

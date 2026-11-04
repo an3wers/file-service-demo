@@ -76,4 +76,5 @@ export interface RegistrationStore {
 
 export interface MailEventCleanup {
   removeExpiredEvents(now: Date): Promise<number>;
+  removeFinishedAttempts(now: Date): Promise<number>;
 }

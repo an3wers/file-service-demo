@@ -1,3 +1,4 @@
+import { MAX_CODE_FAILURES } from "../../domain/registration-policy.js";
 import type { PoolClient } from "pg";
 import type { SessionStore } from "../../domain/ports/session-store.js";
 import { LOGIN_MAIL_LIMITS } from "../../domain/ports/session-store.js";
@@ -188,10 +189,10 @@ export function createSqlSessionStore(
         if (attempt.code_expires_at <= clock.now())
           return { status: "expired" };
         if (attempt.code_hash !== codeHash) {
-          const remainingAttempts = Math.max(0, 4 - attempt.failures);
+          const remainingAttempts = Math.max(0, MAX_CODE_FAILURES - 1 - attempt.failures);
           await client.query(
-            "update login_attempts set failures = failures + 1, consumed_at = case when failures >= 4 then $2::timestamptz else null end where token_hash = $1",
-            [tokenHash, clock.now()],
+            "update login_attempts set failures = failures + 1, consumed_at = case when failures >= $3 then $2::timestamptz else null end where token_hash = $1",
+            [tokenHash, clock.now(), MAX_CODE_FAILURES - 1],
           );
           return { status: "invalid", remainingAttempts };
         }
@@ -241,10 +242,10 @@ export function createSqlSessionStore(
         if (codeHash === null) return { status: "format" };
         if (attempt.code_expires_at <= now) return { status: "expired" };
         if (!usable || attempt.code_hash !== codeHash) {
-          const remainingAttempts = Math.max(0, 4 - attempt.failures);
+          const remainingAttempts = Math.max(0, MAX_CODE_FAILURES - 1 - attempt.failures);
           await client.query(
-            "update registration_attempts set failures = failures + 1, consumed_at = case when failures >= 4 then $2::timestamptz else null end where token_hash = $1",
-            [tokenHash, now],
+            "update registration_attempts set failures = failures + 1, consumed_at = case when failures >= $3 then $2::timestamptz else null end where token_hash = $1",
+            [tokenHash, now, MAX_CODE_FAILURES - 1],
           );
           return { status: "invalid", remainingAttempts };
         }

@@ -360,3 +360,42 @@ it("одновременные повторы заменяют код один �
   expect(outcomes.filter((o) => o.status === "replaced")).toHaveLength(1);
   expect(outcomes.filter((o) => o.status === "limited")).toHaveLength(7);
 });
+
+it("повтор ровно в момент resendAvailableAt проходит квоту адреса в одно письмо в минуту, а на миллисекунду раньше отклоняется", async () => {
+  const { tokenHash } = await register();
+  const base = new Date(Date.now() + 10000);
+  await createSqlRegistrationStore().consume(
+    quota.key("name@example.com"),
+    LIMITS,
+    base,
+    deadline(),
+  );
+  await pool.query(
+    "update registration_attempts set resend_available_at = $1",
+    [new Date(base.getTime() + 60000)],
+  );
+  const early = await resend(tokenHash, new Date(base.getTime() + 59999));
+  expect(early.status).toBe("limited");
+  const exact = await resend(tokenHash, new Date(base.getTime() + 60000));
+  expect(exact.status).toBe("replaced");
+});
+
+it("уборка удаляет просроченные и погашенные попытки регистрации и сохраняет действующие", async () => {
+  const live = await register("live@example.com");
+  const expired = await register("expired@example.com");
+  const consumed = await register("consumed@example.com");
+  await pool.query(
+    "update registration_attempts set expires_at = now() - interval '1 second', code_expires_at = now() - interval '2 seconds' where token_hash = $1",
+    [expired.tokenHash],
+  );
+  await pool.query(
+    "update registration_attempts set consumed_at = now() where token_hash = $1",
+    [consumed.tokenHash],
+  );
+  expect(
+    await createSqlRegistrationStore().removeFinishedAttempts(new Date()),
+  ).toBe(2);
+  expect(await attemptRow(live.tokenHash)).toBeDefined();
+  expect(await attemptRow(expired.tokenHash)).toBeUndefined();
+  expect(await attemptRow(consumed.tokenHash)).toBeUndefined();
+});

@@ -1,3 +1,4 @@
+import { MAX_CODE_FAILURES } from "../domain/registration-policy.js";
 import type { Clock } from "../domain/ports/clock.js";
 import { LOGIN_MAIL_LIMITS } from "../domain/ports/session-store.js";
 import type {
@@ -133,8 +134,8 @@ export function createMemorySessionStore(clock: Clock) {
       if (attempt.codeExpiresAt <= clock.now()) return { status: "expired" };
       if (codeHash !== attempt.codeHash) {
         attempt.failures++;
-        attempt.consumed = attempt.failures >= 5;
-        return { status: "invalid", remainingAttempts: 5 - attempt.failures };
+        attempt.consumed = attempt.failures >= MAX_CODE_FAILURES;
+        return { status: "invalid", remainingAttempts: MAX_CODE_FAILURES - attempt.failures };
       }
       attempt.consumed = true;
       sessions.set(session.tokenHash, {
@@ -161,8 +162,8 @@ export function createMemorySessionStore(clock: Clock) {
       if (attempt.codeExpiresAt <= now) return { status: "expired" };
       if (!usable || codeHash !== attempt.codeHash) {
         attempt.failures++;
-        attempt.consumed = attempt.failures >= 5;
-        return { status: "invalid", remainingAttempts: 5 - attempt.failures };
+        attempt.consumed = attempt.failures >= MAX_CODE_FAILURES;
+        return { status: "invalid", remainingAttempts: MAX_CODE_FAILURES - attempt.failures };
       }
       attempt.consumed = true;
       user.state = "active";

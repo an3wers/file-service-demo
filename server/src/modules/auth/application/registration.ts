@@ -12,6 +12,12 @@ import type {
   RegistrationStore,
   SaveOutcome,
 } from "../domain/ports/registration-store.js";
+import {
+  CONFIRMATION_IP_WINDOW_MS,
+  REGISTRATION_ATTEMPT_TTL_MS,
+  REGISTRATION_CODE_TTL_MS,
+  REGISTRATION_RESEND_WAIT_MS,
+} from "../domain/registration-policy.js";
 import { RegistrationAttemptInvalidError } from "../domain/errors.js";
 import {
   MailRateLimitedError,
@@ -65,7 +71,7 @@ export const REGISTRATION_MESSAGE =
   "Если требуется письмо, инструкции придут на email";
 
 const EMAIL_MAIL_LIMITS: readonly MailLimit[] = [
-  { windowMs: 60000, maximum: 1 },
+  { windowMs: REGISTRATION_RESEND_WAIT_MS, maximum: 1 },
   { windowMs: 3600000, maximum: 5 },
 ];
 
@@ -188,7 +194,7 @@ export function createRegistration({
       retryAfterSeconds: Math.max(
         0,
         Math.ceil(
-          (mailRequestedAt.getTime() + 60000 - clock.now().getTime()) / 1000,
+          (mailRequestedAt.getTime() + REGISTRATION_RESEND_WAIT_MS - clock.now().getTime()) / 1000,
         ),
       ),
     };
@@ -235,7 +241,7 @@ export function createRegistration({
       (
         await consume(
           `${purpose}:confirm:ip:${digest(ip)}`,
-          [{ windowMs: 900000, maximum: 20 }],
+          [{ windowMs: CONFIRMATION_IP_WINDOW_MS, maximum: 20 }],
           deadline,
         )
       ).retryAfterSeconds,
@@ -327,8 +333,8 @@ export function createRegistration({
             tokenHash,
             {
               codeHash: registrationCodeDigest(codeSecret, tokenHash, code),
-              codeExpiresAt: new Date(requested + 300000),
-              resendAvailableAt: new Date(requested + 60000),
+              codeExpiresAt: new Date(requested + REGISTRATION_CODE_TTL_MS),
+              resendAvailableAt: new Date(requested + REGISTRATION_RESEND_WAIT_MS),
             },
             {
               key: (email) => `mail:activation:${digest(email)}`,
@@ -357,7 +363,7 @@ export function createRegistration({
         message: REGISTRATION_MESSAGE,
         retryAfterSeconds: Math.max(
           0,
-          Math.ceil((requested + 60000 - clock.now().getTime()) / 1000),
+          Math.ceil((requested + REGISTRATION_RESEND_WAIT_MS - clock.now().getTime()) / 1000),
         ),
         attemptExpiresAt: result.expiresAt.toISOString(),
         codeExpiresAt: result.codeExpiresAt.toISOString(),
@@ -377,9 +383,9 @@ export function createRegistration({
       const attempt = {
         tokenHash,
         codeHash: registrationCodeDigest(codeSecret, tokenHash, code),
-        expiresAt: new Date(requested + 900000),
-        codeExpiresAt: new Date(requested + 300000),
-        resendAvailableAt: new Date(requested + 60000),
+        expiresAt: new Date(requested + REGISTRATION_ATTEMPT_TTL_MS),
+        codeExpiresAt: new Date(requested + REGISTRATION_CODE_TTL_MS),
+        resendAvailableAt: new Date(requested + REGISTRATION_RESEND_WAIT_MS),
       };
       try {
         const passwordHash = await withinDeadline(deadline, () =>
@@ -412,7 +418,7 @@ export function createRegistration({
         message: REGISTRATION_MESSAGE,
         retryAfterSeconds: Math.max(
           0,
-          Math.ceil((requested + 60000 - clock.now().getTime()) / 1000),
+          Math.ceil((requested + REGISTRATION_RESEND_WAIT_MS - clock.now().getTime()) / 1000),
         ),
         attemptToken,
         attemptExpiresAt: attempt.expiresAt.toISOString(),

@@ -186,6 +186,17 @@ export function createSqlRegistrationStore(
             )
           ).rowCount ?? 0,
       ),
+    removeFinishedAttempts: (now) =>
+      transaction(
+        new Date(Date.now() + 15000),
+        async (client) =>
+          (
+            await client.query(
+              "delete from registration_attempts where ctid in (select ctid from registration_attempts where consumed_at is not null or expires_at <= $1::timestamptz limit 1000 for update skip locked)",
+              [now],
+            )
+          ).rowCount ?? 0,
+      ),
     consume: (key, limits, now, deadline) =>
       transaction(deadline, (client) =>
         consumeAuthLimit(client, key, limits, now),

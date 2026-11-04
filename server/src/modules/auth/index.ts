@@ -70,5 +70,11 @@ export function createAuthHttp(
 }
 export function createMailQuotaMaintenance(): () => Promise<number> {
   const store = createSqlRegistrationStore();
-  return () => store.removeExpiredEvents(systemClock.now());
+  return async () => {
+    const now = systemClock.now();
+    return (
+      (await store.removeExpiredEvents(now)) +
+      (await store.removeFinishedAttempts(now))
+    );
+  };
 }

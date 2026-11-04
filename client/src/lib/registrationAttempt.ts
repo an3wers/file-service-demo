@@ -84,7 +84,7 @@ export function writeStoredRegistration(state: StoredRegistration): void {
   try {
     sessionStorage.setItem(ATTEMPT_KEY, JSON.stringify(state));
   } catch {
-    return;
+    // Хранилище недоступно: попытка просто не переживёт обновление.
   }
 }
 
@@ -92,6 +92,6 @@ export function clearStoredRegistration(): void {
   try {
     sessionStorage.removeItem(ATTEMPT_KEY);
   } catch {
-    return;
+    // Хранилище недоступно: удалять нечего.
   }
 }
