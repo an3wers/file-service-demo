@@ -127,6 +127,21 @@ it("повтор погашенного кода не создаёт ещё од
   expect(again.headers.get("set-cookie")).toBeNull();
 });
 
+it("после потерянного ответа проверки cookie восстанавливает сессию, а повтор погашенного кода новую не создаёт", async () => {
+  const h = await start();
+  const attempt = await h.register();
+  const code = h.sentCode();
+  const first = await h.verify(attempt.attemptToken, code);
+  const cookie = first.headers.get("set-cookie")!.split(";")[0]!;
+  const again = await h.verify(attempt.attemptToken, code);
+  expect(again.status).toBe(410);
+  expect(again.headers.get("set-cookie")).toBeNull();
+  const refreshed = await h.post("refresh", {}, cookie);
+  expect(refreshed.status).toBe(200);
+  expect((await refreshed.json()).user.email).toBe(EMAIL);
+  expect((await h.post("refresh", {})).status).toBe(401);
+});
+
 it("код без секрета попытки, чужой секрет и чужой код не дают вход", async () => {
   const h = await start();
   const mine = await h.register();

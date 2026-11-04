@@ -1,10 +1,27 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, ref, useTemplateRef } from "vue";
+import {
+  computed,
+  nextTick,
+  onBeforeUnmount,
+  ref,
+  useTemplateRef,
+  watch,
+} from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { EyeIcon, EyeOffIcon, HardDriveIcon } from "@lucide/vue";
 import type { RegistrationAttempt } from "@/api/generated";
 import { register } from "@/api/auth";
-import { isApiError, serverNow } from "@/api/client";
+import {
+  isApiError,
+  restoreServerClockOffset,
+  serverClockOffsetMs,
+  serverNow,
+} from "@/api/client";
+import {
+  clearStoredRegistration,
+  readStoredRegistration,
+  writeStoredRegistration,
+} from "@/lib/registrationAttempt";
 import { readSharedAuth } from "@/api/sharedAuth";
 import { useAuth } from "@/composables/useAuth";
 import { safeReturnTo } from "@/lib/returnTo";
@@ -36,14 +53,33 @@ import { errorMessage } from "@/lib/errors";
 const auth = useAuth();
 const router = useRouter();
 const route = useRoute();
-const ATTEMPT_KEY = "file-service-registration-attempt";
 const attempt = ref<RegistrationAttempt | null>(null);
 const submittedEmail = ref("");
 const code = ref("");
 const remainingAttempts = ref<number | null>(null);
 const ended = ref(false);
-const now = ref(serverNow());
 let generation = readSharedAuth().generation;
+
+// Восстановление выполняется до первого чтения серверного времени: смещение
+// часов устройства переживает обновление, а сроки попытки остаются прежними.
+function restoreAttempt() {
+  const stored = readStoredRegistration();
+  if (!stored) return;
+  restoreServerClockOffset(stored.clockOffset);
+  submittedEmail.value = stored.email;
+  const shared = readSharedAuth();
+  const sameLogin = !shared.signedIn && shared.generation === stored.generation;
+  if (!sameLogin || Date.parse(stored.attempt.attemptExpiresAt) <= serverNow()) {
+    ended.value = true;
+    clearStoredRegistration();
+    return;
+  }
+  generation = stored.generation;
+  attempt.value = stored.attempt;
+  remainingAttempts.value = stored.remainingAttempts;
+}
+restoreAttempt();
+const now = ref(serverNow());
 const secondsLeft = (until: string | undefined) =>
   Math.max(0, Math.ceil((Date.parse(until ?? "") - now.value) / 1000));
 const codeRemaining = computed(() => secondsLeft(attempt.value?.codeExpiresAt));
@@ -55,28 +91,33 @@ const clock = setInterval(() => {
 }, 1000);
 
 function saveAttempt() {
-  try {
-    sessionStorage.setItem(
-      ATTEMPT_KEY,
-      JSON.stringify({
-        attempt: attempt.value,
-        email: submittedEmail.value,
-        generation,
-        remainingAttempts: remainingAttempts.value,
-      }),
-    );
-  } catch {
-    return;
-  }
+  if (!attempt.value) return;
+  writeStoredRegistration({
+    attempt: attempt.value,
+    email: submittedEmail.value,
+    generation,
+    remainingAttempts: remainingAttempts.value,
+    clockOffset: serverClockOffsetMs(),
+  });
 }
 function forgetAttempt() {
   code.value = "";
-  try {
-    sessionStorage.removeItem(ATTEMPT_KEY);
-  } catch {
-    return;
-  }
+  clearStoredRegistration();
 }
+function endAttempt() {
+  ended.value = true;
+  attempt.value = null;
+  forgetAttempt();
+}
+watch(attemptRemaining, (left) => {
+  if (attempt.value && left === 0) endAttempt();
+});
+watch(codeRemaining, (left) => {
+  if (attempt.value && left === 0) code.value = "";
+});
+const stopWatchingSignIn = auth.onSignInElsewhere(() => {
+  if (attempt.value) endAttempt();
+});
 function onCodeInput(event: Event) {
   const input = event.target as HTMLInputElement;
   code.value = input.value.replace(/\D/g, "").slice(0, 6);
@@ -187,7 +228,23 @@ async function verify() {
   } catch (error) {
     if (controller.signal.aborted) return;
     failure.value = errorMessage(error, "Не удалось подтвердить код");
-    if (isApiError(error)) {
+    if (isApiError(error) && (error.status === 0 || error.status >= 500)) {
+      // Ответ мог потеряться уже после создания сессии, поэтому сначала
+      // пробуем получить её по refresh-cookie; код при этом не считаем неверным.
+      const recovered = await auth.recoverRegistrationSession(generation);
+      if (controller.signal.aborted) return;
+      if (recovered === "restored") {
+        failure.value = "";
+        attempt.value = null;
+        forgetAttempt();
+        await router.push(safeReturnTo(route.query.returnTo));
+        return;
+      }
+      if (recovered === "absent") {
+        failure.value = "";
+        endAttempt();
+      }
+    } else if (isApiError(error)) {
       const details = error.details as
         { remainingAttempts?: number; retryAfterSeconds?: number } | undefined;
       if (details?.remainingAttempts !== undefined) {
@@ -227,6 +284,7 @@ onBeforeUnmount(() => {
   controller.abort();
   clearInterval(timer);
   clearInterval(clock);
+  stopWatchingSignIn();
 });
 </script>
 
@@ -256,6 +314,12 @@ onBeforeUnmount(() => {
               >.
             </p>
             <p>Если в письме есть код подтверждения, введите его ниже.</p>
+            <p v-if="ended" role="status">
+              Попытка завершена. Войдите или восстановите доступ.
+            </p>
+            <p v-else-if="attempt && codeRemaining === 0" role="status">
+              Срок действия кода истёк. Войдите или восстановите доступ.
+            </p>
             <form novalidate :aria-busy="pending" @submit.prevent="verify">
               <FieldGroup>
                 <Field>
@@ -398,6 +462,9 @@ onBeforeUnmount(() => {
               </Button>
               <a href="/login" class="text-center text-sm underline"
                 >Перейти ко входу</a
+              >
+              <a href="/password-reset" class="text-center text-sm underline"
+                >Восстановить доступ</a
               >
             </FieldGroup>
           </form>
