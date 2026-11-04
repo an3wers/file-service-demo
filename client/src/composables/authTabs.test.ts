@@ -541,4 +541,94 @@ describe("личное состояние вкладок при смене по�
       expect(tab.browser.searchInput.value).toBe("x-report");
     }
   });
+
+  describe("потерянный ответ проверки регистрации", () => {
+    async function bootSignedOut(
+      browser: ReturnType<typeof createBrowser>,
+    ) {
+      const a = await browser.openTab();
+      const b = await browser.openTab();
+      for (const tab of [a, b]) {
+        const boot = tab.auth.ensureSession();
+        (await browser.next("/api/auth/refresh")).deliver({
+          status: 401,
+          body: { error: { code: "SESSION_EXPIRED", message: "" } },
+          setCookie: null,
+        });
+        await boot;
+      }
+      return { a, b, generation: a.shared.readSharedAuth().generation };
+    }
+
+    it("refresh-cookie возвращает созданную сессию и вход распространяется на другую вкладку", async () => {
+      const browser = createBrowser();
+      const { a, b, generation } = await bootSignedOut(browser);
+
+      const verify = a.auth.verifyRegistration("attempt-x", "012345", generation);
+      const lost = await browser.next("/api/auth/registration/verify");
+      browser.jar.cookie = "refresh=x";
+      lost.deliver({ status: 502, body: {}, setCookie: undefined });
+      await expect(verify).rejects.toMatchObject({ status: 502 });
+
+      const recovery = a.auth.recoverRegistrationSession(generation);
+      const refresh = await browser.next("/api/auth/refresh");
+      expect(refresh.cookie).toBe("refresh=x");
+      refresh.deliver({
+        status: 200,
+        body: session(USER_X),
+        setCookie: "refresh=x",
+      });
+      await expect(recovery).resolves.toBe("restored");
+      await settle();
+      const syncB = await browser.next("/api/auth/refresh");
+      syncB.deliver({
+        status: 200,
+        body: session(USER_X),
+        setCookie: "refresh=x",
+      });
+      await settle();
+      expect(a.auth.user.value).toEqual(USER_X);
+      expect(b.auth.user.value).toEqual(USER_X);
+    });
+
+    it("без cookie восстановление сообщает об отсутствии сессии", async () => {
+      const browser = createBrowser();
+      const { a, generation } = await bootSignedOut(browser);
+
+      const recovery = a.auth.recoverRegistrationSession(generation);
+      (await browser.next("/api/auth/refresh")).deliver({
+        status: 401,
+        body: { error: { code: "SESSION_EXPIRED", message: "" } },
+        setCookie: null,
+      });
+      await expect(recovery).resolves.toBe("absent");
+      expect(a.auth.user.value).toBeNull();
+    });
+
+    it("после входа в другой вкладке запоздалое восстановление не меняет аккаунт и не шлёт запросов", async () => {
+      const browser = createBrowser();
+      const { a, b, generation } = await bootSignedOut(browser);
+
+      const login = b.auth.verifyLogin("attempt-y", "654321", generation);
+      (await browser.next("/api/auth/login/verify")).deliver({
+        status: 200,
+        body: session(USER_Y),
+        setCookie: "refresh=y",
+      });
+      await login;
+      await settle();
+      browser.pending[0]?.deliver({
+        status: 200,
+        body: session(USER_Y),
+        setCookie: "refresh=y",
+      });
+      await settle();
+
+      await expect(a.auth.recoverRegistrationSession(generation)).resolves.toBe(
+        "absent",
+      );
+      expect(browser.pending).toEqual([]);
+      expect(a.auth.user.value).toEqual(USER_Y);
+    });
+  });
 });

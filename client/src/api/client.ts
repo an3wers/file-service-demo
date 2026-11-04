@@ -148,6 +148,14 @@ export function serverNow(): number {
   return Date.now() + serverClockOffset;
 }
 
+export function serverClockOffsetMs(): number {
+  return serverClockOffset;
+}
+
+export function restoreServerClockOffset(offset: number): void {
+  if (Number.isFinite(offset)) serverClockOffset = offset;
+}
+
 export async function sendRequest<T>(
   path: string,
   init: RequestInit = {},

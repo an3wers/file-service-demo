@@ -158,6 +158,25 @@ export function createAuth(channel: AuthChannel | null) {
     channel?.postMessage({ type: "login" });
   }
 
+  async function recoverRegistrationSession(
+    generation: number,
+  ): Promise<"restored" | "absent" | "unavailable"> {
+    if (readSharedAuth().generation !== generation) return "absent";
+    try {
+      await renewSession();
+    } catch (error) {
+      if (
+        isApiError(error) &&
+        (error.status === 401 || error.code === "SESSION_CHANGED")
+      )
+        return "absent";
+      return "unavailable";
+    }
+    status.value = "ready";
+    channel?.postMessage({ type: "login" });
+    return "restored";
+  }
+
   async function logout(): Promise<void> {
     try {
       await authApi.logout();
@@ -208,6 +227,7 @@ export function createAuth(channel: AuthChannel | null) {
     ensureSession,
     verifyLogin,
     verifyRegistration,
+    recoverRegistrationSession,
     logout,
     renew,
     onSignOut,
