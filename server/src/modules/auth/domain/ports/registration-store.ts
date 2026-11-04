@@ -7,6 +7,8 @@ export interface RegistrationRecord {
   expiresAt: Date;
 }
 
+export type SaveOutcome = "created" | "active" | "inactive";
+
 export interface MailLimit {
   windowMs: number;
   maximum: number;
@@ -19,7 +21,7 @@ export interface RegistrationStore {
     now: Date,
     deadline: Date,
   ): Promise<number>;
-  save(record: RegistrationRecord, deadline: Date): Promise<boolean>;
+  save(record: RegistrationRecord, deadline: Date): Promise<SaveOutcome>;
   requestActivation(
     email: string,
     tokenHash: string,

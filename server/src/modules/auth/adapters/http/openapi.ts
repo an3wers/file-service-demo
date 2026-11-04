@@ -165,7 +165,7 @@ export const authPaths: ZodOpenApiPathsObject = {
       operationId: "register",
       security: [],
       description:
-        "Нейтральный результат через 15 секунд; принятие SMTP не означает доставку. Повтор не меняет имя и пароль.",
+        "Нейтральный результат через 15 секунд; принятие SMTP не означает доставку. Для нового, активного и неактивного email ответ одинаков; владельцу существующего адреса вместо ссылки активации уходит письмо с инструкциями входа и восстановления. Повтор не меняет имя, пароль, состояние, ссылки и сессии.",
       requestParams: { header: z.object({ Origin: z.string() }) },
       requestBody: { required: true, content: json(registrationBodySchema) },
       responses: {

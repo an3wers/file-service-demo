@@ -44,6 +44,7 @@ it("показывает ожидание, нейтральный результ
   );
   expect(wrapper.find("input[name=password]").exists()).toBe(false);
   expect(wrapper.find("a[href='/login']").exists()).toBe(true);
+  expect(wrapper.find("a[href='/password-reset']").exists()).toBe(true);
   await wrapper.get("button[data-change-email]").trigger("click");
   expect(
     wrapper.get<HTMLInputElement>("input[name=password]").element.value,

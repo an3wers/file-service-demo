@@ -28,7 +28,7 @@ async function start(
   let now = Date.parse("2026-01-01T00:00:00Z");
   const store: RegistrationStore = {
     consume: vi.fn().mockResolvedValue(0),
-    save: vi.fn().mockResolvedValue(true),
+    save: vi.fn().mockResolvedValue("created"),
     requestActivation: vi.fn().mockResolvedValue(true),
     confirmActivation: vi.fn().mockResolvedValue(true),
     requestPasswordReset: vi.fn().mockResolvedValue(true),
@@ -129,7 +129,7 @@ it("даёт одинаковый нейтральный ответ при су�
   const h = await start();
   const replies: unknown[] = [];
   for (const outcome of ["accepted", "rejected", "unknown", "active"]) {
-    if (outcome === "active") vi.mocked(h.store.save).mockResolvedValue(false);
+    if (outcome === "active") vi.mocked(h.store.save).mockResolvedValue("active");
     else if (outcome !== "accepted")
       h.sendEmail.mockRejectedValue(
         new Error("private@example.com secret smtp details"),
@@ -145,14 +145,61 @@ it("даёт одинаковый нейтральный ответ при су�
       (reply) => JSON.stringify(reply) === JSON.stringify(replies[0]),
     ),
   ).toBe(true);
-  expect(h.sendEmail).toHaveBeenCalledTimes(3);
+  expect(h.sendEmail).toHaveBeenCalledTimes(4);
+});
+
+it("существующему активному email отправляет инструкции без кода, ссылок активации и восстановления", async () => {
+  const h = await start();
+  vi.mocked(h.store.save).mockResolvedValue("active");
+  const response = await h.request();
+  expect(response.status).toBe(202);
+  expect(h.sendEmail).toHaveBeenCalledTimes(1);
+  const message = h.sendEmail.mock.calls[0]![0];
+  expect(message.to).toBe("user.name+tag@example.com");
+  expect(message.text).toContain("уже зарегистрирован аккаунт");
+  expect(message.text).toContain("https://files.example.com/login");
+  expect(message.text).toContain("https://files.example.com/password-reset");
+  expect(message.text).toContain("можете проигнорировать");
+  expect(message.text).not.toMatch(/token=|activation|\d{6}/);
+  expect(message.text).not.toContain("пароль😀");
+  expect(h.store.requestPasswordReset).not.toHaveBeenCalled();
+  expect(h.store.requestActivation).not.toHaveBeenCalled();
+});
+
+it("существующему неподтверждённому email рекомендует восстановление с собственным паролем", async () => {
+  const h = await start();
+  vi.mocked(h.store.save).mockResolvedValue("inactive");
+  await h.request();
+  const message = h.sendEmail.mock.calls[0]![0];
+  expect(message.text).toContain("не завершили регистрацию");
+  expect(message.text).toContain("собственный пароль");
+  expect(message.text).not.toMatch(/token=|\/activation/);
+});
+
+it("ответы для нового, активного и неактивного email неразличимы", async () => {
+  const h = await start();
+  const seen: string[] = [];
+  for (const outcome of ["created", "active", "inactive"] as const) {
+    vi.mocked(h.store.save).mockResolvedValue(outcome);
+    const before = h.elapsed();
+    const response = await h.request();
+    expect(h.elapsed() - before).toBe(15000);
+    seen.push(
+      JSON.stringify([
+        response.status,
+        await response.json(),
+        response.headers.get("cache-control"),
+      ]),
+    );
+  }
+  expect(new Set(seen).size).toBe(1);
 });
 
 it("сохранение и SMTP расходуют общий бюджет вместо добавления нового ожидания", async () => {
   const h = await start();
   vi.mocked(h.store.save).mockImplementation(async () => {
     h.advance(4000);
-    return true;
+    return "created";
   });
   h.sendEmail.mockImplementation(async () => {
     h.advance(7000);
@@ -331,7 +378,8 @@ it("не доверяет произвольному X-Forwarded-For", async () 
 it("под параллельной нагрузкой реальные нейтральные ответы ждут 15 секунд для всех исходов", async () => {
   const h = await start({ realTime: true });
   vi.mocked(h.store.save).mockImplementation(
-    async (record) => !record.email.startsWith("active"),
+    async (record) =>
+      record.email.startsWith("active") ? "active" : "created",
   );
   h.sendEmail.mockImplementation(async (message) => {
     if (message.to.startsWith("timeout")) return new Promise(() => {});
@@ -357,14 +405,14 @@ it("под параллельной нагрузкой реальные нейт
   expect(Math.min(...timings)).toBeGreaterThanOrEqual(15000);
   expect(Math.max(...timings)).toBeLessThan(18000);
   expect(Math.max(...timings) - Math.min(...timings)).toBeLessThan(1000);
-  expect(h.sendEmail).toHaveBeenCalledTimes(9);
+  expect(h.sendEmail).toHaveBeenCalledTimes(12);
 }, 20000);
 
 it("после исчерпания бюджета сохранением не начинает SMTP и не удаляет состояние", async () => {
   const h = await start();
   vi.mocked(h.store.save).mockImplementation(async () => {
     h.advance(15000);
-    return true;
+    return "created";
   });
   const response = await h.request();
   expect(response.status).toBe(503);
@@ -435,16 +483,16 @@ it("не создаёт пользователя после истечения �
 
 it("неизвестный результат записи даёт 503 и позднее подтверждение не запускает SMTP", async () => {
   const h = await start({ realTime: true, deadlineMs: 100 });
-  let finish!: (send: boolean) => void;
+  let finish!: (send: "created") => void;
   vi.mocked(h.store.save).mockImplementation(
-    () => new Promise<boolean>((resolve) => (finish = resolve)),
+    () => new Promise<"created">((resolve) => (finish = resolve)),
   );
   const started = performance.now();
   const response = await h.request();
   expect(response.status).toBe(503);
   expect((await response.json()).error.code).toBe("SERVICE_UNAVAILABLE");
   expect(performance.now() - started).toBeLessThan(500);
-  finish(true);
+  finish("created");
   await wait(20);
   expect(h.store.save).toHaveBeenCalledTimes(1);
   expect(h.sendEmail).not.toHaveBeenCalled();

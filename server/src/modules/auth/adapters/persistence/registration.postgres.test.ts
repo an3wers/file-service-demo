@@ -91,15 +91,56 @@ it("новая пара пользователя и секрета откаты�
   ]);
 });
 
-it("активный пользователь не получает новую активацию", async () => {
+it("активный пользователь не получает новую активацию и сообщает конфликт", async () => {
   const store = createSqlRegistrationStore();
   const first = record();
-  await store.save(first, deadline());
+  expect(await store.save(first, deadline())).toBe("created");
   await pool.query("update users set state = 'active'");
-  expect(await store.save(record(), deadline())).toBe(false);
+  expect(await store.save(record(), deadline())).toBe("active");
   expect(
     (await pool.query("select token_hash from auth_secrets")).rows,
   ).toEqual([{ token_hash: first.tokenHash }]);
+});
+
+it("неактивный пользователь при повторной регистрации не меняет данные, ссылку и сессии", async () => {
+  const store = createSqlRegistrationStore();
+  const first = record();
+  await store.save(first, deadline());
+  const before = await pool.query(
+    "select id, name, email, password_hash, state, token_version from users",
+  );
+  const secrets = await pool.query("select * from auth_secrets");
+  expect(
+    await store.save(
+      { ...record(), name: "Другое", passwordHash: "other" },
+      deadline(),
+    ),
+  ).toBe("inactive");
+  expect(
+    (
+      await pool.query(
+        "select id, name, email, password_hash, state, token_version from users",
+      )
+    ).rows,
+  ).toEqual(before.rows);
+  expect((await pool.query("select * from auth_secrets")).rows).toEqual(
+    secrets.rows,
+  );
+  expect((await pool.query("select * from auth_sessions")).rows).toEqual([]);
+});
+
+it("при гонке один запрос создаёт пользователя, остальные получают конфликт", async () => {
+  const outcomes = await Promise.all(
+    Array.from({ length: 20 }, () =>
+      createSqlRegistrationStore().save(record(), deadline()),
+    ),
+  );
+  expect(outcomes.filter((outcome) => outcome === "created")).toHaveLength(1);
+  expect(outcomes.filter((outcome) => outcome === "inactive")).toHaveLength(19);
+  expect((await pool.query("select id from users")).rows).toHaveLength(1);
+  expect((await pool.query("select user_id from auth_secrets")).rows).toHaveLength(
+    1,
+  );
 });
 
 it("часовая квота исключает левую границу и переживает пересоздание адаптера", async () => {
@@ -374,7 +415,7 @@ it("ожидание COMMIT ограничено сроком и позднее 
     { user_id: saved.id },
   ]);
   expect(await createSqlRegistrationStore().save(record(), deadline())).toBe(
-    true,
+    "inactive",
   );
 });
 

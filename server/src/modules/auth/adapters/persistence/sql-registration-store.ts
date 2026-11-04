@@ -112,21 +112,22 @@ export function createSqlRegistrationStore(
       ),
     save: (record, deadline) =>
       transaction(deadline, async (client) => {
-        await client.query(
-          "insert into users (id, login, name, email, password_hash, state) values ($1::uuid, $1::text, $2, $3, $4, 'inactive') on conflict (email) do nothing",
+        const inserted = await client.query(
+          "insert into users (id, login, name, email, password_hash, state) values ($1::uuid, $1::text, $2, $3, $4, 'inactive') on conflict (email) do nothing returning id",
           [record.id, record.name, record.email, record.passwordHash],
         );
-        const { rows } = await client.query<{ id: string; state: string }>(
-          "select id, state from users where email = $1 for update",
+        if (inserted.rowCount) {
+          await client.query(
+            "insert into auth_secrets (user_id, purpose, token_hash, expires_at) values ($1, 'activation', $2, $3)",
+            [record.id, record.tokenHash, record.expiresAt],
+          );
+          return "created";
+        }
+        const { rows } = await client.query<{ state: "active" | "inactive" }>(
+          "select state from users where email = $1",
           [record.email],
         );
-        const user = rows[0]!;
-        if (user.state === "active") return false;
-        await client.query(
-          "insert into auth_secrets (user_id, purpose, token_hash, expires_at) values ($1, 'activation', $2, $3) on conflict (user_id, purpose) do update set token_hash = excluded.token_hash, expires_at = excluded.expires_at",
-          [user.id, record.tokenHash, record.expiresAt],
-        );
-        return true;
+        return rows[0]!.state;
       }),
   };
 }

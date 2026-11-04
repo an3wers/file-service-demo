@@ -149,6 +149,9 @@ onBeforeUnmount(() => {
             <a href="/login" class="block text-sm underline"
               >Перейти ко входу</a
             >
+            <a href="/password-reset" class="block text-sm underline"
+              >Восстановить доступ</a
+            >
           </div>
           <form
             v-else

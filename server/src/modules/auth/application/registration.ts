@@ -46,6 +46,13 @@ const LINKS = {
   },
 } as const;
 
+const ACCESS_INSTRUCTIONS = {
+  active: (login: string, reset: string) =>
+    `На этот адрес уже зарегистрирован аккаунт.\n\nЧтобы продолжить, войдите в него: ${login}\nЕсли не помните пароль, восстановите доступ: ${reset}\n\nЕсли вы не начинали регистрацию, можете проигнорировать письмо. Этот запрос не изменил данные вашего аккаунта.`,
+  inactive: (login: string, reset: string) =>
+    `На этот адрес уже зарегистрирован аккаунт.\n\nЕсли вы не завершили регистрацию, восстановите доступ и задайте собственный пароль: ${reset}\nЕсли аккаунт уже подтверждён, войдите в него: ${login}\n\nЕсли вы не начинали регистрацию, можете проигнорировать письмо. Этот запрос не изменил данные вашего аккаунта.`,
+} as const;
+
 export const REGISTRATION_MESSAGE =
   "Если требуется письмо, инструкции придут на email";
 
@@ -136,7 +143,10 @@ export function createRegistration({
   async function sendLink(
     purpose: LinkPurpose,
     email: string,
-    save: (tokenHash: string, expiresAt: Date) => Promise<boolean>,
+    save: (
+      tokenHash: string,
+      expiresAt: Date,
+    ) => Promise<boolean | "active" | "inactive">,
     deadline: Date,
     mailRequestedAt: Date,
     log: MailLog,
@@ -147,7 +157,21 @@ export function createRegistration({
       const send = await withinDeadline(deadline, () =>
         save(digest(token), new Date(clock.now().getTime() + link.ttlMs)),
       );
-      if (send) {
+      if (send === "active" || send === "inactive") {
+        await deliver(
+          {
+            to: email,
+            subject: "Продолжение регистрации",
+            text: ACCESS_INSTRUCTIONS[send](
+              new URL("/login", publicUrl).href,
+              new URL("/password-reset", publicUrl).href,
+            ),
+          },
+          deadline,
+          "registration-instructions",
+          log,
+        );
+      } else if (send) {
         const url = new URL(link.path, publicUrl);
         url.hash = `token=${token}`;
         await deliver(
@@ -293,8 +317,8 @@ export function createRegistration({
         return await sendLink(
           "activation",
           input.email,
-          (tokenHash, expiresAt) =>
-            store.save(
+          async (tokenHash, expiresAt) => {
+            const outcome = await store.save(
               {
                 id: randomUUID(),
                 name: input.name,
@@ -304,7 +328,9 @@ export function createRegistration({
                 expiresAt,
               },
               deadline,
-            ),
+            );
+            return outcome === "created" ? true : outcome;
+          },
           deadline,
           mailRequestedAt,
           log,
