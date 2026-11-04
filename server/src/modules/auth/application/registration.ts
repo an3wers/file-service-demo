@@ -10,8 +10,11 @@ import type { PasswordHasher } from "../domain/ports/password-hasher.js";
 import type {
   MailLimit,
   RegistrationStore,
+  SaveOutcome,
 } from "../domain/ports/registration-store.js";
+import { RegistrationAttemptInvalidError } from "../domain/errors.js";
 import {
+  MailRateLimitedError,
   ActivationLinkInvalidError,
   PasswordResetLinkInvalidError,
   RegistrationUnavailableError,
@@ -60,6 +63,11 @@ const ACCESS_INSTRUCTIONS = {
 
 export const REGISTRATION_MESSAGE =
   "Если требуется письмо, инструкции придут на email";
+
+const EMAIL_MAIL_LIMITS: readonly MailLimit[] = [
+  { windowMs: 60000, maximum: 1 },
+  { windowMs: 3600000, maximum: 5 },
+];
 
 export function createRegistration({
   store,
@@ -185,6 +193,23 @@ export function createRegistration({
       ),
     };
   }
+  const outcomeMail = (outcome: SaveOutcome, email: string, code: string) =>
+    outcome === "created"
+      ? {
+          to: email,
+          subject: "Код подтверждения",
+          text: `Код подтверждения: ${code}\nКод действует 5 минут.`,
+        }
+      : {
+          to: email,
+          subject: "Продолжение регистрации",
+          text: ACCESS_INSTRUCTIONS[outcome](
+            new URL("/login", publicUrl).href,
+            new URL("/password-reset", publicUrl).href,
+          ),
+        };
+  const outcomePurpose = (outcome: SaveOutcome) =>
+    outcome === "created" ? "registration-code" : "registration-instructions";
   return {
     deadline: () => new Date(clock.now().getTime() + deadlineMs),
     withinDeadline,
@@ -201,14 +226,7 @@ export function createRegistration({
       deadline: Date,
       purpose: LinkPurpose = "activation",
     ) =>
-      consume(
-        `mail:${purpose}:${digest(email)}`,
-        [
-          { windowMs: 60000, maximum: 1 },
-          { windowMs: 3600000, maximum: 5 },
-        ],
-        deadline,
-      ),
+      consume(`mail:${purpose}:${digest(email)}`, EMAIL_MAIL_LIMITS, deadline),
     consumeConfirmationIp: async (
       ip: string,
       deadline: Date,
@@ -293,6 +311,59 @@ export function createRegistration({
       if (!confirmed) throw new ActivationLinkInvalidError();
       return { message: "Email подтверждён. Теперь можно войти" as const };
     },
+    async resendRegistration(
+      attemptToken: string,
+      deadline: Date,
+      log: MailLog,
+    ) {
+      const now = clock.now();
+      const requested = now.getTime();
+      const tokenHash = registrationAttemptDigest(attemptToken);
+      const code = randomInt(1000000).toString().padStart(6, "0");
+      let result;
+      try {
+        result = await withinDeadline(deadline, () =>
+          store.resendRegistration(
+            tokenHash,
+            {
+              codeHash: registrationCodeDigest(codeSecret, tokenHash, code),
+              codeExpiresAt: new Date(requested + 300000),
+              resendAvailableAt: new Date(requested + 60000),
+            },
+            {
+              key: (email) => `mail:activation:${digest(email)}`,
+              limits: EMAIL_MAIL_LIMITS,
+            },
+            now,
+            deadline,
+          ),
+        );
+      } catch {
+        throw new RegistrationUnavailableError();
+      }
+      if (result.status === "unavailable")
+        throw new RegistrationAttemptInvalidError();
+      if (result.status === "limited")
+        throw new MailRateLimitedError(result.retryAfterSeconds);
+      await deliver(
+        outcomeMail(result.outcome, result.email, code),
+        deadline,
+        outcomePurpose(result.outcome),
+        log,
+      );
+      while (clock.now() < deadline)
+        await wait(deadline.getTime() - clock.now().getTime());
+      return {
+        message: REGISTRATION_MESSAGE,
+        retryAfterSeconds: Math.max(
+          0,
+          Math.ceil((requested + 60000 - clock.now().getTime()) / 1000),
+        ),
+        attemptExpiresAt: result.expiresAt.toISOString(),
+        codeExpiresAt: result.codeExpiresAt.toISOString(),
+        resendAvailableAt: result.resendAvailableAt.toISOString(),
+      };
+    },
     async register(
       input: RegistrationInput,
       deadline: Date,
@@ -327,24 +398,9 @@ export function createRegistration({
           ),
         );
         await deliver(
-          outcome === "created"
-            ? {
-                to: input.email,
-                subject: "Код подтверждения",
-                text: `Код подтверждения: ${code}\nКод действует 5 минут.`,
-              }
-            : {
-                to: input.email,
-                subject: "Продолжение регистрации",
-                text: ACCESS_INSTRUCTIONS[outcome](
-                  new URL("/login", publicUrl).href,
-                  new URL("/password-reset", publicUrl).href,
-                ),
-              },
+          outcomeMail(outcome, input.email, code),
           deadline,
-          outcome === "created"
-            ? "registration-code"
-            : "registration-instructions",
+          outcomePurpose(outcome),
           log,
         );
       } catch {

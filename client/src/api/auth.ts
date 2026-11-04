@@ -3,6 +3,7 @@ import type {
   LoginAttempt,
   LoginResend,
   RegistrationAttempt,
+  RegistrationResend,
   RegistrationResult,
   RegisterData,
   RequestActivationData,
@@ -90,6 +91,18 @@ export function register(
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(input),
+    signal,
+  });
+}
+
+export function resendRegistration(
+  attemptToken: string,
+  signal: AbortSignal,
+): Promise<RegistrationResend> {
+  return sendRequest<RegistrationResend>("/auth/registration/resend", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ attemptToken }),
     signal,
   });
 }

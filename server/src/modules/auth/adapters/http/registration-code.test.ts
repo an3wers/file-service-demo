@@ -86,7 +86,22 @@ async function start() {
   const sentCode = () => auth.code();
   const verify = (attemptToken: string, code: string) =>
     post("registration/verify", { attemptToken, code });
-  return { auth, post, register, sentCode, verify };
+  const resend = (attemptToken: string) =>
+    post("registration/resend", { attemptToken });
+  const untilResendAvailable = (attempt: { resendAvailableAt: string }) =>
+    auth.clock.advance(
+      (Date.parse(attempt.resendAvailableAt) - auth.clock.now().getTime()) /
+        3600000,
+    );
+  return {
+    auth,
+    post,
+    register,
+    sentCode,
+    verify,
+    resend,
+    untilResendAvailable,
+  };
 }
 
 const wrongCode = (code: string) => (code === "000000" ? "111111" : "000000");
@@ -293,4 +308,185 @@ it("публичные ответы нового и существующего e
   expect(span(existing)).toEqual(span(fresh));
   expect(existing.attemptToken).not.toBe(fresh.attemptToken);
   expect(existing.attemptToken).toHaveLength(fresh.attemptToken.length);
+});
+
+it("повтор раньше срока отклоняется с серверным ожиданием и оставляет прежний код действующим", async () => {
+  const h = await start();
+  const attempt = await h.register();
+  const code = h.sentCode();
+  const early = await h.resend(attempt.attemptToken);
+  expect(early.status).toBe(429);
+  const retry = (await early.json()).error.details.retryAfterSeconds;
+  expect(retry).toBeGreaterThan(0);
+  expect(retry).toBeLessThanOrEqual(60);
+  expect(early.headers.get("retry-after")).toBe(String(retry));
+  expect(h.auth.sendEmail).toHaveBeenCalledTimes(1);
+  expect((await h.verify(attempt.attemptToken, code)).status).toBe(200);
+});
+
+it("повтор для новой регистрации заменяет код, не двигает 15 минут и не сбрасывает неверные проверки", async () => {
+  const h = await start();
+  const attempt = await h.register();
+  const first = h.sentCode();
+  expect((await h.verify(attempt.attemptToken, wrongCode(first))).status).toBe(
+    400,
+  );
+  h.untilResendAvailable(attempt);
+  const response = await h.resend(attempt.attemptToken);
+  expect(response.status).toBe(200);
+  const body = await response.json();
+  expect(Object.keys(body).sort()).toEqual([
+    "attemptExpiresAt",
+    "codeExpiresAt",
+    "message",
+    "resendAvailableAt",
+    "retryAfterSeconds",
+  ]);
+  expect(body.attemptExpiresAt).toBe(attempt.attemptExpiresAt);
+  expect(Date.parse(body.resendAvailableAt)).toBeGreaterThan(
+    Date.parse(attempt.resendAvailableAt),
+  );
+  expect(Date.parse(body.codeExpiresAt)).toBeGreaterThan(
+    Date.parse(attempt.codeExpiresAt),
+  );
+  expect(h.auth.sendEmail).toHaveBeenCalledTimes(2);
+  const second = h.sentCode();
+  expect(h.auth.sendEmail.mock.calls[1]![0].text).toContain(second);
+  const stale = first === second ? null : first;
+  if (stale) {
+    const old = await h.verify(attempt.attemptToken, stale);
+    expect(old.status).toBe(400);
+    expect((await old.json()).error.details.remainingAttempts).toBe(3);
+  }
+  const ok = await h.verify(attempt.attemptToken, second);
+  expect(ok.status).toBe(200);
+  expect((await ok.json()).user.email).toBe(EMAIL);
+});
+
+it("повтор для существующего email шлёт инструкции без кода и ссылок с токеном, не меняя аккаунт, с той же структурой ответа", async () => {
+  for (const state of ["active", "inactive"] as const) {
+    const h = await start();
+    await h.auth.seed(state);
+    const before = structuredClone([...h.auth.users.values()]);
+    const existing = await h.register();
+    const fresh = await h.register(OTHER_EMAIL);
+    h.untilResendAvailable(existing);
+    h.auth.sendEmail.mockClear();
+    const response = await h.resend(existing.attemptToken);
+    expect(response.status).toBe(200);
+    const freshResponse = await (async () => {
+      h.untilResendAvailable(fresh);
+      return h.resend(fresh.attemptToken);
+    })();
+    expect(freshResponse.status).toBe(200);
+    expect(Object.keys(await response.json()).sort()).toEqual(
+      Object.keys(await freshResponse.json()).sort(),
+    );
+    const mail = h.auth.sendEmail.mock.calls[0]![0];
+    expect(mail.to).toBe(EMAIL);
+    expect(mail.text).toContain("уже зарегистрирован");
+    expect(mail.text).not.toMatch(/[0-9]{6}/);
+    expect(mail.text).not.toContain(existing.attemptToken);
+    expect(h.auth.sendEmail.mock.calls[1]![0].text).toMatch(/[0-9]{6}/);
+    expect(
+      [...h.auth.users.values()].find((user) => user.email === EMAIL),
+    ).toEqual(before[0]);
+    const attemptAfter = await h.verify(
+      existing.attemptToken,
+      wrongCode("123456"),
+    );
+    expect(attemptAfter.status).toBe(400);
+    expect((await attemptAfter.json()).error.details.remainingAttempts).toBe(4);
+  }
+});
+
+it("повтор делит почтовые квоты адреса с регистрацией и активацией, лимит оставляет прежний код", async () => {
+  const h = await start();
+  const attempt = await h.register();
+  for (let index = 0; index < 3; index++) {
+    h.auth.clock.advance(61 / 3600);
+    expect((await h.resend(attempt.attemptToken)).status).toBe(200);
+  }
+  const lastCode = h.sentCode();
+  h.auth.clock.advance(61 / 3600);
+  expect((await h.post("activation/request", { email: EMAIL })).status).toBe(
+    202,
+  );
+  h.auth.clock.advance(61 / 3600);
+  const limited = await h.resend(attempt.attemptToken);
+  expect(limited.status).toBe(429);
+  expect(h.auth.sendEmail).toHaveBeenCalledTimes(4);
+  expect((await h.verify(attempt.attemptToken, lastCode)).status).toBe(200);
+});
+
+it("квота не зависит от наличия аккаунта: тот же отказ для нового и существующего email", async () => {
+  const outcomes: number[][] = [];
+  for (const seeded of [false, true]) {
+    const h = await start();
+    if (seeded) await h.auth.seed("active");
+    const attempt = await h.register();
+    const statuses: number[] = [];
+    for (let index = 0; index < 5; index++) {
+      h.auth.clock.advance(61 / 3600);
+      statuses.push((await h.resend(attempt.attemptToken)).status);
+    }
+    outcomes.push(statuses);
+  }
+  expect(outcomes[0]).toEqual(outcomes[1]);
+  expect(outcomes[0]).toEqual([200, 200, 200, 200, 429]);
+});
+
+it("неизвестный, погашенный и изменённый контексты дают одинаковый отказ без письма", async () => {
+  const h = await start();
+  const unknown = await h.resend("unknown-token");
+  expect(unknown.status).toBe(410);
+  const attempt = await h.register();
+  const code = h.sentCode();
+  expect((await h.verify(attempt.attemptToken, code)).status).toBe(200);
+  h.untilResendAvailable(attempt);
+  h.auth.sendEmail.mockClear();
+  expect((await h.resend(attempt.attemptToken)).status).toBe(410);
+
+  const other = await h.register(OTHER_EMAIL);
+  const user = [...h.auth.users.values()].find((u) => u.email === OTHER_EMAIL)!;
+  user.passwordHash = "scrypt$new";
+  user.tokenVersion++;
+  h.untilResendAvailable(other);
+  h.auth.sendEmail.mockClear();
+  expect((await h.resend(other.attemptToken)).status).toBe(410);
+  expect(h.auth.sendEmail).not.toHaveBeenCalled();
+
+  expect((await h.post("registration/resend", {})).status).toBe(422);
+});
+
+it("сбой SMTP после замены не возвращает прежний код и не раскрывается", async () => {
+  const h = await start();
+  const attempt = await h.register();
+  const first = h.sentCode();
+  h.untilResendAvailable(attempt);
+  h.auth.sendEmail.mockRejectedValueOnce(new Error("smtp down"));
+  const response = await h.resend(attempt.attemptToken);
+  expect(response.status).toBe(200);
+  expect(Object.keys(await response.json())).not.toContain("deliveryStatus");
+  const replaced =
+    h.auth.sendEmail.mock.calls[1]![0].text.match(/[0-9]{6}/)![0];
+  if (replaced !== first)
+    expect((await h.verify(attempt.attemptToken, first)).status).toBe(400);
+  expect((await h.verify(attempt.attemptToken, replaced)).status).toBe(200);
+});
+
+it("повтор после смены кода сохраняет возможность ввести новый код после завершения входа", async () => {
+  const h = await start();
+  const attempt = await h.register();
+  h.untilResendAvailable(attempt);
+  expect((await h.resend(attempt.attemptToken)).status).toBe(200);
+  const code = h.sentCode();
+  const done = await h.verify(attempt.attemptToken, code);
+  expect(done.status).toBe(200);
+  h.untilResendAvailable({
+    resendAvailableAt: new Date(
+      h.auth.clock.now().getTime() + 60000,
+    ).toISOString(),
+  });
+  expect((await h.resend(attempt.attemptToken)).status).toBe(410);
 });

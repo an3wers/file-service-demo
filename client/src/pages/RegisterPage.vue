@@ -3,7 +3,7 @@ import { computed, nextTick, onBeforeUnmount, ref, useTemplateRef } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { EyeIcon, EyeOffIcon, HardDriveIcon } from "@lucide/vue";
 import type { RegistrationAttempt } from "@/api/generated";
-import { register } from "@/api/auth";
+import { register, resendRegistration } from "@/api/auth";
 import { isApiError, serverNow } from "@/api/client";
 import { readSharedAuth } from "@/api/sharedAuth";
 import { useAuth } from "@/composables/useAuth";
@@ -212,6 +212,55 @@ async function verify() {
   }
 }
 
+const resendRemaining = computed(() =>
+  secondsLeft(attempt.value?.resendAvailableAt),
+);
+async function resend() {
+  if (!attempt.value || pending.value || resendRemaining.value > 0) return;
+  pending.value = true;
+  failure.value = "";
+  try {
+    const response = await resendRegistration(
+      attempt.value.attemptToken,
+      controller.signal,
+    );
+    if (controller.signal.aborted || !attempt.value) return;
+    now.value = serverNow();
+    attempt.value = { ...attempt.value, ...response };
+    code.value = "";
+    remainingAttempts.value = null;
+    saveAttempt();
+  } catch (error) {
+    if (controller.signal.aborted) return;
+    failure.value = errorMessage(error, "Не удалось запросить письмо");
+    if (isApiError(error)) {
+      const details = error.details as
+        { retryAfterSeconds?: number } | undefined;
+      if (error.code === "LOGIN_ATTEMPT_INVALID") {
+        ended.value = true;
+        forgetAttempt();
+      } else if (
+        error.status === 429 &&
+        details?.retryAfterSeconds &&
+        attempt.value
+      ) {
+        now.value = serverNow();
+        attempt.value = {
+          ...attempt.value,
+          resendAvailableAt: new Date(
+            now.value + details.retryAfterSeconds * 1000,
+          ).toISOString(),
+        };
+        saveAttempt();
+      }
+    }
+    await nextTick();
+    resultElement.value?.focus();
+  } finally {
+    pending.value = false;
+  }
+}
+
 async function changeEmail() {
   attempt.value = null;
   ended.value = false;
@@ -296,6 +345,17 @@ onBeforeUnmount(() => {
             <p class="text-sm text-muted-foreground">
               Письмо не пришло? Проверьте папку «Спам» или запросите его
               повторно после окончания ожидания.
+            </p>
+            <Button
+              type="button"
+              variant="outline"
+              data-action="resend"
+              :disabled="pending || ended || resendRemaining > 0"
+              @click="resend"
+              >Отправить письмо повторно</Button
+            >
+            <p v-if="!ended && resendRemaining > 0" role="status">
+              Письмо можно запросить повторно через {{ resendRemaining }} с
             </p>
             <Button
               type="button"

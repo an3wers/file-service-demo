@@ -326,3 +326,130 @@ it("уход отменяет запрос и новое открытие фор
   ).toBe("");
   reopened.unmount();
 });
+
+const resendBody = (now = Date.now()) => {
+  const { attemptToken: _secret, ...terms } = attempt(now);
+  return terms;
+};
+
+it("повтор письма недоступен до серверного срока, не запускается сам и показывает ожидание", async () => {
+  vi.useFakeTimers();
+  const fetch = vi.fn().mockResolvedValueOnce(json(attempt(), 202));
+  const wrapper = await toCodeScreen(fetch);
+  try {
+    const resend = () => wrapper.get("button[data-action=resend]");
+    expect(resend().attributes("disabled")).toBeDefined();
+    expect(wrapper.text()).toContain("Письмо можно запросить повторно через");
+    await vi.advanceTimersByTimeAsync(58000);
+    expect(resend().attributes("disabled")).toBeDefined();
+    await vi.advanceTimersByTimeAsync(3000);
+    expect(resend().attributes("disabled")).toBeUndefined();
+    await vi.advanceTimersByTimeAsync(120000);
+    expect(fetch).toHaveBeenCalledTimes(1);
+  } finally {
+    wrapper.unmount();
+  }
+});
+
+it("повтор письма отправляет секрет попытки, обновляет сроки, очищает код и сохраняет возможность войти", async () => {
+  vi.useFakeTimers();
+  const fetch = vi
+    .fn()
+    .mockResolvedValueOnce(json(attempt(), 202))
+    .mockImplementationOnce(async () =>
+      json(
+        {
+          ...resendBody(Date.now()),
+          attemptExpiresAt: attempt().attemptExpiresAt,
+        },
+        200,
+      ),
+    )
+    .mockResolvedValueOnce(
+      json({
+        accessToken: "access",
+        expiresIn: 900,
+        user: {
+          id: "00000000-0000-4000-8000-000000000001",
+          name: "Имя",
+          email: "user@example.com",
+        },
+      }),
+    );
+  const wrapper = await toCodeScreen(fetch);
+  try {
+    await wrapper.get("input[name=code]").setValue("111111");
+    await vi.advanceTimersByTimeAsync(61000);
+    await wrapper.get("button[data-action=resend]").trigger("click");
+    await flushPromises();
+    expect(fetch.mock.calls[1]![0]).toBe("/api/auth/registration/resend");
+    expect(JSON.parse(fetch.mock.calls[1]![1].body)).toEqual({
+      attemptToken: SECRET,
+    });
+    expect(
+      wrapper.get<HTMLInputElement>("input[name=code]").element.value,
+    ).toBe("");
+    expect(
+      wrapper.get("button[data-action=resend]").attributes("disabled"),
+    ).toBeDefined();
+    const stored = JSON.parse(sessionStorage.getItem(ATTEMPT_KEY)!);
+    expect(stored.attempt.attemptToken).toBe(SECRET);
+    expect(Date.parse(stored.attempt.resendAvailableAt)).toBeGreaterThan(
+      Date.now(),
+    );
+    await wrapper.get("input[name=code]").setValue("222222");
+    await wrapper.get("form").trigger("submit");
+    await flushPromises();
+    expect(fetch.mock.calls[2]![0]).toBe("/api/auth/registration/verify");
+    expect(push).toHaveBeenCalledWith("/");
+  } finally {
+    wrapper.unmount();
+  }
+});
+
+it("отказ повтора по сроку берёт ожидание у сервера и не раскрывает наличие аккаунта", async () => {
+  vi.useFakeTimers();
+  const fetch = vi
+    .fn()
+    .mockResolvedValueOnce(json(attempt(), 202))
+    .mockResolvedValueOnce(
+      apiError("RATE_LIMITED", 429, { retryAfterSeconds: 90 }),
+    );
+  const wrapper = await toCodeScreen(fetch);
+  try {
+    await vi.advanceTimersByTimeAsync(61000);
+    await wrapper.get("button[data-action=resend]").trigger("click");
+    await flushPromises();
+    const resend = () => wrapper.get("button[data-action=resend]");
+    expect(resend().attributes("disabled")).toBeDefined();
+    expect(wrapper.text()).toContain("через 90 с");
+    expect(wrapper.find("input[name=code]").exists()).toBe(true);
+    await vi.advanceTimersByTimeAsync(91000);
+    expect(resend().attributes("disabled")).toBeUndefined();
+    expect(fetch).toHaveBeenCalledTimes(2);
+  } finally {
+    wrapper.unmount();
+  }
+});
+
+it("повтор для завершённой попытки очищает секрет и оставляет переходы ко входу и восстановлению", async () => {
+  vi.useFakeTimers();
+  const fetch = vi
+    .fn()
+    .mockResolvedValueOnce(json(attempt(), 202))
+    .mockResolvedValueOnce(apiError("LOGIN_ATTEMPT_INVALID", 410));
+  const wrapper = await toCodeScreen(fetch);
+  try {
+    await vi.advanceTimersByTimeAsync(61000);
+    await wrapper.get("button[data-action=resend]").trigger("click");
+    await flushPromises();
+    expect(sessionStorage.getItem(ATTEMPT_KEY)).toBeNull();
+    expect(
+      wrapper.get("input[name=code]").attributes("disabled"),
+    ).toBeDefined();
+    expect(wrapper.find("a[href='/login']").exists()).toBe(true);
+    expect(wrapper.find("a[href='/password-reset']").exists()).toBe(true);
+  } finally {
+    wrapper.unmount();
+  }
+});

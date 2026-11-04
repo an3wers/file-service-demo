@@ -13,6 +13,8 @@ import {
   registrationResponseSchema,
   registrationAttemptSchema,
   registrationVerifySchema,
+  registrationResendBodySchema,
+  registrationResendResponseSchema,
   activationRequestSchema,
   activationConfirmSchema,
   activationResponseSchema,
@@ -185,6 +187,42 @@ export const authPaths: ZodOpenApiPathsObject = {
         }),
         429: {
           ...errorResponse("RATE_LIMITED: details.retryAfterSeconds"),
+          headers: z.object({ "Retry-After": z.string() }),
+        },
+      },
+    },
+  },
+  "/registration/resend": {
+    post: {
+      tags: ["auth"],
+      summary: "Повтор письма регистрации",
+      operationId: "resendRegistration",
+      security: [],
+      description:
+        "Требует секрет действующего контекста регистрации; адрес определяет сервер. Доступен не раньше resendAvailableAt (иначе 429 с серверным ожиданием). Для нового email заменяет код своей попытки до SMTP, для существующего отправляет письмо с инструкциями без кода и без изменения аккаунта; ответ одинаков по структуре и не раскрывает ветку и результат SMTP. Срок попытки (15 минут) и число неверных проверок не меняются, новый код живёт пять минут, но не дольше попытки. Письма делят квоты адреса (одно в минуту, пять в час) и IP (20 в час) с регистрацией и повторной активацией. Любой отказ до замены оставляет прежний код действующим; сбой SMTP после замены прежний код не восстанавливает.",
+      requestParams: { header: z.object({ Origin: z.string() }) },
+      requestBody: {
+        required: true,
+        content: json(registrationResendBodySchema),
+      },
+      responses: {
+        200: {
+          description: "Запрос обработан; даты UTC ISO 8601",
+          headers: z.object({ "Cache-Control": z.literal("no-store") }),
+          content: json(registrationResendResponseSchema),
+        },
+        ...apiErrors({
+          400: "BAD_REQUEST",
+          403: "ORIGIN_NOT_ALLOWED",
+          410: "LOGIN_ATTEMPT_INVALID: контекст неизвестен, завершён, изменён или истёк",
+          413: "PAYLOAD_TOO_LARGE",
+          415: "UNSUPPORTED_MEDIA_TYPE",
+          503: "SERVICE_UNAVAILABLE",
+        }),
+        429: {
+          ...errorResponse(
+            "RATE_LIMITED: details.retryAfterSeconds; прежний код сохраняется",
+          ),
           headers: z.object({ "Retry-After": z.string() }),
         },
       },

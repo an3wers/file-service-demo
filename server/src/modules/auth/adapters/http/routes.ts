@@ -28,6 +28,7 @@ import {
   loginResendSchema,
   registrationBodySchema,
   registrationEmailSchema,
+  registrationResendBodySchema,
   activationRequestSchema,
   activationConfirmSchema,
   passwordResetConfirmSchema,
@@ -158,6 +159,24 @@ export function createAuthRouter(
     prepareRegistration,
     parseBody,
     requestMail("register"),
+  );
+  router.post(
+    "/registration/resend",
+    prepareRegistration,
+    parseBody,
+    async (req, res) => {
+      if (!registration) throw new RegistrationUnavailableError();
+      if (res.locals.ipRetry > 0)
+        throw new MailRateLimitedError(res.locals.ipRetry);
+      const { attemptToken } = registrationResendBodySchema.parse(req.body);
+      res.json(
+        await registration.resendRegistration(
+          attemptToken,
+          res.locals.registrationDeadline,
+          mailLogOf(req),
+        ),
+      );
+    },
   );
   router.post(
     "/activation/request",

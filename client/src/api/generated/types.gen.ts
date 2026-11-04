@@ -78,6 +78,14 @@ export type RegistrationAttempt = {
     resendAvailableAt: string;
 };
 
+export type RegistrationResend = {
+    message: string;
+    retryAfterSeconds: number;
+    attemptExpiresAt: string;
+    codeExpiresAt: string;
+    resendAvailableAt: string;
+};
+
 export type AuthSession = {
     accessToken: string;
     /**
@@ -602,6 +610,72 @@ export type RegisterResponses = {
 };
 
 export type RegisterResponse = RegisterResponses[keyof RegisterResponses];
+
+export type ResendRegistrationData = {
+    body: {
+        attemptToken: string;
+    };
+    headers: {
+        Origin: string;
+    };
+    path?: never;
+    query?: never;
+    url: '/api/auth/registration/resend';
+};
+
+export type ResendRegistrationErrors = {
+    /**
+     * BAD_REQUEST
+     */
+    400: ErrorResponse;
+    /**
+     * Нет токена доступа или он недействителен
+     */
+    401: ErrorResponse;
+    /**
+     * ORIGIN_NOT_ALLOWED
+     */
+    403: ErrorResponse;
+    /**
+     * LOGIN_ATTEMPT_INVALID: контекст неизвестен, завершён, изменён или истёк
+     */
+    410: ErrorResponse;
+    /**
+     * PAYLOAD_TOO_LARGE
+     */
+    413: ErrorResponse;
+    /**
+     * UNSUPPORTED_MEDIA_TYPE
+     */
+    415: ErrorResponse;
+    /**
+     * Запрос не прошёл валидацию; details — результат z.flattenError()
+     */
+    422: ErrorResponse;
+    /**
+     * RATE_LIMITED: details.retryAfterSeconds; прежний код сохраняется
+     */
+    429: ErrorResponse;
+    /**
+     * Непредвиденная ошибка сервера
+     */
+    500: ErrorResponse;
+    /**
+     * Хранилище или база данных недоступны
+     */
+    503: ErrorResponse;
+};
+
+export type ResendRegistrationError = ResendRegistrationErrors[keyof ResendRegistrationErrors];
+
+export type ResendRegistrationResponses = {
+    /**
+     * Запрос обработан; даты UTC ISO 8601
+     */
+    200: RegistrationResend;
+};
+
+export type ResendRegistrationResponse = ResendRegistrationResponses[keyof ResendRegistrationResponses];
 
 export type VerifyRegistrationData = {
     body: {

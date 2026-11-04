@@ -13,6 +13,7 @@ import type {
 } from "../domain/ports/registration-store.js";
 
 export interface MemoryRegistrationAttempt extends RegistrationAttemptRecord {
+  email: string;
   userId: string | null;
   passwordHash: string | null;
   tokenVersion: number | null;
@@ -210,6 +211,7 @@ export function createMemorySessionStore(clock: Clock) {
         });
       registrationAttempts.set(record.attempt.tokenHash, {
         ...record.attempt,
+        email: record.email,
         userId: existing ? null : record.id,
         passwordHash: existing ? null : record.passwordHash,
         tokenVersion: existing ? null : 0,
@@ -217,6 +219,44 @@ export function createMemorySessionStore(clock: Clock) {
         consumed: false,
       });
       return existing ? existing.state : "created";
+    },
+    async resendRegistration(hash, code, mailQuota) {
+      const attempt = registrationAttempts.get(hash);
+      const now = clock.now();
+      if (!attempt || attempt.consumed || attempt.expiresAt <= now)
+        return { status: "unavailable" };
+      const user = [...users.values()].find((u) => u.email === attempt.email);
+      if (!user) return { status: "unavailable" };
+      if (
+        attempt.userId &&
+        (user.state !== "inactive" ||
+          user.passwordHash !== attempt.passwordHash ||
+          user.tokenVersion !== attempt.tokenVersion)
+      )
+        return { status: "unavailable" };
+      if (attempt.resendAvailableAt > now)
+        return {
+          status: "limited",
+          retryAfterSeconds: Math.ceil(
+            (attempt.resendAvailableAt.getTime() - now.getTime()) / 1000,
+          ),
+        };
+      const retry = consume(mailQuota.key(attempt.email), mailQuota.limits);
+      if (retry) return { status: "limited", retryAfterSeconds: retry };
+      attempt.codeHash = code.codeHash;
+      attempt.codeExpiresAt =
+        code.codeExpiresAt < attempt.expiresAt
+          ? code.codeExpiresAt
+          : attempt.expiresAt;
+      attempt.resendAvailableAt = code.resendAvailableAt;
+      return {
+        status: "replaced",
+        outcome: attempt.userId ? "created" : user.state,
+        email: attempt.email,
+        expiresAt: attempt.expiresAt,
+        codeExpiresAt: attempt.codeExpiresAt,
+        resendAvailableAt: attempt.resendAvailableAt,
+      };
     },
     async requestActivation() {
       return false;

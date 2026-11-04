@@ -21,7 +21,32 @@ export interface MailLimit {
   maximum: number;
 }
 
+export interface ReplacementRegistrationCode {
+  codeHash: string;
+  codeExpiresAt: Date;
+  resendAvailableAt: Date;
+}
+
+export type ResendRegistrationResult =
+  | { status: "unavailable" }
+  | { status: "limited"; retryAfterSeconds: number }
+  | {
+      status: "replaced";
+      outcome: SaveOutcome;
+      email: string;
+      expiresAt: Date;
+      codeExpiresAt: Date;
+      resendAvailableAt: Date;
+    };
+
 export interface RegistrationStore {
+  resendRegistration(
+    tokenHash: string,
+    code: ReplacementRegistrationCode,
+    mailQuota: { key: (email: string) => string; limits: readonly MailLimit[] },
+    now: Date,
+    deadline: Date,
+  ): Promise<ResendRegistrationResult>;
   consume(
     key: string,
     limits: readonly MailLimit[],

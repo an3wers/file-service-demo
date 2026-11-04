@@ -70,6 +70,13 @@ export const registrationAttemptSchema = registrationResponseSchema
   })
   .meta({ id: "RegistrationAttempt" });
 
+export const registrationResendBodySchema = z.object({
+  attemptToken: z.string().min(1).max(256),
+});
+export const registrationResendResponseSchema = registrationAttemptSchema
+  .omit({ attemptToken: true })
+  .meta({ id: "RegistrationResend" });
+
 export const loginBodySchema = z.object({
   email: registrationEmailSchema,
   password: z.string().min(1).max(1024),

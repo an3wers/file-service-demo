@@ -13,6 +13,82 @@ export function createSqlRegistrationStore(
   clock: Clock = systemClock,
 ): RegistrationStore & MailEventCleanup {
   return {
+    resendRegistration: (tokenHash, code, mailQuota, now, deadline) =>
+      transaction(deadline, async (client) => {
+        const { rows } = await client.query<{
+          user_id: string | null;
+          password_hash: string | null;
+          token_version: number | null;
+          email: string | null;
+          expires_at: Date;
+          resend_available_at: Date;
+          consumed_at: Date | null;
+        }>(
+          "select * from registration_attempts where token_hash = $1 for update",
+          [tokenHash],
+        );
+        const attempt = rows[0];
+        if (
+          !attempt ||
+          !attempt.email ||
+          attempt.consumed_at ||
+          attempt.expires_at <= now
+        )
+          return { status: "unavailable" };
+        const users = await client.query<{
+          state: "active" | "inactive";
+          password_hash: string;
+          token_version: number;
+        }>(
+          "select state, password_hash, token_version from users where email = $1 for share",
+          [attempt.email],
+        );
+        const user = users.rows[0];
+        if (!user) return { status: "unavailable" };
+        if (
+          attempt.user_id &&
+          (user.state !== "inactive" ||
+            user.password_hash !== attempt.password_hash ||
+            user.token_version !== attempt.token_version)
+        )
+          return { status: "unavailable" };
+        if (attempt.resend_available_at > now)
+          return {
+            status: "limited",
+            retryAfterSeconds: Math.ceil(
+              (attempt.resend_available_at.getTime() - now.getTime()) / 1000,
+            ),
+          };
+        const retry = await consumeAuthLimit(
+          client,
+          mailQuota.key(attempt.email),
+          mailQuota.limits,
+          now,
+        );
+        if (retry > 0) return { status: "limited", retryAfterSeconds: retry };
+        const updated = await client.query<{
+          expires_at: Date;
+          code_expires_at: Date;
+          resend_available_at: Date;
+        }>(
+          "update registration_attempts set code_hash = $2, code_expires_at = least($3::timestamptz, expires_at), resend_available_at = $4 where token_hash = $1 returning expires_at, code_expires_at, resend_available_at",
+          [
+            tokenHash,
+            code.codeHash,
+            code.codeExpiresAt,
+            code.resendAvailableAt,
+          ],
+        );
+        const row = updated.rows[0]!;
+        return {
+          status: "replaced",
+          outcome: attempt.user_id ? "created" : user.state,
+          email: attempt.email,
+          expiresAt: row.expires_at,
+          codeExpiresAt: row.code_expires_at,
+          resendAvailableAt: row.resend_available_at,
+        };
+      }),
     requestActivation: (email, tokenHash, expiresAt, deadline) =>
       transaction(deadline, async (client) => {
         const { rows } = await client.query<{ id: string; state: string }>(
@@ -122,7 +198,7 @@ export function createSqlRegistrationStore(
         );
         const attempt = record.attempt;
         await client.query(
-          "insert into registration_attempts (token_hash, user_id, password_hash, token_version, code_hash, expires_at, code_expires_at, resend_available_at) values ($1, $2, $3, $4, $5, $6, $7, $8)",
+          "insert into registration_attempts (token_hash, user_id, password_hash, token_version, code_hash, expires_at, code_expires_at, resend_available_at, email) values ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
           [
             attempt.tokenHash,
             inserted.rowCount ? record.id : null,
@@ -132,6 +208,7 @@ export function createSqlRegistrationStore(
             attempt.expiresAt,
             attempt.codeExpiresAt,
             attempt.resendAvailableAt,
+            record.email,
           ],
         );
         if (inserted.rowCount) return "created";

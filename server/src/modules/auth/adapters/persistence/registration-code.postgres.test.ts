@@ -201,3 +201,162 @@ it("ошибка формата не расходует проверки, а п�
   );
   expect((await verify(tokenHash)).status).toBe("unavailable");
 });
+
+const LIMITS = [
+  { windowMs: 60000, maximum: 1 },
+  { windowMs: 3600000, maximum: 5 },
+];
+const quota = {
+  key: (email: string) => `mail:activation:${sha(email)}`,
+  limits: LIMITS,
+};
+const NEW_CODE = "654321";
+const resend = (tokenHash: string, now = new Date(Date.now() + 61000)) =>
+  createSqlRegistrationStore().resendRegistration(
+    tokenHash,
+    {
+      codeHash: registrationCodeDigest(CODE_SECRET, tokenHash, NEW_CODE),
+      codeExpiresAt: new Date(now.getTime() + 300000),
+      resendAvailableAt: new Date(now.getTime() + 60000),
+    },
+    quota,
+    now,
+    deadline(),
+  );
+const attemptRow = async (tokenHash: string) =>
+  (
+    await pool.query(
+      "select * from registration_attempts where token_hash = $1",
+      [tokenHash],
+    )
+  ).rows[0];
+
+it("повтор до срока ожидания отклоняется и оставляет прежний код, срок и число ошибок", async () => {
+  const { tokenHash } = await register();
+  const before = await attemptRow(tokenHash);
+  const early = await resend(tokenHash, new Date());
+  expect(early.status).toBe("limited");
+  expect(early).toMatchObject({ retryAfterSeconds: expect.any(Number) });
+  expect(await attemptRow(tokenHash)).toEqual(before);
+  expect((await verify(tokenHash)).status).toBe("verified");
+});
+
+it("повтор заменяет код, не двигает 15 минут, не сбрасывает ошибки, и старый код перестаёт подходить", async () => {
+  const { tokenHash } = await register();
+  expect((await verify(tokenHash, "999999")).status).toBe("invalid");
+  const before = await attemptRow(tokenHash);
+  const outcome = await resend(tokenHash);
+  expect(outcome).toMatchObject({ status: "replaced", outcome: "created" });
+  const after = await attemptRow(tokenHash);
+  expect(after.expires_at).toEqual(before.expires_at);
+  expect(after.failures).toBe(1);
+  expect(after.code_hash).not.toBe(before.code_hash);
+  expect((await verify(tokenHash, CODE)).status).toBe("invalid");
+  expect((await verify(tokenHash, NEW_CODE)).status).toBe("verified");
+  expect(await sessions()).toHaveLength(1);
+});
+
+it("новый код не живёт дольше попытки", async () => {
+  const { tokenHash } = await register();
+  await pool.query(
+    "update registration_attempts set code_expires_at = now() + interval '80 seconds', expires_at = now() + interval '90 seconds'",
+  );
+  const outcome = await resend(tokenHash, new Date(Date.now() + 61000));
+  expect(outcome.status).toBe("replaced");
+  const row = await attemptRow(tokenHash);
+  expect(row.code_expires_at.getTime()).toBe(row.expires_at.getTime());
+});
+
+it("повтор для существующего email возвращает ветку инструкций, не меняя аккаунт и не заменяя пользователя", async () => {
+  for (const state of ["inactive", "active"] as const) {
+    await pool.query(
+      "truncate registration_attempts, auth_mail_events, users cascade",
+    );
+    await register();
+    await pool.query("update users set state = $1", [state]);
+    const before = (await pool.query("select * from users")).rows;
+    const decoy = await register();
+    const outcome = await resend(decoy.tokenHash);
+    expect(outcome).toMatchObject({
+      status: "replaced",
+      outcome: state,
+      email: "name@example.com",
+    });
+    expect((await pool.query("select * from users")).rows).toEqual(before);
+    expect((await verify(decoy.tokenHash, NEW_CODE)).status).toBe("invalid");
+  }
+});
+
+it("неизвестная, погашенная, изменённая и истёкшая попытки недоступны и не тратят квоту", async () => {
+  expect((await resend(sha("unknown"))).status).toBe("unavailable");
+  const done = await register();
+  await verify(done.tokenHash);
+  expect((await resend(done.tokenHash)).status).toBe("unavailable");
+
+  const changed = await register("changed@example.com");
+  await pool.query(
+    "update users set token_version = token_version + 1 where email = 'changed@example.com'",
+  );
+  expect((await resend(changed.tokenHash)).status).toBe("unavailable");
+
+  const expired = await register("expired@example.com");
+  await pool.query(
+    "update registration_attempts set code_expires_at = now() - interval '2 seconds', expires_at = now() - interval '1 second' where token_hash = $1",
+    [expired.tokenHash],
+  );
+  expect((await resend(expired.tokenHash)).status).toBe("unavailable");
+  expect(
+    (
+      await pool.query(
+        "select count(*)::int as n from auth_mail_events where key = $1",
+        [quota.key("changed@example.com")],
+      )
+    ).rows[0].n,
+  ).toBe(0);
+});
+
+it("квота адреса общая с другими письмами и не зависит от наличия аккаунта, отказ оставляет код", async () => {
+  const trails: string[][] = [];
+  for (const existing of [false, true]) {
+    await pool.query(
+      "truncate registration_attempts, auth_mail_events, users cascade",
+    );
+    if (existing) await register();
+    const { tokenHash } = await register();
+    const statuses: string[] = [];
+    for (let minute = 1; minute <= 6; minute++)
+      statuses.push(
+        (await resend(tokenHash, new Date(Date.now() + minute * 61000))).status,
+      );
+    trails.push(statuses);
+    const kept = await attemptRow(tokenHash);
+    const last = await resend(tokenHash, new Date(Date.now() + 7 * 61000));
+    expect(last.status).toBe("limited");
+    expect(await attemptRow(tokenHash)).toEqual(kept);
+  }
+  expect(trails[0]).toEqual(trails[1]);
+  expect(trails[0]).toContain("limited");
+});
+
+it("конкурентные повтор и проверка кода не создают двух сессий и не теряют результат", async () => {
+  const { tokenHash } = await register();
+  const [replaced, verified] = await Promise.all([
+    resend(tokenHash),
+    verify(tokenHash, CODE),
+  ]);
+  expect(["replaced", "unavailable"]).toContain(replaced.status);
+  expect(["verified", "invalid", "unavailable"]).toContain(verified.status);
+  expect(await sessions()).toHaveLength(verified.status === "verified" ? 1 : 0);
+  if (verified.status === "verified")
+    expect((await resend(tokenHash)).status).toBe("unavailable");
+});
+
+it("одновременные повторы заменяют код один раз в пределах срока ожидания", async () => {
+  const { tokenHash } = await register();
+  const now = new Date(Date.now() + 61000);
+  const outcomes = await Promise.all(
+    Array.from({ length: 8 }, () => resend(tokenHash, now)),
+  );
+  expect(outcomes.filter((o) => o.status === "replaced")).toHaveLength(1);
+  expect(outcomes.filter((o) => o.status === "limited")).toHaveLength(7);
+});
