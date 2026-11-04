@@ -90,6 +90,10 @@ export function createSqlRegistrationStore(
           [secret.user_id, now],
         );
         await client.query(
+          "update registration_attempts set consumed_at = $2 where user_id = $1 and consumed_at is null",
+          [secret.user_id, now],
+        );
+        await client.query(
           "update auth_sessions set revoked_at = $2 where user_id = $1 and revoked_at is null",
           [secret.user_id, now],
         );
@@ -116,13 +120,21 @@ export function createSqlRegistrationStore(
           "insert into users (id, login, name, email, password_hash, state) values ($1::uuid, $1::text, $2, $3, $4, 'inactive') on conflict (email) do nothing returning id",
           [record.id, record.name, record.email, record.passwordHash],
         );
-        if (inserted.rowCount) {
-          await client.query(
-            "insert into auth_secrets (user_id, purpose, token_hash, expires_at) values ($1, 'activation', $2, $3)",
-            [record.id, record.tokenHash, record.expiresAt],
-          );
-          return "created";
-        }
+        const attempt = record.attempt;
+        await client.query(
+          "insert into registration_attempts (token_hash, user_id, password_hash, token_version, code_hash, expires_at, code_expires_at, resend_available_at) values ($1, $2, $3, $4, $5, $6, $7, $8)",
+          [
+            attempt.tokenHash,
+            inserted.rowCount ? record.id : null,
+            inserted.rowCount ? record.passwordHash : null,
+            inserted.rowCount ? 0 : null,
+            attempt.codeHash,
+            attempt.expiresAt,
+            attempt.codeExpiresAt,
+            attempt.resendAvailableAt,
+          ],
+        );
+        if (inserted.rowCount) return "created";
         const { rows } = await client.query<{ state: "active" | "inactive" }>(
           "select state from users where email = $1",
           [record.email],

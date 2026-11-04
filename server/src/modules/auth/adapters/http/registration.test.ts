@@ -11,6 +11,18 @@ import { mapAuthError } from "./error-map.js";
 import { createRegistration } from "../../application/registration.js";
 import type { RegistrationStore } from "../../domain/ports/registration-store.js";
 
+const neutral = (body: Record<string, string | number>) => ({
+  ...body,
+  attemptToken: String(body.attemptToken).length,
+  attemptExpiresAt:
+    Date.parse(String(body.attemptExpiresAt)) -
+    Date.parse(String(body.resendAvailableAt)),
+  codeExpiresAt:
+    Date.parse(String(body.codeExpiresAt)) -
+    Date.parse(String(body.resendAvailableAt)),
+  resendAvailableAt: 0,
+});
+
 let server: Server;
 afterEach(async () => {
   await new Promise<void>(
@@ -48,6 +60,7 @@ async function start(
     },
     publicUrl: "https://files.example.com",
     deadlineMs: options.deadlineMs ?? 15000,
+    codeSecret: "code-secret-0123456789abcdef0123456789",
   });
   const app = createApp({
     authRouter: createAuthRouter(auth.sessions, {
@@ -103,6 +116,10 @@ it("сохраняет неактивного пользователя до пи
   expect(await response.json()).toEqual({
     message: "Если требуется письмо, инструкции придут на email",
     retryAfterSeconds: 45,
+    attemptToken: expect.stringMatching(/^[\w-]{43}$/),
+    attemptExpiresAt: "2026-01-01T00:15:00.000Z",
+    codeExpiresAt: "2026-01-01T00:05:00.000Z",
+    resendAvailableAt: "2026-01-01T00:01:00.000Z",
   });
   expect(response.headers.get("cache-control")).toBe("no-store");
   expect(h.elapsed()).toBe(15000);
@@ -111,7 +128,13 @@ it("сохраняет неактивного пользователя до пи
       name: "Имя",
       email: "user.name+tag@example.com",
       passwordHash: expect.stringMatching(/^scrypt\$/),
-      tokenHash: expect.stringMatching(/^[a-f0-9]{64}$/),
+      attempt: {
+        tokenHash: expect.stringMatching(/^[a-f0-9]{64}$/),
+        codeHash: expect.stringMatching(/^[a-f0-9]{64}$/),
+        expiresAt: new Date("2026-01-01T00:15:00Z"),
+        codeExpiresAt: new Date("2026-01-01T00:05:00Z"),
+        resendAvailableAt: new Date("2026-01-01T00:01:00Z"),
+      },
     }),
     expect.any(Date),
   );
@@ -119,9 +142,8 @@ it("сохраняет неактивного пользователя до пи
     h.sendEmail.mock.invocationCallOrder[0]!,
   );
   const message = h.sendEmail.mock.calls[0]![0];
-  expect(message.text).toMatch(
-    /https:\/\/files.example.com\/activation#token=[\w-]{43}/,
-  );
+  expect(message.text).toMatch(/Код подтверждения: \d{6}\b/);
+  expect(message.text).not.toMatch(/http|token|activation/);
   expect(message.text).not.toContain("пароль");
 });
 
@@ -129,7 +151,8 @@ it("даёт одинаковый нейтральный ответ при су�
   const h = await start();
   const replies: unknown[] = [];
   for (const outcome of ["accepted", "rejected", "unknown", "active"]) {
-    if (outcome === "active") vi.mocked(h.store.save).mockResolvedValue("active");
+    if (outcome === "active")
+      vi.mocked(h.store.save).mockResolvedValue("active");
     else if (outcome !== "accepted")
       h.sendEmail.mockRejectedValue(
         new Error("private@example.com secret smtp details"),
@@ -138,7 +161,7 @@ it("даёт одинаковый нейтральный ответ при су�
     const response = await h.request();
     expect(response.status).toBe(202);
     expect(h.elapsed() - before).toBe(15000);
-    replies.push(await response.json());
+    replies.push(neutral(await response.json()));
   }
   expect(
     replies.every(
@@ -187,7 +210,7 @@ it("ответы для нового, активного и неактивног
     seen.push(
       JSON.stringify([
         response.status,
-        await response.json(),
+        neutral(await response.json()),
         response.headers.get("cache-control"),
       ]),
     );
@@ -377,9 +400,8 @@ it("не доверяет произвольному X-Forwarded-For", async () 
 
 it("под параллельной нагрузкой реальные нейтральные ответы ждут 15 секунд для всех исходов", async () => {
   const h = await start({ realTime: true });
-  vi.mocked(h.store.save).mockImplementation(
-    async (record) =>
-      record.email.startsWith("active") ? "active" : "created",
+  vi.mocked(h.store.save).mockImplementation(async (record) =>
+    record.email.startsWith("active") ? "active" : "created",
   );
   h.sendEmail.mockImplementation(async (message) => {
     if (message.to.startsWith("timeout")) return new Promise(() => {});

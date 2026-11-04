@@ -143,6 +143,21 @@ export function createAuth(channel: AuthChannel | null) {
     channel?.postMessage({ type: "login" });
   }
 
+  async function verifyRegistration(
+    attemptToken: string,
+    code: string,
+    generation: number,
+  ): Promise<void> {
+    try {
+      await authApi.verifyRegistration(attemptToken, code, generation);
+    } catch (error) {
+      if (isSessionChanged(error)) sync("elsewhere");
+      throw error;
+    }
+    status.value = "ready";
+    channel?.postMessage({ type: "login" });
+  }
+
   async function logout(): Promise<void> {
     try {
       await authApi.logout();
@@ -192,6 +207,7 @@ export function createAuth(channel: AuthChannel | null) {
     signedIn,
     ensureSession,
     verifyLogin,
+    verifyRegistration,
     logout,
     renew,
     onSignOut,

@@ -22,6 +22,7 @@ import {
   createAuthHarness,
   EMAIL,
   PASSWORD,
+  CODE_SECRET,
 } from "../../testing/auth.harness.js";
 import { createRegistration } from "../../application/registration.js";
 import { createAuthRouter, createRequireAuth } from "../http/routes.js";
@@ -41,7 +42,7 @@ beforeAll(async () => {
 });
 beforeEach(async () => {
   await pool.query(
-    "truncate login_attempts, auth_sessions, auth_secrets, auth_mail_events, users cascade",
+    "truncate registration_attempts, login_attempts, auth_sessions, auth_secrets, auth_mail_events, users cascade",
   );
 });
 afterEach(async () => {
@@ -64,6 +65,7 @@ async function start(clock: TestClock = createTestClock(), deadlineMs = 15000) {
   const store = createSqlSessionStore(clock);
   const sessions = auth.withStore(store, deadlineMs);
   const registration = createRegistration({
+    codeSecret: CODE_SECRET,
     store: createSqlRegistrationStore(clock),
     hasher: auth.hasher,
     notification: { sendEmail: auth.sendEmail },
@@ -110,10 +112,9 @@ async function start(clock: TestClock = createTestClock(), deadlineMs = 15000) {
       (await post("register", { name: "Имя", email, password: PASSWORD }))
         .status,
     ).toBe(202);
-    const token = new URL(
-      auth.sendEmail.mock.calls.at(-1)![0].text.match(/https:\/\/\S+/)![0],
-    ).hash.slice(7);
-    expect((await post("activation/confirm", { token })).status).toBe(200);
+    await pool.query("update users set state = 'active' where email = $1", [
+      email,
+    ]);
   }
   const login = () => post("login", { email: EMAIL, password: PASSWORD });
   const verify = (attemptToken: string, code = auth.code()) =>

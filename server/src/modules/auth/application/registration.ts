@@ -1,4 +1,8 @@
-import { createHash, randomBytes, randomUUID } from "node:crypto";
+import { createHash, randomBytes, randomInt, randomUUID } from "node:crypto";
+import {
+  registrationAttemptDigest,
+  registrationCodeDigest,
+} from "./attempt-secrets.js";
 import type { Notification } from "../../notification/index.js";
 import { logMailAttempt, type MailLog } from "./mail-log.js";
 import type { Clock } from "../domain/ports/clock.js";
@@ -26,6 +30,7 @@ export interface RegistrationDeps {
   wait(ms: number): Promise<void>;
   publicUrl: string;
   deadlineMs: number;
+  codeSecret: string;
 }
 
 type LinkPurpose = "activation" | "password-reset";
@@ -64,6 +69,7 @@ export function createRegistration({
   wait,
   publicUrl,
   deadlineMs,
+  codeSecret,
 }: RegistrationDeps) {
   const digest = (value: string) =>
     createHash("sha256").update(value).digest("hex");
@@ -143,10 +149,7 @@ export function createRegistration({
   async function sendLink(
     purpose: LinkPurpose,
     email: string,
-    save: (
-      tokenHash: string,
-      expiresAt: Date,
-    ) => Promise<boolean | "active" | "inactive">,
+    save: (tokenHash: string, expiresAt: Date) => Promise<boolean>,
     deadline: Date,
     mailRequestedAt: Date,
     log: MailLog,
@@ -157,21 +160,7 @@ export function createRegistration({
       const send = await withinDeadline(deadline, () =>
         save(digest(token), new Date(clock.now().getTime() + link.ttlMs)),
       );
-      if (send === "active" || send === "inactive") {
-        await deliver(
-          {
-            to: email,
-            subject: "Продолжение регистрации",
-            text: ACCESS_INSTRUCTIONS[send](
-              new URL("/login", publicUrl).href,
-              new URL("/password-reset", publicUrl).href,
-            ),
-          },
-          deadline,
-          "registration-instructions",
-          log,
-        );
-      } else if (send) {
+      if (send) {
         const url = new URL(link.path, publicUrl);
         url.hash = `token=${token}`;
         await deliver(
@@ -310,34 +299,70 @@ export function createRegistration({
       mailRequestedAt: Date,
       log: MailLog,
     ) {
+      const attemptToken = randomBytes(32).toString("base64url");
+      const tokenHash = registrationAttemptDigest(attemptToken);
+      const code = randomInt(1000000).toString().padStart(6, "0");
+      const requested = mailRequestedAt.getTime();
+      const attempt = {
+        tokenHash,
+        codeHash: registrationCodeDigest(codeSecret, tokenHash, code),
+        expiresAt: new Date(requested + 900000),
+        codeExpiresAt: new Date(requested + 300000),
+        resendAvailableAt: new Date(requested + 60000),
+      };
       try {
         const passwordHash = await withinDeadline(deadline, () =>
           hasher.hash(input.password),
         );
-        return await sendLink(
-          "activation",
-          input.email,
-          async (tokenHash, expiresAt) => {
-            const outcome = await store.save(
-              {
-                id: randomUUID(),
-                name: input.name,
-                email: input.email,
-                passwordHash,
-                tokenHash,
-                expiresAt,
+        const outcome = await withinDeadline(deadline, () =>
+          store.save(
+            {
+              id: randomUUID(),
+              name: input.name,
+              email: input.email,
+              passwordHash,
+              attempt,
+            },
+            deadline,
+          ),
+        );
+        await deliver(
+          outcome === "created"
+            ? {
+                to: input.email,
+                subject: "Код подтверждения",
+                text: `Код подтверждения: ${code}\nКод действует 5 минут.`,
+              }
+            : {
+                to: input.email,
+                subject: "Продолжение регистрации",
+                text: ACCESS_INSTRUCTIONS[outcome](
+                  new URL("/login", publicUrl).href,
+                  new URL("/password-reset", publicUrl).href,
+                ),
               },
-              deadline,
-            );
-            return outcome === "created" ? true : outcome;
-          },
           deadline,
-          mailRequestedAt,
+          outcome === "created"
+            ? "registration-code"
+            : "registration-instructions",
           log,
         );
       } catch {
         throw new RegistrationUnavailableError();
       }
+      while (clock.now() < deadline)
+        await wait(deadline.getTime() - clock.now().getTime());
+      return {
+        message: REGISTRATION_MESSAGE,
+        retryAfterSeconds: Math.max(
+          0,
+          Math.ceil((requested + 60000 - clock.now().getTime()) / 1000),
+        ),
+        attemptToken,
+        attemptExpiresAt: attempt.expiresAt.toISOString(),
+        codeExpiresAt: attempt.codeExpiresAt.toISOString(),
+        resendAvailableAt: attempt.resendAvailableAt.toISOString(),
+      };
     },
   };
 }

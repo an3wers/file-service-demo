@@ -2,6 +2,7 @@ import type {
   AuthSession,
   LoginAttempt,
   LoginResend,
+  RegistrationAttempt,
   RegistrationResult,
   RegisterData,
   RequestActivationData,
@@ -54,6 +55,24 @@ export async function verifyLogin(
   );
 }
 
+export async function verifyRegistration(
+  attemptToken: string,
+  code: string,
+  generation: number,
+): Promise<void> {
+  startSession(
+    await sendAuthRequest<AuthSession>(
+      "/auth/registration/verify",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ attemptToken, code }),
+      },
+      (shared) => !shared.signedIn && shared.generation === generation,
+    ),
+  );
+}
+
 export async function logout(): Promise<void> {
   await sendAuthRequest<void>(
     "/auth/logout",
@@ -66,8 +85,8 @@ export async function logout(): Promise<void> {
 export function register(
   input: RegisterData["body"],
   signal: AbortSignal,
-): Promise<RegistrationResult> {
-  return sendRequest<RegistrationResult>("/auth/register", {
+): Promise<RegistrationAttempt> {
+  return sendRequest<RegistrationAttempt>("/auth/register", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(input),

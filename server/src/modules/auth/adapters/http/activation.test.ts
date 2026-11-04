@@ -3,7 +3,7 @@ import type { AddressInfo } from "node:net";
 import { Router } from "express";
 import { afterEach, expect, it, vi } from "vitest";
 import { createApp } from "../../../../app.js";
-import { createAuthHarness } from "../../testing/auth.harness.js";
+import { createAuthHarness, CODE_SECRET } from "../../testing/auth.harness.js";
 import { createRegistration } from "../../application/registration.js";
 import { createAuthRouter, createRequireAuth } from "./routes.js";
 import { mapAuthError } from "./error-map.js";
@@ -21,7 +21,7 @@ async function start(
   let now = Date.parse("2026-01-01T00:00:00Z");
   const store = {
     consume: vi.fn().mockResolvedValue(0),
-    save: vi.fn().mockResolvedValue(true),
+    save: vi.fn().mockResolvedValue("created"),
     requestActivation: vi.fn().mockResolvedValue(true),
     confirmActivation: vi.fn().mockResolvedValue(true),
     requestPasswordReset: vi.fn().mockResolvedValue(true),
@@ -30,6 +30,7 @@ async function start(
   const sendEmail = vi.fn().mockResolvedValue({ messageId: "accepted" });
   const auth = createAuthHarness();
   const registration = createRegistration({
+    codeSecret: CODE_SECRET,
     store,
     hasher: auth.hasher,
     notification: { sendEmail },

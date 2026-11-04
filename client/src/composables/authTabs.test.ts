@@ -312,6 +312,74 @@ describe("общий вход вкладок одного браузера", () 
     expect(browser.jar.cookie).toBeNull();
   });
 
+  it("успешная регистрация синхронизирует вход, а попытка регистрации после чужого входа или выхода не меняет пользователя", async () => {
+    const browser = createBrowser();
+    const a = await browser.openTab();
+    const b = await browser.openTab();
+
+    for (const tab of [a, b]) {
+      const boot = tab.auth.ensureSession();
+      (await browser.next("/api/auth/refresh")).deliver({
+        status: 401,
+        body: { error: { code: "SESSION_EXPIRED", message: "" } },
+        setCookie: null,
+      });
+      await boot;
+    }
+
+    const generation = a.shared.readSharedAuth().generation;
+    const registration = a.auth.verifyRegistration(
+      "attempt-x",
+      "012345",
+      generation,
+    );
+    const verifyA = await browser.next("/api/auth/registration/verify");
+    const concurrent = b.auth.verifyRegistration(
+      "attempt-y",
+      "654321",
+      generation,
+    );
+    await settle();
+
+    expect(browser.pending).toHaveLength(1);
+    expect(
+      JSON.parse(vi.mocked(fetch).mock.calls.at(-1)![1]!.body as string),
+    ).toEqual({ attemptToken: "attempt-x", code: "012345" });
+
+    verifyA.deliver({
+      status: 200,
+      body: session(USER_X),
+      setCookie: "refresh=x",
+    });
+    await registration;
+    await expect(concurrent).rejects.toMatchObject({ code: "SESSION_CHANGED" });
+    await settle();
+
+    browser.pending[0]!.deliver({
+      status: 200,
+      body: session(USER_X),
+      setCookie: "refresh=x",
+    });
+    await settle();
+    expect(a.auth.user.value).toEqual(USER_X);
+    expect(b.auth.user.value).toEqual(USER_X);
+
+    const logout = a.auth.logout();
+    (await browser.next("/api/auth/logout")).deliver({
+      status: 204,
+      setCookie: null,
+    });
+    await logout;
+    await settle();
+
+    await expect(
+      b.auth.verifyRegistration("attempt-y", "654321", generation),
+    ).rejects.toMatchObject({ code: "SESSION_CHANGED" });
+    expect(browser.pending).toEqual([]);
+    expect(browser.jar.cookie).toBeNull();
+    expect(b.auth.user.value).toBeNull();
+  });
+
   it("сбой выхода сохраняет сессию во всех вкладках, повтор после серверного отзыва успешен", async () => {
     const browser = createBrowser();
     browser.jar.cookie = "refresh=x";

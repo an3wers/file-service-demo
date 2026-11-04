@@ -190,7 +190,11 @@ export async function sendRequest<T>(
 }
 
 export function sendAuthRequest<T>(
-  path: "/auth/login/verify" | "/auth/logout" | "/auth/refresh",
+  path:
+    | "/auth/login/verify"
+    | "/auth/registration/verify"
+    | "/auth/logout"
+    | "/auth/refresh",
   init: RequestInit,
   allowed: (shared: SharedAuth) => boolean,
 ): Promise<T> {

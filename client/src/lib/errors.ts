@@ -12,7 +12,7 @@ const MESSAGES: Record<string, string> = {
   INVALID_CREDENTIALS: "Неверный email или пароль",
   EMAIL_NOT_VERIFIED: "Подтвердите email, чтобы войти",
   LOGIN_ATTEMPT_INVALID: "Попытка входа завершена. Войдите заново",
-  LOGIN_CODE_INVALID: "Неверный код входа",
+  LOGIN_CODE_INVALID: "Неверный код",
   LOGIN_CODE_EXPIRED: "Срок кода истёк. Начните новый вход",
   SESSION_CHANGED: "Вход изменился в другой вкладке",
   ACTIVATION_LINK_INVALID:

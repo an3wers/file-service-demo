@@ -6,7 +6,19 @@ import type {
   StoredSession,
 } from "../domain/ports/session-store.js";
 import type { User } from "../domain/user.js";
-import type { MailLimit } from "../domain/ports/registration-store.js";
+import type {
+  MailLimit,
+  RegistrationAttemptRecord,
+  RegistrationStore,
+} from "../domain/ports/registration-store.js";
+
+export interface MemoryRegistrationAttempt extends RegistrationAttemptRecord {
+  userId: string | null;
+  passwordHash: string | null;
+  tokenVersion: number | null;
+  failures: number;
+  consumed: boolean;
+}
 
 export function createMemorySessionStore(clock: Clock) {
   const users = new Map<string, User>();
@@ -18,6 +30,7 @@ export function createMemorySessionStore(clock: Clock) {
     string,
     StoredSession & { userId: string; expiresAt: Date; revoked: boolean }
   >();
+  const registrationAttempts = new Map<string, MemoryRegistrationAttempt>();
   const events = new Map<string, number[]>();
   function consume(key: string, limits: readonly MailLimit[]): number {
     const now = clock.now().getTime();
@@ -131,6 +144,35 @@ export function createMemorySessionStore(clock: Clock) {
       });
       return { status: "verified", user };
     },
+    async verifyRegistration(hash, codeHash, session) {
+      const attempt = registrationAttempts.get(hash);
+      const now = clock.now();
+      if (!attempt || attempt.consumed || attempt.expiresAt <= now)
+        return { status: "unavailable" };
+      const user = attempt.userId ? users.get(attempt.userId) : undefined;
+      const usable =
+        !!user &&
+        user.state === "inactive" &&
+        user.passwordHash === attempt.passwordHash &&
+        user.tokenVersion === attempt.tokenVersion;
+      if (attempt.userId && !usable) return { status: "unavailable" };
+      if (codeHash === null) return { status: "format" };
+      if (attempt.codeExpiresAt <= now) return { status: "expired" };
+      if (!usable || codeHash !== attempt.codeHash) {
+        attempt.failures++;
+        attempt.consumed = attempt.failures >= 5;
+        return { status: "invalid", remainingAttempts: 5 - attempt.failures };
+      }
+      attempt.consumed = true;
+      user.state = "active";
+      sessions.set(session.tokenHash, {
+        ...session,
+        userId: user.id,
+        expiresAt: new Date(now.getTime() + session.ttlSeconds * 1000),
+        revoked: false,
+      });
+      return { status: "verified", user };
+    },
     async refresh(hash) {
       const session = sessions.get(hash);
       const user = session ? users.get(session.userId) : undefined;
@@ -149,5 +191,45 @@ export function createMemorySessionStore(clock: Clock) {
       if (session) session.revoked = true;
     },
   };
-  return { store, users };
+  const registrationStore: RegistrationStore = {
+    async consume(key, limits) {
+      return consume(key, limits);
+    },
+    async save(record) {
+      const existing = [...users.values()].find(
+        (user) => user.email === record.email,
+      );
+      if (!existing)
+        users.set(record.id, {
+          id: record.id,
+          name: record.name,
+          email: record.email,
+          passwordHash: record.passwordHash,
+          tokenVersion: 0,
+          state: "inactive",
+        });
+      registrationAttempts.set(record.attempt.tokenHash, {
+        ...record.attempt,
+        userId: existing ? null : record.id,
+        passwordHash: existing ? null : record.passwordHash,
+        tokenVersion: existing ? null : 0,
+        failures: 0,
+        consumed: false,
+      });
+      return existing ? existing.state : "created";
+    },
+    async requestActivation() {
+      return false;
+    },
+    async confirmActivation() {
+      return false;
+    },
+    async requestPasswordReset() {
+      return false;
+    },
+    async confirmPasswordReset() {
+      return null;
+    },
+  };
+  return { store, users, registrationStore, registrationAttempts };
 }

@@ -1,8 +1,13 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, ref, useTemplateRef } from "vue";
+import { useRoute, useRouter } from "vue-router";
 import { EyeIcon, EyeOffIcon, HardDriveIcon } from "@lucide/vue";
+import type { RegistrationAttempt } from "@/api/generated";
 import { register } from "@/api/auth";
-import { isApiError } from "@/api/client";
+import { isApiError, serverNow } from "@/api/client";
+import { readSharedAuth } from "@/api/sharedAuth";
+import { useAuth } from "@/composables/useAuth";
+import { safeReturnTo } from "@/lib/returnTo";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -28,17 +33,74 @@ import { Spinner } from "@/components/ui/spinner";
 import ThemeSelect from "@/components/ThemeSelect.vue";
 import { errorMessage } from "@/lib/errors";
 
+const auth = useAuth();
+const router = useRouter();
+const route = useRoute();
+const ATTEMPT_KEY = "file-service-registration-attempt";
+const attempt = ref<RegistrationAttempt | null>(null);
+const submittedEmail = ref("");
+const code = ref("");
+const remainingAttempts = ref<number | null>(null);
+const ended = ref(false);
+const now = ref(serverNow());
+let generation = readSharedAuth().generation;
+const secondsLeft = (until: string | undefined) =>
+  Math.max(0, Math.ceil((Date.parse(until ?? "") - now.value) / 1000));
+const codeRemaining = computed(() => secondsLeft(attempt.value?.codeExpiresAt));
+const attemptRemaining = computed(() =>
+  secondsLeft(attempt.value?.attemptExpiresAt),
+);
+const clock = setInterval(() => {
+  now.value = serverNow();
+}, 1000);
+
+function saveAttempt() {
+  try {
+    sessionStorage.setItem(
+      ATTEMPT_KEY,
+      JSON.stringify({
+        attempt: attempt.value,
+        email: submittedEmail.value,
+        generation,
+        remainingAttempts: remainingAttempts.value,
+      }),
+    );
+  } catch {
+    return;
+  }
+}
+function forgetAttempt() {
+  code.value = "";
+  try {
+    sessionStorage.removeItem(ATTEMPT_KEY);
+  } catch {
+    return;
+  }
+}
+function onCodeInput(event: Event) {
+  const input = event.target as HTMLInputElement;
+  code.value = input.value.replace(/\D/g, "").slice(0, 6);
+  input.value = code.value;
+}
+
 const name = ref("");
 const email = ref("");
 const password = ref("");
 const visible = ref(false);
 const pending = ref(false);
-const result = ref("");
 const failure = ref("");
 const fieldErrors = ref<Record<string, string[]>>({});
 const retryAfterSeconds = ref(0);
 const form = useTemplateRef<HTMLFormElement>("form");
 const resultElement = useTemplateRef<HTMLDivElement>("resultElement");
+const canVerify = computed(
+  () =>
+    !pending.value &&
+    !ended.value &&
+    /^[0-9]{6}$/.test(code.value) &&
+    codeRemaining.value > 0 &&
+    attemptRemaining.value > 0,
+);
 const controller = new AbortController();
 let timer: ReturnType<typeof setInterval> | undefined;
 const canSubmit = computed(
@@ -65,6 +127,7 @@ async function submit() {
   failure.value = "";
   fieldErrors.value = {};
   try {
+    const started = readSharedAuth().generation;
     const response = await register(
       { name: name.value, email: email.value, password: password.value },
       controller.signal,
@@ -72,7 +135,13 @@ async function submit() {
     if (controller.signal.aborted) return;
     password.value = "";
     visible.value = false;
-    result.value = response.message;
+    generation = started;
+    now.value = serverNow();
+    submittedEmail.value = email.value.trim();
+    remainingAttempts.value = null;
+    ended.value = false;
+    attempt.value = response;
+    saveAttempt();
     await nextTick();
     resultElement.value?.focus();
   } catch (error) {
@@ -101,8 +170,53 @@ async function submit() {
   }
 }
 
+async function verify() {
+  if (!attempt.value || !canVerify.value) return;
+  pending.value = true;
+  failure.value = "";
+  try {
+    await auth.verifyRegistration(
+      attempt.value.attemptToken,
+      code.value,
+      generation,
+    );
+    if (controller.signal.aborted) return;
+    attempt.value = null;
+    forgetAttempt();
+    await router.push(safeReturnTo(route.query.returnTo));
+  } catch (error) {
+    if (controller.signal.aborted) return;
+    failure.value = errorMessage(error, "Не удалось подтвердить код");
+    if (isApiError(error)) {
+      const details = error.details as
+        { remainingAttempts?: number; retryAfterSeconds?: number } | undefined;
+      if (details?.remainingAttempts !== undefined) {
+        remainingAttempts.value = details.remainingAttempts;
+        saveAttempt();
+      }
+      if (
+        error.code === "LOGIN_ATTEMPT_INVALID" ||
+        error.code === "SESSION_CHANGED" ||
+        details?.remainingAttempts === 0
+      ) {
+        ended.value = true;
+        forgetAttempt();
+      }
+      if (error.status === 429 && details?.retryAfterSeconds)
+        countdown(details.retryAfterSeconds);
+    }
+    await nextTick();
+    resultElement.value?.focus();
+  } finally {
+    pending.value = false;
+  }
+}
+
 async function changeEmail() {
-  result.value = "";
+  attempt.value = null;
+  ended.value = false;
+  failure.value = "";
+  forgetAttempt();
   password.value = "";
   await nextTick();
   form.value?.querySelector<HTMLInputElement>("[name=email]")?.focus();
@@ -112,6 +226,7 @@ onBeforeUnmount(() => {
   password.value = "";
   controller.abort();
   clearInterval(timer);
+  clearInterval(clock);
 });
 </script>
 
@@ -129,16 +244,59 @@ onBeforeUnmount(() => {
         </CardHeader>
         <CardContent>
           <div
-            v-if="result"
+            v-if="attempt || ended"
             ref="resultElement"
             tabindex="-1"
-            role="status"
             class="space-y-4"
           >
-            <p>{{ result }}</p>
-            <a href="/activation" class="block text-sm underline"
-              >Запросить письмо активации повторно</a
-            >
+            <h2 class="text-base font-semibold">Проверьте почту</h2>
+            <p>
+              Для продолжения следуйте инструкциям в письме на
+              <strong>{{ submittedEmail }}</strong
+              >.
+            </p>
+            <p>Если в письме есть код подтверждения, введите его ниже.</p>
+            <form novalidate :aria-busy="pending" @submit.prevent="verify">
+              <FieldGroup>
+                <Field>
+                  <FieldLabel for="registration-code"
+                    >Код подтверждения</FieldLabel
+                  >
+                  <Input
+                    id="registration-code"
+                    :value="code"
+                    name="code"
+                    type="text"
+                    inputmode="numeric"
+                    autocomplete="one-time-code"
+                    maxlength="12"
+                    :disabled="pending || ended"
+                    :aria-invalid="!!failure"
+                    aria-describedby="registration-feedback"
+                    @input="onCodeInput"
+                  />
+                </Field>
+                <div id="registration-feedback" role="status">
+                  <FieldError v-if="failure" role="alert">{{
+                    failure
+                  }}</FieldError>
+                  <p v-if="remainingAttempts !== null">
+                    Осталось проверок: {{ remainingAttempts }}
+                  </p>
+                  <p v-if="retryAfterSeconds">
+                    Повторить можно через {{ retryAfterSeconds }} с
+                  </p>
+                </div>
+                <Button type="submit" :disabled="!canVerify">
+                  <Spinner v-if="pending" data-icon="inline-start" />
+                  {{ pending ? "Проверяем…" : "Продолжить" }}
+                </Button>
+              </FieldGroup>
+            </form>
+            <p class="text-sm text-muted-foreground">
+              Письмо не пришло? Проверьте папку «Спам» или запросите его
+              повторно после окончания ожидания.
+            </p>
             <Button
               type="button"
               variant="outline"
@@ -146,12 +304,13 @@ onBeforeUnmount(() => {
               @click="changeEmail"
               >Изменить email</Button
             >
-            <a href="/login" class="block text-sm underline"
-              >Перейти ко входу</a
-            >
-            <a href="/password-reset" class="block text-sm underline"
-              >Восстановить доступ</a
-            >
+            <p class="text-sm">
+              Уже пользовались сервисом?
+              <a href="/login" class="underline">Войти</a> ·
+              <a href="/password-reset" class="underline"
+                >Восстановить доступ</a
+              >
+            </p>
           </div>
           <form
             v-else

@@ -3,8 +3,15 @@ export interface RegistrationRecord {
   name: string;
   email: string;
   passwordHash: string;
+  attempt: RegistrationAttemptRecord;
+}
+
+export interface RegistrationAttemptRecord {
   tokenHash: string;
+  codeHash: string;
   expiresAt: Date;
+  codeExpiresAt: Date;
+  resendAvailableAt: Date;
 }
 
 export type SaveOutcome = "created" | "active" | "inactive";

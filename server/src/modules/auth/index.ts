@@ -54,6 +54,7 @@ export function createAuthHttp(
             allowedOrigins: registrationSettings.allowedOrigins,
             registration: createRegistration({
               ...registrationSettings,
+              codeSecret: settings.codeSecret,
               store: createSqlRegistrationStore(),
               hasher,
               clock: systemClock,
