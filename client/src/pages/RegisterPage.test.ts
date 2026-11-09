@@ -1,14 +1,27 @@
 import { flushPromises, mount } from "@vue/test-utils";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { createMemoryHistory, createRouter } from "vue-router";
 import { clearSession, getAccessToken } from "@/api/session";
 import RegisterPage from "./RegisterPage.vue";
 
 const push = vi.fn();
 const query: Record<string, unknown> = {};
-vi.mock("vue-router", () => ({
+vi.mock("vue-router", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("vue-router")>()),
   useRouter: () => ({ push }),
   useRoute: () => ({ query }),
 }));
+
+function mountPage(options: { attachTo?: HTMLElement } = {}) {
+  const router = createRouter({
+    history: createMemoryHistory(),
+    routes: ["/", "/login", "/password-reset"].map((path) => ({
+      path,
+      component: { template: "<div />" },
+    })),
+  });
+  return mount(RegisterPage, { ...options, global: { plugins: [router] } });
+}
 
 const ATTEMPT_KEY = "file-service-registration-attempt";
 const SECRET = "s".repeat(43);
@@ -49,7 +62,7 @@ async function fill(wrapper: ReturnType<typeof mount>) {
   await wrapper.get("input[name=password]").setValue(" 1234567890😀 ");
 }
 
-it("показывает ожидание, затем экран «Проверьте почту» с адресом и без пароля", async () => {
+it("показывает ожидание, затем экран подтверждения с адресом и без пароля", async () => {
   let finish!: (response: Response) => void;
   const fetch = vi.fn().mockReturnValue(
     new Promise<Response>((resolve) => {
@@ -57,7 +70,7 @@ it("показывает ожидание, затем экран «Провер�
     }),
   );
   vi.stubGlobal("fetch", fetch);
-  const wrapper = mount(RegisterPage, { attachTo: document.body });
+  const wrapper = mountPage({ attachTo: document.body });
   await fill(wrapper);
   await wrapper.get("button[aria-label='Показать пароль']").trigger("click");
   expect(wrapper.get("input[name=password]").attributes("type")).toBe("text");
@@ -68,11 +81,8 @@ it("показывает ожидание, затем экран «Провер�
   expect(wrapper.text()).toContain("Обрабатываем запрос");
   finish(json(attempt(), 202));
   await flushPromises();
-  expect(wrapper.text()).toContain("Проверьте почту");
+  expect(wrapper.find("input[name=code]").exists()).toBe(true);
   expect(wrapper.text()).toContain("User+tag@example.com");
-  expect(wrapper.text()).toContain(
-    "Если в письме есть код подтверждения, введите его ниже.",
-  );
   expect(wrapper.text()).toContain("Письмо не пришло? Проверьте папку «Спам»");
   expect(wrapper.find("input[name=password]").exists()).toBe(false);
   expect(wrapper.find("a[href='/login']").exists()).toBe(true);
@@ -100,7 +110,7 @@ it("показывает ожидание, затем экран «Провер�
 
 async function toCodeScreen(fetch: ReturnType<typeof vi.fn>) {
   vi.stubGlobal("fetch", fetch);
-  const wrapper = mount(RegisterPage, { attachTo: document.body });
+  const wrapper = mountPage({ attachTo: document.body });
   await fill(wrapper);
   await wrapper.get("form").trigger("submit");
   await flushPromises();
@@ -129,8 +139,18 @@ it("поле кода принимает вставку с ведущими ну
     inputmode: "numeric",
     autocomplete: "one-time-code",
   });
+  for (const value of ["a", "б"]) {
+    await code.setValue(value);
+    await flushPromises();
+    expect(code.element.value).toBe("");
+  }
   await code.setValue(" 012 345 ");
   expect(code.element.value).toBe("012345");
+  for (const value of ["012345a", "01234567", " 012 345 "]) {
+    await code.setValue(value);
+    await flushPromises();
+    expect(code.element.value).toBe("012345");
+  }
   expect(fetch).toHaveBeenCalledTimes(1);
   await wrapper.get("form").trigger("submit");
   await flushPromises();
@@ -145,6 +165,27 @@ it("поле кода принимает вставку с ведущими ну
   expect(sessionStorage.getItem(ATTEMPT_KEY)).toBeNull();
   wrapper.unmount();
 });
+
+it.each([
+  ["формы", false, "/login"],
+  ["формы", false, "/password-reset"],
+  ["подтверждения", true, "/login"],
+  ["подтверждения", true, "/password-reset"],
+] as const)(
+  "переход с экрана %s (попытка: %s) на %s выполняется без перезагрузки страницы",
+  async (_screen, withAttempt, path) => {
+    const wrapper = withAttempt
+      ? await toCodeScreen(vi.fn().mockResolvedValueOnce(json(attempt(), 202)))
+      : mountPage();
+    await flushPromises();
+    const click = new MouseEvent("click", { bubbles: true, cancelable: true });
+    wrapper.get(`a[href='${path}']`).element.dispatchEvent(click);
+    await flushPromises();
+    expect(click.defaultPrevented).toBe(true);
+    expect(wrapper.vm.$router.currentRoute.value.path).toBe(path);
+    wrapper.unmount();
+  },
+);
 
 it("неполный код не отправляется, а неверный код показывает остаток проверок", async () => {
   const fetch = vi
@@ -168,6 +209,48 @@ it("неполный код не отправляется, а неверный �
   expect(getAccessToken()).toBeNull();
   expect(sessionStorage.getItem(ATTEMPT_KEY)).not.toBeNull();
   wrapper.unmount();
+});
+
+it("истечение кода сохраняет ввод и показывает ошибку поля только после проверки", async () => {
+  vi.useFakeTimers({ now: new Date("2026-01-01T00:00:00Z") });
+  const fetch = vi
+    .fn()
+    .mockResolvedValueOnce(json(attempt(), 202))
+    .mockResolvedValueOnce(apiError("LOGIN_CODE_EXPIRED", 400))
+    .mockImplementationOnce(async () => json(resendBody(), 200));
+  const wrapper = await toCodeScreen(fetch);
+  try {
+    const code = wrapper.get<HTMLInputElement>("input[name=code]");
+    await code.setValue("012345");
+    await vi.advanceTimersByTimeAsync(300000);
+    expect(code.element.value).toBe("012345");
+    expect(code.attributes("aria-invalid")).toBe("false");
+    expect(wrapper.text()).not.toContain("Срок действия кода истёк");
+    expect(
+      wrapper.get("button[type=submit]").attributes("disabled"),
+    ).toBeUndefined();
+    await wrapper.get("form").trigger("submit");
+    await flushPromises();
+    expect(fetch.mock.calls[1]![0]).toBe("/api/auth/registration/verify");
+    expect(code.attributes("aria-invalid")).toBe("true");
+    expect(wrapper.get("#registration-code-error").text()).toBe(
+      "Срок действия кода истёк. Запросите письмо повторно.",
+    );
+    expect(document.activeElement).toBe(code.element);
+    expect(wrapper.get("#registration-feedback").text()).not.toContain(
+      "Срок действия кода истёк",
+    );
+    expect(sessionStorage.getItem(ATTEMPT_KEY)).not.toBeNull();
+    await wrapper.get("button[data-action=resend]").trigger("click");
+    await flushPromises();
+    expect(code.element.value).toBe("");
+    expect(code.attributes("aria-invalid")).toBe("false");
+    expect(
+      wrapper.get("button[data-action=resend]").attributes("disabled"),
+    ).toBeDefined();
+  } finally {
+    wrapper.unmount();
+  }
 });
 
 it("пятая неверная проверка и завершённая попытка очищают секрет и оставляют переходы ко входу и восстановлению", async () => {
@@ -214,7 +297,7 @@ it("секрет и код из адреса страницы не импорт�
     "",
     "/register#attemptToken=foreign&code=123456",
   );
-  const wrapper = mount(RegisterPage, { attachTo: document.body });
+  const wrapper = mountPage({ attachTo: document.body });
   await flushPromises();
   expect(wrapper.find("input[name=code]").exists()).toBe(false);
   expect(sessionStorage.getItem(ATTEMPT_KEY)).toBeNull();
@@ -257,7 +340,7 @@ it("показывает ошибки у полей, переводит фоку
       ),
     ),
   );
-  const wrapper = mount(RegisterPage, { attachTo: document.body });
+  const wrapper = mountPage({ attachTo: document.body });
   await fill(wrapper);
   await wrapper.get("form").trigger("submit");
   await flushPromises();
@@ -273,7 +356,7 @@ it("показывает ошибки у полей, переводит фоку
 });
 
 it("при ограничении показывает секунды и запрещает повтор до конца ожидания", async () => {
-  vi.useFakeTimers();
+  vi.useFakeTimers({ now: new Date("2026-01-01T00:00:00Z") });
   vi.stubGlobal(
     "fetch",
     vi.fn().mockResolvedValue(
@@ -289,7 +372,7 @@ it("при ограничении показывает секунды и зап�
       ),
     ),
   );
-  const wrapper = mount(RegisterPage);
+  const wrapper = mountPage();
   try {
     await fill(wrapper);
     await wrapper.get("form").trigger("submit");
@@ -314,13 +397,13 @@ it("при ограничении показывает секунды и зап�
 it("уход отменяет запрос и новое открытие формы не восстанавливает пароль", async () => {
   const fetch = vi.fn().mockReturnValue(new Promise(() => {}));
   vi.stubGlobal("fetch", fetch);
-  const wrapper = mount(RegisterPage);
+  const wrapper = mountPage();
   await fill(wrapper);
   await wrapper.get("form").trigger("submit");
   const signal = fetch.mock.calls[0]![1].signal as AbortSignal;
   wrapper.unmount();
   expect(signal.aborted).toBe(true);
-  const reopened = mount(RegisterPage);
+  const reopened = mountPage();
   expect(
     reopened.get<HTMLInputElement>("input[name=password]").element.value,
   ).toBe("");
@@ -332,8 +415,8 @@ const resendBody = (now = Date.now()) => {
   return terms;
 };
 
-it("повтор письма недоступен до серверного срока, не запускается сам и показывает ожидание", async () => {
-  vi.useFakeTimers();
+it("повтор письма недоступен до истечения кода, не запускается сам и показывает ожидание", async () => {
+  vi.useFakeTimers({ now: new Date("2026-01-01T00:00:00Z") });
   const fetch = vi.fn().mockResolvedValueOnce(json(attempt(), 202));
   const wrapper = await toCodeScreen(fetch);
   try {
@@ -343,6 +426,10 @@ it("повтор письма недоступен до серверного с�
     await vi.advanceTimersByTimeAsync(58000);
     expect(resend().attributes("disabled")).toBeDefined();
     await vi.advanceTimersByTimeAsync(3000);
+    expect(resend().attributes("disabled")).toBeDefined();
+    await vi.advanceTimersByTimeAsync(238000);
+    expect(resend().attributes("disabled")).toBeDefined();
+    await vi.advanceTimersByTimeAsync(1000);
     expect(resend().attributes("disabled")).toBeUndefined();
     await vi.advanceTimersByTimeAsync(120000);
     expect(fetch).toHaveBeenCalledTimes(1);
@@ -352,7 +439,7 @@ it("повтор письма недоступен до серверного с�
 });
 
 it("повтор письма отправляет секрет попытки, обновляет сроки, очищает код и сохраняет возможность войти", async () => {
-  vi.useFakeTimers();
+  vi.useFakeTimers({ now: new Date("2026-01-01T00:00:00Z") });
   const fetch = vi
     .fn()
     .mockResolvedValueOnce(json(attempt(), 202))
@@ -379,7 +466,7 @@ it("повтор письма отправляет секрет попытки, 
   const wrapper = await toCodeScreen(fetch);
   try {
     await wrapper.get("input[name=code]").setValue("111111");
-    await vi.advanceTimersByTimeAsync(61000);
+    await vi.advanceTimersByTimeAsync(300000);
     await wrapper.get("button[data-action=resend]").trigger("click");
     await flushPromises();
     expect(fetch.mock.calls[1]![0]).toBe("/api/auth/registration/resend");
@@ -408,16 +495,16 @@ it("повтор письма отправляет секрет попытки, 
 });
 
 it("отказ повтора по сроку берёт ожидание у сервера и не раскрывает наличие аккаунта", async () => {
-  vi.useFakeTimers();
+  vi.useFakeTimers({ now: new Date("2026-01-01T00:00:00Z") });
   const fetch = vi
     .fn()
     .mockResolvedValueOnce(json(attempt(), 202))
-    .mockResolvedValueOnce(
+    .mockImplementationOnce(async () =>
       apiError("RATE_LIMITED", 429, { retryAfterSeconds: 90 }),
     );
   const wrapper = await toCodeScreen(fetch);
   try {
-    await vi.advanceTimersByTimeAsync(61000);
+    await vi.advanceTimersByTimeAsync(300000);
     await wrapper.get("button[data-action=resend]").trigger("click");
     await flushPromises();
     const resend = () => wrapper.get("button[data-action=resend]");
@@ -433,14 +520,14 @@ it("отказ повтора по сроку берёт ожидание у с�
 });
 
 it("повтор для завершённой попытки очищает секрет и оставляет переходы ко входу и восстановлению", async () => {
-  vi.useFakeTimers();
+  vi.useFakeTimers({ now: new Date("2026-01-01T00:00:00Z") });
   const fetch = vi
     .fn()
     .mockResolvedValueOnce(json(attempt(), 202))
     .mockResolvedValueOnce(apiError("LOGIN_ATTEMPT_INVALID", 410));
   const wrapper = await toCodeScreen(fetch);
   try {
-    await vi.advanceTimersByTimeAsync(61000);
+    await vi.advanceTimersByTimeAsync(300000);
     await wrapper.get("button[data-action=resend]").trigger("click");
     await flushPromises();
     expect(sessionStorage.getItem(ATTEMPT_KEY)).toBeNull();
