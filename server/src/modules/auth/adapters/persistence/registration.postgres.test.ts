@@ -267,13 +267,13 @@ it("минутный отказ расходует часовую квоту б�
   ).toBe(3540);
 });
 
-it("собранное HTTP-приложение не пускает неактивного пользователя и сохраняет запись при неизвестном результате сохранения", async () => {
+it("собранное HTTP-приложение даёт неактивному пользователю только попытку входа без сессии и сохраняет запись при неизвестном результате сохранения", async () => {
   const auth = createAuthHarness();
   const first = record();
   first.passwordHash = await auth.hasher.hash("original password");
   const store = createSqlRegistrationStore();
   await store.save(first, deadline());
-  const sessions = auth.withStore(createSqlSessionStore());
+  const sessions = auth.withStore(createSqlSessionStore(auth.clock));
   const sendEmail = vi.fn();
   const registration = createRegistration({
     codeSecret: CODE_SECRET,
@@ -325,8 +325,9 @@ it("собранное HTTP-приложение не пускает неакт�
       email: first.email,
       password: "original password",
     });
-    expect(login.status).toBe(403);
+    expect(login.status).toBe(200);
     expect(login.headers.getSetCookie()).toEqual([]);
+    expect(auth.sendEmail).toHaveBeenCalledOnce();
     expect((await fetch(`${base}/api/files`)).status).toBe(401);
     const failed = await post("register", {
       name: "Новое имя",
@@ -349,7 +350,7 @@ it("собранное HTTP-приложение не пускает неакт�
     expect(
       (await pool.query("select count(*) from auth_mail_events")).rows[0]
         ?.count,
-    ).toBe(5);
+    ).toBe(8);
     await wait(150);
     expect(sendEmail).not.toHaveBeenCalled();
   } finally {

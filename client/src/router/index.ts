@@ -13,12 +13,6 @@ declare module "vue-router" {
 
 const routes: RouteRecordRaw[] = [
   {
-    path: "/activation",
-    name: "activation",
-    component: () => import("@/pages/ActivationPage.vue"),
-    meta: { link: true },
-  },
-  {
     path: "/password-reset",
     name: "password-reset",
     component: () => import("@/pages/PasswordResetPage.vue"),

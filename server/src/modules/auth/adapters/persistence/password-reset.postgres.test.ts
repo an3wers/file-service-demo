@@ -1,4 +1,4 @@
-import { createHash, randomBytes, randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import type { Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { Router } from "express";
@@ -155,11 +155,6 @@ it("неактивный пользователь задаёт пароль по
       })
     ).status,
   ).toBe(202);
-  const activation = randomBytes(32).toString("base64url");
-  await pool.query(
-    "insert into auth_secrets (user_id, purpose, token_hash, expires_at) select id, 'activation', $1, now() + interval '1 day' from users",
-    [createHash("sha256").update(activation).digest("hex")],
-  );
   h.clock.advance(1 / 60);
   const requestedAt = h.clock.now().getTime();
   const token = await h.resetLink();
@@ -177,8 +172,6 @@ it("неактивный пользователь задаёт пароль по
   expect((await pool.query("select state from users")).rows).toEqual([
     { state: "inactive" },
   ]);
-  expect((await h.post("activation/confirm", { token })).status).toBe(400);
-  expect((await h.confirm(activation)).status).toBe(400);
   const response = await h.confirm(token);
   expect(response.status).toBe(200);
   expect(await response.json()).toEqual({
@@ -193,9 +186,6 @@ it("неактивный пользователь задаёт пароль по
   ]);
   expect((await pool.query("select * from auth_secrets")).rows).toEqual([]);
   expect((await h.confirm(token)).status).toBe(400);
-  expect(
-    (await h.post("activation/confirm", { token: activation })).status,
-  ).toBe(400);
   expect((await h.login()).status).toBe(401);
   const login = await h.post("login", {
     email: EMAIL,

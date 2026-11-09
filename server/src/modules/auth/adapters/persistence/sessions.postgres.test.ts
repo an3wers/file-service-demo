@@ -163,6 +163,45 @@ it("регистрация и активация дают вход только 
   expect(other.auth.sendEmail).not.toHaveBeenCalled();
 });
 
+it("неактивный пользователь входит по коду входа: верный код активирует, создаёт сессию, а оставшаяся попытка регистрации её не создаёт", async () => {
+  const h = await start();
+  const registered = await h.post("register", {
+    name: "Имя",
+    email: EMAIL,
+    password: PASSWORD,
+  });
+  expect(registered.status).toBe(202);
+  const registration = await registered.json();
+  const registrationCode = h.auth.code();
+  const wrongPassword = await h.post("login", {
+    email: EMAIL,
+    password: "wrong password",
+  });
+  expect(wrongPassword.status).toBe(401);
+  const { attemptToken } = await (await h.login()).json();
+  expect(
+    (await pool.query("select state from users")).rows[0]!.state,
+  ).toBe("inactive");
+  const session = await h.verify(attemptToken);
+  expect(session.status).toBe(200);
+  expect(
+    (await pool.query("select state from users")).rows[0]!.state,
+  ).toBe("active");
+  expect((await pool.query("select * from auth_sessions")).rowCount).toBe(1);
+  expect(
+    (await h.post("refresh", undefined, cookieOf(session))).status,
+  ).toBe(200);
+  expect(
+    (
+      await h.post("registration/verify", {
+        attemptToken: registration.attemptToken,
+        code: registrationCode,
+      })
+    ).status,
+  ).toBe(410);
+  expect((await pool.query("select * from auth_sessions")).rowCount).toBe(1);
+});
+
 it("гонка успешных проверок между экземплярами атомарно создаёт ровно одну сессию", async () => {
   const h = await start();
   await h.activate();

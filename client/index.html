@@ -5,9 +5,7 @@
     <meta name="referrer" content="no-referrer" />
     <script>
       (() => {
-        const page = /^\/(activation|password-reset)\/?$/i
-          .exec(location.pathname)?.[1]
-          ?.toLowerCase();
+        const page = /^\/password-reset\/?$/i.test(location.pathname);
         const fragment = !!page && !!location.hash;
         const token =
           fragment && new URLSearchParams(location.hash.slice(1)).get("token");
@@ -20,14 +18,12 @@
         try {
           const reload =
             performance.getEntriesByType("navigation")[0]?.type === "reload";
-          for (const name of ["activation", "password-reset"]) {
-            if (name !== page || fragment || !reload) {
-              sessionStorage.removeItem(`file-service-${name}-token`);
-              sessionStorage.removeItem(`file-service-${name}-form`);
-            }
+          if (!page || fragment || !reload) {
+            sessionStorage.removeItem("file-service-password-reset-token");
+            sessionStorage.removeItem("file-service-password-reset-form");
           }
           if (token)
-            sessionStorage.setItem(`file-service-${page}-token`, token);
+            sessionStorage.setItem("file-service-password-reset-token", token);
         } catch {}
       })();
     </script>

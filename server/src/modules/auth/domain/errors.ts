@@ -17,11 +17,6 @@ export class SessionExpiredError extends AuthDomainError {
   }
 }
 
-export class EmailNotVerifiedError extends AuthDomainError {
-  constructor() {
-    super("Подтвердите email, чтобы войти");
-  }
-}
 export class LoginAttemptInvalidError extends AuthDomainError {
   constructor() {
     super("Попытка входа завершена. Войдите заново");

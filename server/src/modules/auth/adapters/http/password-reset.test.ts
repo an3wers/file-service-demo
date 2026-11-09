@@ -20,8 +20,6 @@ async function start() {
   const store = {
     consume: vi.fn().mockResolvedValue(0),
     save: vi.fn().mockResolvedValue("created"),
-    requestActivation: vi.fn().mockResolvedValue(true),
-    confirmActivation: vi.fn().mockResolvedValue(true),
     requestPasswordReset: vi.fn().mockResolvedValue(true),
     confirmPasswordReset: vi.fn().mockResolvedValue("user@example.com"),
     resendRegistration: vi.fn().mockResolvedValue({ status: "unavailable" }),

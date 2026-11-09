@@ -15,9 +15,3 @@ export class PasswordResetLinkInvalidError extends Error {
     super("Ссылка недействительна. Запросите новое письмо восстановления");
   }
 }
-
-export class ActivationLinkInvalidError extends Error {
-  constructor() {
-    super("Ссылка недействительна. Запросите новое письмо активации");
-  }
-}

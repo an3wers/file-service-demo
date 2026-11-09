@@ -136,7 +136,7 @@ it("после пароля создаёт попытку без сессии и
   );
 });
 
-it("неизвестный email и неправильный пароль одинаковы; неактивность видна только после правильного пароля", async () => {
+it("неизвестный email и неправильный пароль одинаковы, в том числе для неактивного пользователя", async () => {
   const h = await start();
   const results = [];
   for (const [email, password] of [
@@ -150,14 +150,51 @@ it("неизвестный email и неправильный пароль оди
   }
   expect(results[0]).toEqual(results[1]);
   await h.auth.seed("inactive");
-  expect((await h.login(EMAIL, "wrong password")).status).toBe(401);
-  const inactive = await h.login();
-  expect(inactive.status).toBe(403);
-  expect((await errorOf(inactive)).code).toBe("EMAIL_NOT_VERIFIED");
+  const inactive = await h.login(EMAIL, "wrong password");
+  expect(inactive.status).toBe(401);
+  const inactiveError = await errorOf(inactive);
+  expect({ code: inactiveError.code, message: inactiveError.message }).toEqual(
+    results[0],
+  );
   expect(h.auth.sendEmail).not.toHaveBeenCalled();
   expect(
     (await h.post("login", { login: "operator", password: PASSWORD })).status,
   ).toBe(422);
+});
+
+it("неактивный пользователь входит по коду входа: повтор работает, верный код активирует и открывает файлы", async () => {
+  const h = await start();
+  await h.auth.seed("inactive");
+  const response = await h.login();
+  expect(response.status).toBe(200);
+  const { attemptToken } = await response.json();
+  expect(h.auth.sendEmail).toHaveBeenLastCalledWith(
+    expect.objectContaining({ to: EMAIL, subject: "Код входа" }),
+    expect.anything(),
+  );
+  h.auth.clock.advance(1 / 60);
+  expect((await h.resend(attemptToken)).status).toBe(200);
+  expect(h.auth.sendEmail).toHaveBeenCalledTimes(2);
+  const verified = await h.verify(attemptToken);
+  expect(verified.status).toBe(200);
+  expect(cookieOf(verified)).not.toBe("");
+  expect([...h.auth.users.values()][0]!.state).toBe("active");
+  const session = await verified.json();
+  expect((await h.files(session.accessToken)).status).toBe(200);
+  expect(
+    (await h.post("refresh", undefined, cookieOf(verified))).status,
+  ).toBe(200);
+});
+
+it("пятая ошибка кода завершает попытку входа неактивного пользователя без активации", async () => {
+  const h = await start();
+  await h.auth.seed("inactive");
+  const { attemptToken } = await (await h.login()).json();
+  const wrong = h.auth.code() === "000000" ? "999999" : "000000";
+  for (let attempt = 0; attempt < 5; attempt++)
+    expect((await h.verify(attemptToken, wrong)).status).toBe(400);
+  expect((await h.verify(attemptToken)).status).toBe(410);
+  expect([...h.auth.users.values()][0]!.state).toBe("inactive");
 });
 
 it("пять неправильных кодов завершают попытку, ошибка формата не расходует проверки", async () => {

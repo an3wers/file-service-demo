@@ -7,7 +7,7 @@ import {
   useTemplateRef,
   watch,
 } from "vue";
-import { useRoute, useRouter } from "vue-router";
+import { RouterLink, useRoute, useRouter } from "vue-router";
 import { EyeIcon, EyeOffIcon, HardDriveIcon } from "@lucide/vue";
 import type { RegistrationAttempt } from "@/api/generated";
 import { register, resendRegistration } from "@/api/auth";
@@ -123,16 +123,13 @@ function endAttempt() {
 watch(attemptRemaining, (left) => {
   if (attempt.value && left === 0) endAttempt();
 });
-watch(codeRemaining, (left) => {
-  if (attempt.value && left === 0) code.value = "";
-});
 const stopWatchingSignIn = auth.onSignInElsewhere(() => {
   if (attempt.value) endAttempt();
 });
-function onCodeInput(event: Event) {
-  const input = event.target as HTMLInputElement;
-  code.value = input.value.replace(/\D/g, "").slice(0, 6);
-  input.value = code.value;
+async function onCodeInput(value: string | number) {
+  fieldErrors.value.code = [];
+  await nextTick();
+  code.value = String(value).replace(/\D/g, "").slice(0, 6);
 }
 
 const name = ref("");
@@ -150,7 +147,6 @@ const canVerify = computed(
     !pending.value &&
     !ended.value &&
     /^[0-9]{6}$/.test(code.value) &&
-    codeRemaining.value > 0 &&
     attemptRemaining.value > 0,
 );
 const controller = new AbortController();
@@ -230,6 +226,7 @@ async function verify() {
   if (!attempt.value || !canVerify.value) return;
   pending.value = true;
   failure.value = "";
+  fieldErrors.value = {};
   try {
     await auth.verifyRegistration(
       attempt.value.attemptToken,
@@ -240,7 +237,15 @@ async function verify() {
     await finishRegistration();
   } catch (error) {
     if (controller.signal.aborted) return;
-    failure.value = errorMessage(error, "Не удалось подтвердить код");
+    if (isApiError(error) && error.code === "LOGIN_CODE_EXPIRED") {
+      fieldErrors.value.code = [
+        "Срок действия кода истёк. Запросите письмо повторно.",
+      ];
+    } else if (isApiError(error) && error.code === "LOGIN_CODE_INVALID") {
+      fieldErrors.value.code = [errorMessage(error)];
+    } else {
+      failure.value = errorMessage(error, "Не удалось подтвердить код");
+    }
     if (isApiError(error) && (error.status === 0 || error.status >= 500)) {
       // Ответ мог потеряться уже после создания сессии, поэтому сначала
       // пробуем получить её по refresh-cookie; код при этом не считаем неверным.
@@ -277,18 +282,31 @@ async function verify() {
       if (error.status === 429 && details.retryAfterSeconds)
         countdown(details.retryAfterSeconds);
     }
+    pending.value = false;
     await nextTick();
-    resultElement.value?.focus();
+    if (fieldErrors.value.code?.length) {
+      resultElement.value
+        ?.querySelector<HTMLInputElement>("[name=code]")
+        ?.focus();
+    } else {
+      resultElement.value?.focus();
+    }
   } finally {
     pending.value = false;
   }
 }
 
 const resendRemaining = computed(() =>
-  secondsLeft(attempt.value?.resendAvailableAt),
+  Math.max(codeRemaining.value, secondsLeft(attempt.value?.resendAvailableAt)),
 );
 async function resend() {
-  if (!attempt.value || pending.value || resendRemaining.value > 0) return;
+  if (
+    !attempt.value ||
+    pending.value ||
+    ended.value ||
+    resendRemaining.value > 0
+  )
+    return;
   pending.value = true;
   failure.value = "";
   try {
@@ -300,6 +318,7 @@ async function resend() {
     now.value = serverNow();
     attempt.value = { ...attempt.value, ...response };
     code.value = "";
+    fieldErrors.value = {};
     saveAttempt();
   } catch (error) {
     if (controller.signal.aborted) return;
@@ -334,6 +353,7 @@ async function changeEmail() {
   attempt.value = null;
   ended.value = false;
   failure.value = "";
+  fieldErrors.value = {};
   forgetAttempt();
   password.value = "";
   await nextTick();
@@ -368,18 +388,13 @@ onBeforeUnmount(() => {
             tabindex="-1"
             class="space-y-4"
           >
-            <h2 class="text-base font-semibold">Проверьте почту</h2>
             <p>
               Для продолжения следуйте инструкциям в письме на
               <strong>{{ submittedEmail }}</strong
               >.
             </p>
-            <p>Если в письме есть код подтверждения, введите его ниже.</p>
             <p v-if="ended" role="status">
               Попытка завершена. Войдите или восстановите доступ.
-            </p>
-            <p v-else-if="attempt && codeRemaining === 0" role="status">
-              Срок действия кода истёк. Войдите или восстановите доступ.
             </p>
             <form novalidate :aria-busy="pending" @submit.prevent="verify">
               <FieldGroup>
@@ -389,17 +404,20 @@ onBeforeUnmount(() => {
                   >
                   <Input
                     id="registration-code"
-                    :value="code"
+                    v-model="code"
                     name="code"
                     type="text"
                     inputmode="numeric"
                     autocomplete="one-time-code"
                     maxlength="12"
                     :disabled="pending || ended"
-                    :aria-invalid="!!failure"
-                    aria-describedby="registration-feedback"
-                    @input="onCodeInput"
+                    :aria-invalid="!!fieldErrors.code?.length"
+                    aria-describedby="registration-code-error registration-feedback"
+                    @update:model-value="onCodeInput"
                   />
+                  <FieldError id="registration-code-error" role="alert">{{
+                    fieldErrors.code?.join(". ")
+                  }}</FieldError>
                 </Field>
                 <div id="registration-feedback" role="status">
                   <FieldError v-if="failure" role="alert">{{
@@ -442,9 +460,9 @@ onBeforeUnmount(() => {
             >
             <p class="text-sm">
               Уже пользовались сервисом?
-              <a href="/login" class="underline">Войти</a> ·
-              <a href="/password-reset" class="underline"
-                >Восстановить доступ</a
+              <RouterLink to="/login" class="underline">Войти</RouterLink> ·
+              <RouterLink to="/password-reset" class="underline"
+                >Восстановить доступ</RouterLink
               >
             </p>
           </div>
@@ -456,12 +474,6 @@ onBeforeUnmount(() => {
             @submit.prevent="submit"
           >
             <FieldGroup>
-              <p data-lost-attempt class="text-sm text-muted-foreground">
-                Если вы уже начинали регистрацию, но эта страница была закрыта
-                или данные вкладки потеряны, продолжить ввод кода здесь
-                нельзя. Войдите или восстановите доступ либо заполните форму
-                заново.
-              </p>
               <Field>
                 <FieldLabel for="name">Имя</FieldLabel>
                 <Input
@@ -538,11 +550,13 @@ onBeforeUnmount(() => {
                 <Spinner v-if="pending" data-icon="inline-start" />
                 {{ pending ? "Обрабатываем запрос…" : "Зарегистрироваться" }}
               </Button>
-              <a href="/login" class="text-center text-sm underline"
-                >Перейти ко входу</a
+              <RouterLink to="/login" class="text-center text-sm underline"
+                >Перейти ко входу</RouterLink
               >
-              <a href="/password-reset" class="text-center text-sm underline"
-                >Восстановить доступ</a
+              <RouterLink
+                to="/password-reset"
+                class="text-center text-sm underline"
+                >Восстановить доступ</RouterLink
               >
             </FieldGroup>
           </form>

@@ -21,7 +21,6 @@ import {
 import { RegistrationAttemptInvalidError } from "../domain/errors.js";
 import {
   MailRateLimitedError,
-  ActivationLinkInvalidError,
   PasswordResetLinkInvalidError,
   RegistrationUnavailableError,
 } from "../domain/registration-errors.js";
@@ -42,29 +41,19 @@ export interface RegistrationDeps {
   codeSecret: string;
 }
 
-type LinkPurpose = "activation" | "password-reset";
-const LINKS = {
-  activation: {
-    path: "/activation",
-    ttlMs: 86400000,
-    subject: "Подтверждение email",
-    text: (url: string) =>
-      `Подтвердите email: ${url}\nСсылка действует 24 часа.`,
-  },
-  "password-reset": {
-    path: "/password-reset",
-    ttlMs: 1800000,
-    subject: "Восстановление пароля",
-    text: (url: string) =>
-      `Задайте новый пароль: ${url}\nСсылка действует 30 минут.`,
-  },
+const PASSWORD_RESET_LINK = {
+  path: "/password-reset",
+  ttlMs: 1800000,
+  subject: "Восстановление пароля",
+  text: (url: string) =>
+    `Задайте новый пароль: ${url}\nСсылка действует 30 минут.`,
 } as const;
 
 const ACCESS_INSTRUCTIONS = {
   active: (login: string, reset: string) =>
     `На этот адрес уже зарегистрирован аккаунт.\n\nЧтобы продолжить, войдите в него: ${login}\nЕсли не помните пароль, восстановите доступ: ${reset}\n\nЕсли вы не начинали регистрацию, можете проигнорировать письмо. Этот запрос не изменил данные вашего аккаунта.`,
   inactive: (login: string, reset: string) =>
-    `На этот адрес уже зарегистрирован аккаунт.\n\nЕсли вы не завершили регистрацию, восстановите доступ и задайте собственный пароль: ${reset}\nЕсли аккаунт уже подтверждён, войдите в него: ${login}\n\nЕсли вы не начинали регистрацию, можете проигнорировать письмо. Этот запрос не изменил данные вашего аккаунта.`,
+    `На этот адрес уже зарегистрирован аккаунт.\n\nЧтобы продолжить, войдите с паролем: ${login}\nНа почту придёт код, который подтвердит email.\nЕсли не помните пароль или регистрацию начинали не вы, восстановите доступ: ${reset}\n\nЕсли вы не начинали регистрацию, можете проигнорировать письмо. Этот запрос не изменил данные вашего аккаунта.`,
 } as const;
 
 export const REGISTRATION_MESSAGE =
@@ -161,14 +150,13 @@ export function createRegistration({
     }
   }
   async function sendLink(
-    purpose: LinkPurpose,
     email: string,
     save: (tokenHash: string, expiresAt: Date) => Promise<boolean>,
     deadline: Date,
     mailRequestedAt: Date,
     log: MailLog,
   ) {
-    const link = LINKS[purpose];
+    const link = PASSWORD_RESET_LINK;
     try {
       const token = randomBytes(32).toString("base64url");
       const send = await withinDeadline(deadline, () =>
@@ -180,7 +168,7 @@ export function createRegistration({
         await deliver(
           { to: email, subject: link.subject, text: link.text(url.href) },
           deadline,
-          purpose,
+          "password-reset",
           log,
         );
       }
@@ -230,36 +218,17 @@ export function createRegistration({
     consumeEmail: (
       email: string,
       deadline: Date,
-      purpose: LinkPurpose = "activation",
+      purpose: "activation" | "password-reset" = "activation",
     ) =>
       consume(`mail:${purpose}:${digest(email)}`, EMAIL_MAIL_LIMITS, deadline),
-    consumeConfirmationIp: async (
-      ip: string,
-      deadline: Date,
-      purpose: LinkPurpose = "activation",
-    ) =>
+    consumeConfirmationIp: async (ip: string, deadline: Date) =>
       (
         await consume(
-          `${purpose}:confirm:ip:${digest(ip)}`,
+          `password-reset:confirm:ip:${digest(ip)}`,
           [{ windowMs: CONFIRMATION_IP_WINDOW_MS, maximum: 20 }],
           deadline,
         )
       ).retryAfterSeconds,
-    requestActivation: (
-      email: string,
-      deadline: Date,
-      mailRequestedAt: Date,
-      log: MailLog,
-    ) =>
-      sendLink(
-        "activation",
-        email,
-        (tokenHash, expiresAt) =>
-          store.requestActivation(email, tokenHash, expiresAt, deadline),
-        deadline,
-        mailRequestedAt,
-        log,
-      ),
     requestPasswordReset: (
       email: string,
       deadline: Date,
@@ -267,7 +236,6 @@ export function createRegistration({
       log: MailLog,
     ) =>
       sendLink(
-        "password-reset",
         email,
         (tokenHash, expiresAt) =>
           store.requestPasswordReset(email, tokenHash, expiresAt, deadline),
@@ -304,18 +272,6 @@ export function createRegistration({
         log,
       );
       return { message: "Пароль изменён. Теперь можно войти" as const };
-    },
-    async confirmActivation(token: string, deadline: Date) {
-      let confirmed: boolean;
-      try {
-        confirmed = await withinDeadline(deadline, () =>
-          store.confirmActivation(digest(token), deadline),
-        );
-      } catch {
-        throw new RegistrationUnavailableError();
-      }
-      if (!confirmed) throw new ActivationLinkInvalidError();
-      return { message: "Email подтверждён. Теперь можно войти" as const };
     },
     async resendRegistration(
       attemptToken: string,

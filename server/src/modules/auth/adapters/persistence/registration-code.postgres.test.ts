@@ -157,7 +157,7 @@ it("контекст существующего email не даёт сессию
   expect(await userState()).toBe("inactive");
 });
 
-it("смена пароля восстановлением и активация старой ссылкой лишают попытку возможности войти", async () => {
+it("смена пароля восстановлением лишает попытку возможности войти", async () => {
   const store = createSqlRegistrationStore();
   const reset = await register("reset@example.com");
   const resetToken = sha("reset-token");
@@ -171,17 +171,6 @@ it("смена пароля восстановлением и активация
     await store.confirmPasswordReset(resetToken, "scrypt$new", deadline()),
   ).toBe("reset@example.com");
   expect((await verify(reset.tokenHash)).status).toBe("unavailable");
-
-  const linked = await register("linked@example.com");
-  const activationToken = sha("activation-token");
-  await store.requestActivation(
-    "linked@example.com",
-    activationToken,
-    new Date(Date.now() + 86400000),
-    deadline(),
-  );
-  expect(await store.confirmActivation(activationToken, deadline())).toBe(true);
-  expect((await verify(linked.tokenHash)).status).toBe("unavailable");
   expect(await sessions()).toEqual([]);
 });
 

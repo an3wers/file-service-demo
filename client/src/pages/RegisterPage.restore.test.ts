@@ -1,15 +1,28 @@
 import { flushPromises, mount } from "@vue/test-utils";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { createMemoryHistory, createRouter } from "vue-router";
 import { clearSession } from "@/api/session";
 import { writeSharedAuth } from "@/api/sharedAuth";
 import RegisterPage from "./RegisterPage.vue";
 
 const push = vi.fn();
 const query: Record<string, unknown> = {};
-vi.mock("vue-router", () => ({
+vi.mock("vue-router", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("vue-router")>()),
   useRouter: () => ({ push }),
   useRoute: () => ({ query }),
 }));
+
+function mountPage(options: { attachTo?: HTMLElement } = {}) {
+  const router = createRouter({
+    history: createMemoryHistory(),
+    routes: ["/", "/login", "/password-reset"].map((path) => ({
+      path,
+      component: { template: "<div />" },
+    })),
+  });
+  return mount(RegisterPage, { ...options, global: { plugins: [router] } });
+}
 
 const ATTEMPT_KEY = "file-service-registration-attempt";
 const SECRET = "s".repeat(43);
@@ -65,18 +78,17 @@ afterEach(() => {
 });
 
 async function open() {
-  const wrapper = mount(RegisterPage, { attachTo: document.body });
+  const wrapper = mountPage({ attachTo: document.body });
   await flushPromises();
   return wrapper;
 }
 
-it("обновление страницы восстанавливает экран «Проверьте почту» без запросов и без смены сроков", async () => {
+it("обновление страницы восстанавливает экран подтверждения без запросов и без смены сроков", async () => {
   const fetch = vi.fn();
   vi.stubGlobal("fetch", fetch);
   seed();
   const before = sessionStorage.getItem(ATTEMPT_KEY);
   const wrapper = await open();
-  expect(wrapper.text()).toContain("Проверьте почту");
   expect(wrapper.text()).toContain("User+tag@example.com");
   expect(wrapper.text()).toContain("Осталось проверок: 3");
   expect(wrapper.find("input[name=code]").exists()).toBe(true);
@@ -124,8 +136,11 @@ it("сроки восстановленной попытки считаются 
   await wrapper.get("input[name=code]").setValue("012345");
   expect(
     wrapper.get("button[type=submit]").attributes("disabled"),
+  ).toBeUndefined();
+  expect(wrapper.text()).not.toContain("Срок действия кода истёк");
+  expect(
+    wrapper.get("button[data-action=resend]").attributes("disabled"),
   ).toBeDefined();
-  expect(wrapper.text()).toContain("Срок действия кода истёк");
   wrapper.unmount();
 });
 
@@ -141,7 +156,7 @@ it.each([
   sessionStorage.setItem(ATTEMPT_KEY, raw);
   const wrapper = await open();
   expect(wrapper.find("input[name=password]").exists()).toBe(true);
-  expect(wrapper.text()).not.toContain("Проверьте почту");
+  expect(wrapper.find("input[name=code]").exists()).toBe(false);
   expect(sessionStorage.getItem(ATTEMPT_KEY)).toBeNull();
   expect(fetch).not.toHaveBeenCalled();
   wrapper.unmount();
@@ -187,9 +202,6 @@ it("потеря вкладки с секретом даёт форму со с�
   expect(wrapper.find("input[name=password]").exists()).toBe(true);
   expect(wrapper.find("a[href='/login']").exists()).toBe(true);
   expect(wrapper.find("a[href='/password-reset']").exists()).toBe(true);
-  expect(wrapper.find("[data-lost-attempt]").text()).toContain(
-    "Если вы уже начинали регистрацию",
-  );
   wrapper.unmount();
 });
 

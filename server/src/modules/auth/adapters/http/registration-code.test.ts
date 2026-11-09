@@ -415,23 +415,32 @@ it("повтор для существующего email шлёт инструк
   }
 });
 
-it("повтор делит почтовые квоты адреса с регистрацией и активацией, лимит оставляет прежний код", async () => {
+it("повтор делит почтовую квоту адреса с регистрацией, лимит оставляет прежний код", async () => {
   const h = await start();
   const attempt = await h.register();
-  for (let index = 0; index < 3; index++) {
+  for (let index = 0; index < 4; index++) {
     h.auth.clock.advance(61 / 3600);
     expect((await h.resend(attempt.attemptToken)).status).toBe(200);
   }
   const lastCode = h.sentCode();
   h.auth.clock.advance(61 / 3600);
-  expect((await h.post("activation/request", { email: EMAIL })).status).toBe(
-    202,
-  );
-  h.auth.clock.advance(61 / 3600);
   const limited = await h.resend(attempt.attemptToken);
   expect(limited.status).toBe(429);
-  expect(h.auth.sendEmail).toHaveBeenCalledTimes(4);
+  expect(h.auth.sendEmail).toHaveBeenCalledTimes(5);
   expect((await h.verify(attempt.attemptToken, lastCode)).status).toBe(200);
+});
+
+it("ссылку активации нельзя запросить или подтвердить", async () => {
+  const h = await start();
+  const unknown = (await h.post("unknown", {})).status;
+  expect(unknown).toBeGreaterThanOrEqual(400);
+  expect((await h.post("activation/request", { email: EMAIL })).status).toBe(
+    unknown,
+  );
+  expect((await h.post("activation/confirm", { token: "token" })).status).toBe(
+    unknown,
+  );
+  expect(h.auth.sendEmail).not.toHaveBeenCalled();
 });
 
 it("квота не зависит от наличия аккаунта: тот же отказ для нового и существующего email", async () => {

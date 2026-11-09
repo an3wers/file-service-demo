@@ -32,10 +32,9 @@ export const registrationBodySchema = z.object({
   email: registrationEmailSchema,
   password: codePoints(12, 128),
 });
-export const activationRequestSchema = z.object({
+export const passwordResetRequestSchema = z.object({
   email: registrationEmailSchema,
 });
-export const activationConfirmSchema = z.object({ token: z.string() });
 export const passwordResetConfirmSchema = z
   .object({
     token: z.string(),
@@ -49,10 +48,6 @@ export const passwordResetConfirmSchema = z
 export const passwordResetResponseSchema = z
   .object({ message: z.literal("Пароль изменён. Теперь можно войти") })
   .meta({ id: "PasswordResetResult" });
-export const activationResponseSchema = z
-  .object({ message: z.literal("Email подтверждён. Теперь можно войти") })
-  .meta({ id: "ActivationResult" });
-export type ActivationResponse = z.infer<typeof activationResponseSchema>;
 export const registrationResponseSchema = z
   .object({
     message: z.string(),
