@@ -190,14 +190,25 @@ it("существующему активному email отправляет и�
   expect(h.store.requestActivation).not.toHaveBeenCalled();
 });
 
-it("существующему неподтверждённому email рекомендует восстановление с собственным паролем", async () => {
+it("существующему неподтверждённому email предлагает сначала войти по коду, затем восстановить доступ", async () => {
   const h = await start();
   vi.mocked(h.store.save).mockResolvedValue("inactive");
   await h.request();
   const message = h.sendEmail.mock.calls[0]![0];
-  expect(message.text).toContain("не завершили регистрацию");
-  expect(message.text).toContain("собственный пароль");
-  expect(message.text).not.toMatch(/token=|\/activation/);
+  const text: string = message.text;
+  expect(text).toContain(
+    "войдите с паролем: https://files.example.com/login\nНа почту придёт код, который подтвердит email.",
+  );
+  expect(text).toContain(
+    "Если не помните пароль или регистрацию начинали не вы, восстановите доступ: https://files.example.com/password-reset",
+  );
+  expect(text.indexOf("https://files.example.com/login")).toBeLessThan(
+    text.indexOf("https://files.example.com/password-reset"),
+  );
+  expect(text).toContain("можете проигнорировать");
+  expect(text).not.toContain("собственный пароль");
+  expect(text).not.toMatch(/token=|\/activation|\d{6}/);
+  expect(h.store.requestPasswordReset).not.toHaveBeenCalled();
 });
 
 it("ответы для нового, активного и неактивного email неразличимы", async () => {
