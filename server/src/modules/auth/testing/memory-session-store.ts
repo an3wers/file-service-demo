@@ -254,12 +254,6 @@ export function createMemorySessionStore(clock: Clock) {
         resendAvailableAt: attempt.resendAvailableAt,
       };
     },
-    async requestActivation() {
-      return false;
-    },
-    async confirmActivation() {
-      return false;
-    },
     async requestPasswordReset() {
       return false;
     },

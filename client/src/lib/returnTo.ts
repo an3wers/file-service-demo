@@ -14,7 +14,7 @@ export function safeReturnTo(value: unknown): string {
       url.origin !== "https://internal.invalid" ||
       path.startsWith("//") ||
       path.includes("\\") ||
-      /^\/(login|register|activation|password-reset)(\/|$)/.test(path)
+      /^\/(login|register|password-reset)(\/|$)/.test(path)
     )
       return "/";
     return `${url.pathname}${url.search}${url.hash}`;

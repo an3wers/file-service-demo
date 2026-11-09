@@ -11,7 +11,6 @@ import type { Registration } from "../../application/registration.js";
 import {
   MailRateLimitedError,
   RegistrationUnavailableError,
-  ActivationLinkInvalidError,
   PasswordResetLinkInvalidError,
 } from "../../domain/registration-errors.js";
 import type {
@@ -29,11 +28,10 @@ import {
   registrationBodySchema,
   registrationEmailSchema,
   registrationResendBodySchema,
-  activationRequestSchema,
-  activationConfirmSchema,
+  passwordResetRequestSchema,
   passwordResetConfirmSchema,
 } from "./schemas.js";
-import type { ActivationResponse, SessionResponse } from "./schemas.js";
+import type { SessionResponse } from "./schemas.js";
 
 export interface AuthRouterSettings {
   cookieSecure: boolean;
@@ -116,7 +114,7 @@ export function createAuthRouter(
   };
 
   const requestMail =
-    (kind: "register" | "activation" | "password-reset"): RequestHandler =>
+    (kind: "register" | "password-reset"): RequestHandler =>
     async (req, res) => {
       if (!registration) throw new RegistrationUnavailableError();
       const email = registrationEmailSchema.safeParse(req.body?.email);
@@ -142,12 +140,8 @@ export function createAuthRouter(
               emailAdmission!.requestedAt,
               log,
             )
-          : await registration[
-              kind === "activation"
-                ? "requestActivation"
-                : "requestPasswordReset"
-            ](
-              activationRequestSchema.parse(req.body).email,
+          : await registration.requestPasswordReset(
+              passwordResetRequestSchema.parse(req.body).email,
               deadline,
               emailAdmission!.requestedAt,
               log,
@@ -179,34 +173,25 @@ export function createAuthRouter(
     },
   );
   router.post(
-    "/activation/request",
-    prepareRegistration,
-    parseBody,
-    requestMail("activation"),
-  );
-  router.post(
     "/password-reset/request",
     prepareRegistration,
     parseBody,
     requestMail("password-reset"),
   );
-  const prepareConfirmation =
-    (purpose: "activation" | "password-reset"): RequestHandler =>
-    async (req, res, next) => {
-      if (!registration) throw new RegistrationUnavailableError();
-      res.locals.registrationDeadline = registration.deadline();
-      res.locals.ipRetry = await registration.consumeConfirmationIp(
-        clientIp(req),
-        res.locals.registrationDeadline,
-        purpose,
-      );
-      if (res.locals.ipRetry > 0)
-        throw new MailRateLimitedError(res.locals.ipRetry);
-      next();
-    };
+  const prepareConfirmation: RequestHandler = async (req, res, next) => {
+    if (!registration) throw new RegistrationUnavailableError();
+    res.locals.registrationDeadline = registration.deadline();
+    res.locals.ipRetry = await registration.consumeConfirmationIp(
+      clientIp(req),
+      res.locals.registrationDeadline,
+    );
+    if (res.locals.ipRetry > 0)
+      throw new MailRateLimitedError(res.locals.ipRetry);
+    next();
+  };
   router.post(
     "/password-reset/confirm",
-    prepareConfirmation("password-reset"),
+    prepareConfirmation,
     parseBody,
     async (req, res) => {
       if (!registration) throw new RegistrationUnavailableError();
@@ -219,20 +204,6 @@ export function createAuthRouter(
           mailLogOf(req),
         ),
       );
-    },
-  );
-  router.post(
-    "/activation/confirm",
-    prepareConfirmation("activation"),
-    parseBody,
-    async (req, res) => {
-      if (!registration) throw new RegistrationUnavailableError();
-      const { token } = activationConfirmSchema.parse(req.body);
-      const response: ActivationResponse = await registration.confirmActivation(
-        token,
-        res.locals.registrationDeadline,
-      );
-      res.json(response);
     },
   );
   const prepareSession =
@@ -371,10 +342,6 @@ export function createAuthRouter(
 
   const sanitizeError: ErrorRequestHandler = (error, req, res, next) => {
     res.set("Date", sessions.now().toUTCString());
-    if (error instanceof ActivationLinkInvalidError)
-      return next(
-        new AppError(400, ERROR_CODES.ACTIVATION_LINK_INVALID, error.message),
-      );
     if (error instanceof PasswordResetLinkInvalidError)
       return next(
         new AppError(

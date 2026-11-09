@@ -260,7 +260,6 @@ it.each([
 );
 
 it("ссылка восстановления удаляется из адреса до запуска приложения и живёт только во вкладке", () => {
-  sessionStorage.setItem("file-service-activation-token", "activation-token");
   const script = html.match(/<script>([\s\S]*?)<\/script>/)![1]!;
   const location = {
     pathname: "/password-reset",
@@ -280,6 +279,5 @@ it("ссылка восстановления удаляется из адрес
     "/password-reset",
   );
   expect(sessionStorage.getItem(TOKEN_KEY)).toBe("private-token");
-  expect(sessionStorage.getItem("file-service-activation-token")).toBeNull();
   expect(localStorage.length).toBe(0);
 });

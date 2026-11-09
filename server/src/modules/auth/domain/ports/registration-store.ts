@@ -54,13 +54,6 @@ export interface RegistrationStore {
     deadline: Date,
   ): Promise<number>;
   save(record: RegistrationRecord, deadline: Date): Promise<SaveOutcome>;
-  requestActivation(
-    email: string,
-    tokenHash: string,
-    expiresAt: Date,
-    deadline: Date,
-  ): Promise<boolean>;
-  confirmActivation(tokenHash: string, deadline: Date): Promise<boolean>;
   requestPasswordReset(
     email: string,
     tokenHash: string,

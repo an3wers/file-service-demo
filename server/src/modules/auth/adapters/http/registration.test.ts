@@ -41,8 +41,6 @@ async function start(
   const store: RegistrationStore = {
     consume: vi.fn().mockResolvedValue(0),
     save: vi.fn().mockResolvedValue("created"),
-    requestActivation: vi.fn().mockResolvedValue(true),
-    confirmActivation: vi.fn().mockResolvedValue(true),
     requestPasswordReset: vi.fn().mockResolvedValue(true),
     confirmPasswordReset: vi.fn().mockResolvedValue(null),
     resendRegistration: vi.fn().mockResolvedValue({ status: "unavailable" }),
@@ -187,7 +185,6 @@ it("существующему активному email отправляет и�
   expect(message.text).not.toMatch(/token=|activation|\d{6}/);
   expect(message.text).not.toContain("пароль😀");
   expect(h.store.requestPasswordReset).not.toHaveBeenCalled();
-  expect(h.store.requestActivation).not.toHaveBeenCalled();
 });
 
 it("существующему неподтверждённому email рекомендует восстановление с собственным паролем", async () => {

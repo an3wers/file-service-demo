@@ -21,7 +21,6 @@ import {
 import { RegistrationAttemptInvalidError } from "../domain/errors.js";
 import {
   MailRateLimitedError,
-  ActivationLinkInvalidError,
   PasswordResetLinkInvalidError,
   RegistrationUnavailableError,
 } from "../domain/registration-errors.js";
@@ -42,15 +41,8 @@ export interface RegistrationDeps {
   codeSecret: string;
 }
 
-type LinkPurpose = "activation" | "password-reset";
+type LinkPurpose = "password-reset";
 const LINKS = {
-  activation: {
-    path: "/activation",
-    ttlMs: 86400000,
-    subject: "Подтверждение email",
-    text: (url: string) =>
-      `Подтвердите email: ${url}\nСсылка действует 24 часа.`,
-  },
   "password-reset": {
     path: "/password-reset",
     ttlMs: 1800000,
@@ -230,36 +222,17 @@ export function createRegistration({
     consumeEmail: (
       email: string,
       deadline: Date,
-      purpose: LinkPurpose = "activation",
+      purpose: "activation" | LinkPurpose = "activation",
     ) =>
       consume(`mail:${purpose}:${digest(email)}`, EMAIL_MAIL_LIMITS, deadline),
-    consumeConfirmationIp: async (
-      ip: string,
-      deadline: Date,
-      purpose: LinkPurpose = "activation",
-    ) =>
+    consumeConfirmationIp: async (ip: string, deadline: Date) =>
       (
         await consume(
-          `${purpose}:confirm:ip:${digest(ip)}`,
+          `password-reset:confirm:ip:${digest(ip)}`,
           [{ windowMs: CONFIRMATION_IP_WINDOW_MS, maximum: 20 }],
           deadline,
         )
       ).retryAfterSeconds,
-    requestActivation: (
-      email: string,
-      deadline: Date,
-      mailRequestedAt: Date,
-      log: MailLog,
-    ) =>
-      sendLink(
-        "activation",
-        email,
-        (tokenHash, expiresAt) =>
-          store.requestActivation(email, tokenHash, expiresAt, deadline),
-        deadline,
-        mailRequestedAt,
-        log,
-      ),
     requestPasswordReset: (
       email: string,
       deadline: Date,
@@ -304,18 +277,6 @@ export function createRegistration({
         log,
       );
       return { message: "Пароль изменён. Теперь можно войти" as const };
-    },
-    async confirmActivation(token: string, deadline: Date) {
-      let confirmed: boolean;
-      try {
-        confirmed = await withinDeadline(deadline, () =>
-          store.confirmActivation(digest(token), deadline),
-        );
-      } catch {
-        throw new RegistrationUnavailableError();
-      }
-      if (!confirmed) throw new ActivationLinkInvalidError();
-      return { message: "Email подтверждён. Теперь можно войти" as const };
     },
     async resendRegistration(
       attemptToken: string,

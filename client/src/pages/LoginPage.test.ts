@@ -101,7 +101,6 @@ it.each([
   "/\\evil.example",
   "/login?returnTo=/",
   "/register",
-  "/activation#token=x",
   "/password-reset",
   "/%6Cogin",
   "/nested/../login",
