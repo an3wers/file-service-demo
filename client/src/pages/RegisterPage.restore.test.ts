@@ -187,9 +187,6 @@ it("потеря вкладки с секретом даёт форму со с�
   expect(wrapper.find("input[name=password]").exists()).toBe(true);
   expect(wrapper.find("a[href='/login']").exists()).toBe(true);
   expect(wrapper.find("a[href='/password-reset']").exists()).toBe(true);
-  expect(wrapper.find("[data-lost-attempt]").text()).toContain(
-    "Если вы уже начинали регистрацию",
-  );
   wrapper.unmount();
 });
 

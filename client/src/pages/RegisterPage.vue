@@ -456,12 +456,6 @@ onBeforeUnmount(() => {
             @submit.prevent="submit"
           >
             <FieldGroup>
-              <p data-lost-attempt class="text-sm text-muted-foreground">
-                Если вы уже начинали регистрацию, но эта страница была закрыта
-                или данные вкладки потеряны, продолжить ввод кода здесь
-                нельзя. Войдите или восстановите доступ либо заполните форму
-                заново.
-              </p>
               <Field>
                 <FieldLabel for="name">Имя</FieldLabel>
                 <Input
