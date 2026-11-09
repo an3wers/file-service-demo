@@ -194,9 +194,10 @@ export function createSqlSessionStore(
           "update login_attempts set consumed_at = $2 where token_hash = $1",
           [tokenHash, clock.now()],
         );
-        await client.query("update users set state = 'active' where id = $1", [
-          user.id,
-        ]);
+        await client.query(
+          "update users set state = 'active' where id = $1 and state = 'inactive'",
+          [user.id],
+        );
         await client.query(
           "insert into auth_sessions (token_hash, user_id, created_at, expires_at) values ($1, $2, $3, $4)",
           [

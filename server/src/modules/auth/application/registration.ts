@@ -41,15 +41,12 @@ export interface RegistrationDeps {
   codeSecret: string;
 }
 
-type LinkPurpose = "password-reset";
-const LINKS = {
-  "password-reset": {
-    path: "/password-reset",
-    ttlMs: 1800000,
-    subject: "Восстановление пароля",
-    text: (url: string) =>
-      `Задайте новый пароль: ${url}\nСсылка действует 30 минут.`,
-  },
+const PASSWORD_RESET_LINK = {
+  path: "/password-reset",
+  ttlMs: 1800000,
+  subject: "Восстановление пароля",
+  text: (url: string) =>
+    `Задайте новый пароль: ${url}\nСсылка действует 30 минут.`,
 } as const;
 
 const ACCESS_INSTRUCTIONS = {
@@ -153,14 +150,13 @@ export function createRegistration({
     }
   }
   async function sendLink(
-    purpose: LinkPurpose,
     email: string,
     save: (tokenHash: string, expiresAt: Date) => Promise<boolean>,
     deadline: Date,
     mailRequestedAt: Date,
     log: MailLog,
   ) {
-    const link = LINKS[purpose];
+    const link = PASSWORD_RESET_LINK;
     try {
       const token = randomBytes(32).toString("base64url");
       const send = await withinDeadline(deadline, () =>
@@ -172,7 +168,7 @@ export function createRegistration({
         await deliver(
           { to: email, subject: link.subject, text: link.text(url.href) },
           deadline,
-          purpose,
+          "password-reset",
           log,
         );
       }
@@ -222,7 +218,7 @@ export function createRegistration({
     consumeEmail: (
       email: string,
       deadline: Date,
-      purpose: "activation" | LinkPurpose = "activation",
+      purpose: "activation" | "password-reset" = "activation",
     ) =>
       consume(`mail:${purpose}:${digest(email)}`, EMAIL_MAIL_LIMITS, deadline),
     consumeConfirmationIp: async (ip: string, deadline: Date) =>
@@ -240,7 +236,6 @@ export function createRegistration({
       log: MailLog,
     ) =>
       sendLink(
-        "password-reset",
         email,
         (tokenHash, expiresAt) =>
           store.requestPasswordReset(email, tokenHash, expiresAt, deadline),
