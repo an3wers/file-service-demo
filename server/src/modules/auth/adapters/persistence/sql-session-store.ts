@@ -50,11 +50,7 @@ export function createSqlSessionStore(
     saveAttempt: (attempt, mailKeys, deadline) =>
       authTransaction(deadline, async (client) => {
         const user = await userById(client, attempt.userId);
-        if (
-          !user ||
-          user.state !== "active" ||
-          user.passwordHash !== attempt.passwordHash
-        )
+        if (!user || user.passwordHash !== attempt.passwordHash)
           throw new Error("User changed");
         const emailRetry = await consumeAuthLimit(
           client,
@@ -104,7 +100,6 @@ export function createSqlSessionStore(
         const attempt = rows[0];
         if (
           !user ||
-          user.state !== "active" ||
           !attempt ||
           attempt.consumed_at ||
           attempt.expires_at <= clock.now() ||
@@ -170,7 +165,6 @@ export function createSqlSessionStore(
         const now = clock.now();
         if (
           !user ||
-          user.state !== "active" ||
           !attempt ||
           attempt.consumed_at ||
           attempt.expires_at <= now ||
@@ -200,6 +194,9 @@ export function createSqlSessionStore(
           "update login_attempts set consumed_at = $2 where token_hash = $1",
           [tokenHash, clock.now()],
         );
+        await client.query("update users set state = 'active' where id = $1", [
+          user.id,
+        ]);
         await client.query(
           "insert into auth_sessions (token_hash, user_id, created_at, expires_at) values ($1, $2, $3, $4)",
           [
@@ -209,7 +206,7 @@ export function createSqlSessionStore(
             new Date(clock.now().getTime() + session.ttlSeconds * 1000),
           ],
         );
-        return { status: "verified", user };
+        return { status: "verified", user: { ...user, state: "active" } };
       }),
     verifyRegistration: (tokenHash, codeHash, session, deadline) =>
       authTransaction(deadline, async (client) => {

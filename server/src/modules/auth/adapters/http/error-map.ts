@@ -2,7 +2,6 @@ import { AppError, ERROR_CODES } from "../../../../errors.js";
 import {
   InvalidCredentialsError,
   SessionExpiredError,
-  EmailNotVerifiedError,
   LoginAttemptInvalidError,
   LoginCodeExpiredError,
   LoginCodeInvalidError,
@@ -14,8 +13,6 @@ export function mapAuthError(error: unknown): AppError | undefined {
     return new AppError(401, ERROR_CODES.INVALID_CREDENTIALS, error.message);
   if (error instanceof SessionExpiredError)
     return new AppError(401, ERROR_CODES.SESSION_EXPIRED, error.message);
-  if (error instanceof EmailNotVerifiedError)
-    return new AppError(403, ERROR_CODES.EMAIL_NOT_VERIFIED, error.message);
   if (error instanceof LoginAttemptInvalidError)
     return new AppError(410, ERROR_CODES.LOGIN_ATTEMPT_INVALID, error.message);
   if (error instanceof LoginCodeExpiredError)

@@ -64,11 +64,7 @@ export function createMemorySessionStore(clock: Clock) {
     },
     async saveAttempt(attempt, keys) {
       const user = users.get(attempt.userId);
-      if (
-        !user ||
-        user.state !== "active" ||
-        user.passwordHash !== attempt.passwordHash
-      )
+      if (!user || user.passwordHash !== attempt.passwordHash)
         throw new Error("User changed");
       const retry = Math.max(
         consume(keys.email, LOGIN_MAIL_LIMITS),
@@ -91,7 +87,6 @@ export function createMemorySessionStore(clock: Clock) {
         attempt.consumed ||
         attempt.expiresAt <= clock.now() ||
         !user ||
-        user.state !== "active" ||
         attempt.version !== user.tokenVersion
       )
         return { status: "unavailable" };
@@ -122,7 +117,6 @@ export function createMemorySessionStore(clock: Clock) {
         attempt.consumed ||
         attempt.expiresAt <= clock.now() ||
         !user ||
-        user.state !== "active" ||
         attempt.version !== user.tokenVersion
       )
         return { status: "unavailable" };
@@ -138,6 +132,7 @@ export function createMemorySessionStore(clock: Clock) {
         return { status: "invalid", remainingAttempts: MAX_CODE_FAILURES - attempt.failures };
       }
       attempt.consumed = true;
+      user.state = "active";
       sessions.set(session.tokenHash, {
         ...session,
         userId: user.id,

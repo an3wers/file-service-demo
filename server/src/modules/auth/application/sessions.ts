@@ -13,7 +13,6 @@ import type { User } from "../domain/user.js";
 import {
   InvalidCredentialsError,
   SessionExpiredError,
-  EmailNotVerifiedError,
   LoginAttemptInvalidError,
   LoginCodeExpiredError,
   LoginCodeInvalidError,
@@ -187,7 +186,6 @@ export function createSessionsModule({
         ? await available(() => hasher.verify(password, user.passwordHash))
         : (await available(() => hasher.hash(password)), false);
       if (!correct || !user) throw new InvalidCredentialsError();
-      if (user.state !== "active") throw new EmailNotVerifiedError();
       const attemptToken = randomBytes(32).toString("base64url");
       const tokenHash = secretDigest("login-attempt", attemptToken);
       const code = newCode();

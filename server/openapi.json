@@ -1329,7 +1329,7 @@
             }
           },
           "403": {
-            "description": "EMAIL_NOT_VERIFIED после правильного пароля или ORIGIN_NOT_ALLOWED",
+            "description": "ORIGIN_NOT_ALLOWED",
             "content": {
               "application/json": {
                 "schema": {

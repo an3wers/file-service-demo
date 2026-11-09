@@ -89,14 +89,14 @@ npm run dev:server
 
 ### Аутентификация
 
-Зарегистрированный активный пользователь вводит email и пароль, затем шестизначный код из письма.
-Неизвестный email и неверный пароль дают одинаковый 401; только правильный пароль
-неактивного пользователя даёт 403 EMAIL_NOT_VERIFIED. Старые LOGIN_USER_APP и PASSWORD_USER_APP
+Зарегистрированный пользователь вводит email и пароль, затем шестизначный код из письма.
+Неизвестный email и неверный пароль дают одинаковый 401. Неактивный пользователь входит
+так же; верный код входа активирует его и создаёт сессию в одной транзакции. Старые LOGIN_USER_APP и PASSWORD_USER_APP
 игнорируются, пользователь из окружения при старте не создаётся и не синхронизируется.
 
 | Эндпоинт                                             | Успех                                                                                                      | Особые ошибки                                                                                 |
 | ---------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
-| POST /api/auth/login `{ email, password }`           | 200: attemptToken, attemptExpiresAt, codeExpiresAt, resendAvailableAt, deliveryStatus; без cookie и сессии | 401 INVALID_CREDENTIALS, 403 EMAIL_NOT_VERIFIED                                               |
+| POST /api/auth/login `{ email, password }`           | 200: attemptToken, attemptExpiresAt, codeExpiresAt, resendAvailableAt, deliveryStatus; без cookie и сессии | 401 INVALID_CREDENTIALS                                                                       |
 | POST /api/auth/login/resend `{ attemptToken }`       | 200: attemptExpiresAt, codeExpiresAt, resendAvailableAt, deliveryStatus; без пароля                        | 410 LOGIN_ATTEMPT_INVALID, 429 сохраняет прежний код и сроки                                  |
 | POST /api/auth/login/verify `{ attemptToken, code }` | 200: accessToken, expiresIn, user с id, name, email; cookie                                                | 400 LOGIN_CODE_INVALID с remainingAttempts, 400 LOGIN_CODE_EXPIRED, 410 LOGIN_ATTEMPT_INVALID |
 | POST /api/auth/refresh                               | Тот же ответ сессии и тот же refresh-токен с новым сроком                                                  | 401 SESSION_EXPIRED очищает cookie, временный 503 сохраняет                                   |

@@ -281,7 +281,7 @@ export const authPaths: ZodOpenApiPathsObject = {
         ...apiErrors({
           400: "BAD_REQUEST",
           401: "INVALID_CREDENTIALS",
-          403: "EMAIL_NOT_VERIFIED после правильного пароля или ORIGIN_NOT_ALLOWED",
+          403: "ORIGIN_NOT_ALLOWED",
           413: "PAYLOAD_TOO_LARGE",
           415: "UNSUPPORTED_MEDIA_TYPE",
           503: "SERVICE_UNAVAILABLE",
