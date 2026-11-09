@@ -767,7 +767,7 @@ export type LoginErrors = {
      */
     401: ErrorResponse;
     /**
-     * EMAIL_NOT_VERIFIED после правильного пароля или ORIGIN_NOT_ALLOWED
+     * ORIGIN_NOT_ALLOWED
      */
     403: ErrorResponse;
     /**

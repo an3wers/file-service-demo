@@ -10,7 +10,6 @@ const MESSAGES: Record<string, string> = {
   UNAUTHORIZED: "Сессия истекла — войдите снова",
   SESSION_EXPIRED: "Сессия истекла — войдите снова",
   INVALID_CREDENTIALS: "Неверный email или пароль",
-  EMAIL_NOT_VERIFIED: "Подтвердите email, чтобы войти",
   LOGIN_ATTEMPT_INVALID: "Попытка входа завершена. Войдите заново",
   LOGIN_CODE_INVALID: "Неверный код",
   LOGIN_CODE_EXPIRED: "Срок кода истёк. Начните новый вход",
